@@ -58,9 +58,9 @@ class StoryGraph:
         if lock.locked():
             return self.status[book]
         async with lock:
-            chain = self.reg.chain("graph")
+            chain = self.reg.chain("graph") or self.reg.chain("chat")  # no dedicated graph model: reuse chat
             if not chain:
-                self.status[book] = {"state": "disabled", "detail": "No graph provider is in any tier."}
+                self.status[book] = {"state": "disabled", "detail": "No graph or chat provider is in any tier."}
                 return self.status[book]
             self.status[book] = st = {"state": "running", "started": time.time(), "dirty": False}
             errors = []

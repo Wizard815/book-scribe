@@ -11,7 +11,6 @@ def setup(tmp_path, handler, tiers=(1, 2, 3), role="chat"):
     """Registry with one profile per tier (hosts t1/t2/t3) and a mock transport recording which hosts were hit."""
     s = Settings(project_dir=tmp_path)
     reg = Registry(s)
-    reg.delete(role, f"local-{role}")
     ids = [reg.upsert(role, {"label": f"P{t}", "base_url": f"http://t{t}", "tier": t, "model": f"m{t}"}).id for t in tiers]
     hits = []
 
@@ -105,11 +104,12 @@ async def test_bad_json_from_a_tier_counts_as_failure(tmp_path):
 async def test_unassigned_profiles_are_never_called_and_empty_role_is_not_configured(tmp_path):
     s = Settings(project_dir=tmp_path)
     reg = Registry(s)
+    reg.upsert("chat", {"label": "Primary", "base_url": "http://primary", "tier": 1})
     reg.upsert("chat", {"label": "Spare", "base_url": "http://spare"})  # saved, in no tier
     hits = []
     http = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: (hits.append(r.url.host), ok(r))[1]))
     await LLM(Router(reg), http).chat([])
-    assert "spare" not in hits
+    assert hits == ["primary"]  # the unassigned spare is never called
     reg.set_tiers("chat", [[], [], []])
     with pytest.raises(NotConfigured):
         await LLM(Router(reg), http).chat([])
@@ -160,3 +160,22 @@ def test_old_active_format_migrates_to_tier_1(tmp_path):
         {"id": "a", "label": "A", "base_url": "http://a"}, {"id": "b", "label": "B", "base_url": "http://b"}]}}))
     reg = Registry(s)
     assert reg.tiers["chat"] == [["b"], [], []] and reg.get("chat").base_url == "http://b"
+
+
+def test_nothing_is_seeded_without_urls_and_env_urls_seed_t1(tmp_path):
+    empty = Registry(Settings(project_dir=tmp_path / "a"))
+    assert all(empty.chain(r) == [] for r in ("chat", "embed", "stt", "tts", "graph"))
+    s = Settings(project_dir=tmp_path / "b", chat_url="http://c:1", stt_url="http://s:2/v1/audio/transcriptions", tts_url="")
+    full = Registry(s)
+    assert full.get("chat").base_url == "http://c:1" and full.get("stt").base_url == "http://s:2"
+    assert full.get("embed").base_url == "http://c:1"  # embeddings default to the chat server but are their own provider
+    assert full.get("tts") is None and full.tiers["chat"] == [["env-chat"], [], []]
+    s.embed_url = "http://e:3"
+    assert Registry(Settings(project_dir=tmp_path / "c", chat_url="http://c:1", embed_url="http://e:3")).get("embed").base_url == "http://e:3"
+
+
+def test_removed_seed_is_not_resurrected_on_restart(tmp_path):
+    s = Settings(project_dir=tmp_path, chat_url="http://c:1")
+    reg = Registry(s)
+    reg.delete("chat", "env-chat")
+    assert Registry(s).chain("chat") == []  # the writer deleted it in the admin menu; .env must not bring it back

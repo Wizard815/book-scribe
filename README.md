@@ -276,8 +276,10 @@ docker compose up -d        # UI on :8080, agent API behind it at /api
   (down, timeout, 5xx, bad key, garbled reply). The UI tells the writer when a fallback answered. Providers can be saved
   unassigned; "Test" checks one provider directly. **Embeddings don't fail over** (different models make incompatible vectors,
   which would corrupt memory), so that role uses its highest-priority provider only.
-  Every provider is just a base URL + model + optional key, so [Argos](https://github.com/Wizard815/argos) (its `/v1`),
-  whisper.cpp (`--inference-path /v1/audio/transcriptions --convert`), a CPU container or a cloud API all fit.
+  Book Scribe runs no models. Each provider is just an OpenAI-compatible base URL + model + optional key for one of four
+  roles: **chat**, **embeddings** (its own provider, separate from chat), **speech-to-text** and **text-to-speech**. Optionally
+  pre-fill them with `CHAT_URL`, `EMBED_URL`, `STT_URL`, `TTS_URL` (and `*_MODEL`) in `.env`; blank ones are simply not
+  created. The *story graph* role is optional and reuses the chat tiers when left empty.
   Settings, including API keys, are stored in `data/books/.state/providers.json` (mode 0600; keep it out of git).
 - **Cloudflare Tunnel:** run it in its own container and point it at `book-ui:80` (or host port 8080).
 - **Memory model:** three layers with separate jobs.

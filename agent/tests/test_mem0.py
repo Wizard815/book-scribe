@@ -32,7 +32,7 @@ class Stub(BaseHTTPRequestHandler):
 def test_vendored_mem0_roundtrip(tmp_path):
     srv = HTTPServer(("127.0.0.1", 0), Stub)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    s = Settings(project_dir=tmp_path, llama_swap_url=f"http://127.0.0.1:{srv.server_port}", mem_backend="mem0")
+    s = Settings(project_dir=tmp_path, chat_url=f"http://127.0.0.1:{srv.server_port}", mem_backend="mem0")
     mgr = MemoryManager(s, Registry(s))
     mgr.add("Writer said: I prefer short sentences", "preference")
     hits = mgr.search("Writer said: I prefer short sentences", 3)

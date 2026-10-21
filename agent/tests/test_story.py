@@ -50,13 +50,39 @@ def test_legacy_single_file_layout_is_migrated(tmp_path):
     assert "ghost story" in Bible(book).read("premise")
 
 
-def test_registry_adds_graph_role_to_old_provider_file(tmp_path):
-    s = Settings(project_dir=tmp_path, llama_swap_url="http://llm:1")
+def test_registry_adds_new_role_to_old_provider_file(tmp_path):
+    s = Settings(project_dir=tmp_path, chat_url="http://llm:1", tts_url="http://tts:2")
     s.state_dir.mkdir(parents=True)
     (s.state_dir / "providers.json").write_text(json.dumps({"active": {"chat": "c"}, "profiles": {"chat": [{"id": "c", "label": "C", "base_url": "http://x"}]}}))
     r = Registry(s)
-    assert r.get("chat").base_url == "http://x"
-    assert r.get("graph").base_url == "http://llm:1"
+    assert r.get("chat").base_url == "http://x"  # existing config untouched
+    assert r.get("tts").base_url == "http://tts:2"  # role missing from the old file is seeded once
+
+
+@pytest.mark.asyncio
+async def test_graph_without_own_tiers_reuses_chat_tiers(books, tmp_path):
+    import sys
+    s = Settings(project_dir=books, chat_url="http://chat-box:1")
+    s.state_dir.mkdir(exist_ok=True)
+    reg = Registry(s)
+    assert reg.chain("graph") == []
+    script = "import os,json,pathlib; d=pathlib.Path('graphify-out'); d.mkdir(exist_ok=True); (d/'graph.json').write_text(json.dumps({'nodes':[{'id':os.environ['OPENAI_BASE_URL'],'label':'x'}],'links':[]}))"
+    g = StoryGraph(BookStore(books), reg, command=[sys.executable, "-c", script])
+    st = await g.rebuild("demo")
+    assert st["state"] == "ok" and g.load("demo")["nodes"][0]["id"] == "http://chat-box:1/v1"
+
+
+@pytest.mark.asyncio
+async def test_graph_tries_next_tier_when_first_fails(books):
+    import sys
+    s = Settings(project_dir=books)
+    reg = Registry(s)
+    reg.upsert("graph", {"label": "Rocm", "base_url": "http://bad:1", "tier": 1})
+    reg.upsert("graph", {"label": "Cloud", "base_url": "http://good:2", "tier": 3})
+    script = "import os,sys,json,pathlib\nif 'bad' in os.environ['OPENAI_BASE_URL']: sys.exit(3)\nd=pathlib.Path('graphify-out'); d.mkdir(exist_ok=True); (d/'graph.json').write_text(json.dumps({'nodes':[],'links':[]}))"
+    g = StoryGraph(BookStore(books), reg, command=[sys.executable, "-c", script])
+    st = await g.rebuild("demo")
+    assert st["state"] == "ok" and st["tier"] == "T3 · Frontier"
 
 
 def test_graph_context_shows_confidence_tags(books):
@@ -130,9 +156,9 @@ async def test_real_graphify_builds_graph_through_active_graph_provider(books):
     pytest.importorskip("graphify")
     srv = HTTPServer(("127.0.0.1", 0), Stub)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    s = Settings(project_dir=books, llama_swap_url=f"http://127.0.0.1:{srv.server_port}")
+    s = Settings(project_dir=books, chat_url="http://unused:1")
     reg = Registry(s)
-    reg.upsert("graph", {"id": "local-graph", "label": "Local graph", "kind": "local", "base_url": s.llama_swap_url, "model": "m", "api_key": "k-123"})
+    reg.upsert("graph", {"label": "Local graph", "kind": "local", "base_url": f"http://127.0.0.1:{srv.server_port}", "model": "m", "api_key": "k-123", "tier": 1})
     g = StoryGraph(BookStore(books), reg)
     st = await g.rebuild("demo")
     srv.shutdown()

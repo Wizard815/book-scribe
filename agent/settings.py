@@ -10,14 +10,17 @@ import yaml
 
 @dataclass
 class Settings:
-    llama_swap_url: str = "http://localhost:8080"
-    llm_model: str = "default"
-    embed_model: str = "embed"
-    whisper_url: str = "http://localhost:8000"  # base URL (a full /v1/audio/transcriptions URL is also accepted)
-    whisper_model: str = "whisper-1"
-    tts_url: str = ""  # base URL of an OpenAI-compatible TTS server; empty = browser speech
-    tts_model: str = "tts-1"
-    tts_voice: str = "alloy"
+    # Optional first-run seeds for the four OpenAI-compatible backends (base URLs, no /v1). Anything left empty
+    # is simply not pre-filled; add or change providers in the admin menu at any time.
+    chat_url: str = ""
+    chat_model: str = ""
+    embed_url: str = ""  # defaults to chat_url when unset
+    embed_model: str = ""
+    stt_url: str = ""
+    stt_model: str = ""
+    tts_url: str = ""
+    tts_model: str = ""
+    tts_voice: str = ""
     project_dir: Path = Path("/data/books")
     default_book: str = "demo"
     mem_backend: str = "mem0"  # mem0 | file
@@ -35,16 +38,22 @@ class Settings:
         return self.project_dir / ".state"
 
 
+def _env(*names: str) -> str:
+    """First set variable wins; later names are legacy aliases."""
+    return next((os.environ[n] for n in names if os.environ.get(n)), "")
+
+
 def load_settings(config_path: str | None = None) -> Settings:
     s = Settings(
-        llama_swap_url=os.getenv("LLAMA_SWAP_URL", Settings.llama_swap_url).rstrip("/"),
-        llm_model=os.getenv("LLM_MODEL", Settings.llm_model),
-        embed_model=os.getenv("EMBED_MODEL", Settings.embed_model),
-        whisper_url=os.getenv("WHISPER_URL", Settings.whisper_url),
-        whisper_model=os.getenv("WHISPER_MODEL", Settings.whisper_model),
-        tts_url=os.getenv("TTS_URL", ""),
-        tts_model=os.getenv("TTS_MODEL", Settings.tts_model),
-        tts_voice=os.getenv("TTS_VOICE", Settings.tts_voice),
+        chat_url=_env("CHAT_URL", "LLAMA_SWAP_URL").rstrip("/"),
+        chat_model=_env("CHAT_MODEL", "LLM_MODEL"),
+        embed_url=_env("EMBED_URL").rstrip("/"),
+        embed_model=_env("EMBED_MODEL"),
+        stt_url=_env("STT_URL", "WHISPER_URL").rstrip("/"),
+        stt_model=_env("STT_MODEL", "WHISPER_MODEL"),
+        tts_url=_env("TTS_URL").rstrip("/"),
+        tts_model=_env("TTS_MODEL"),
+        tts_voice=_env("TTS_VOICE"),
         project_dir=Path(os.getenv("PROJECT_DIR", "/data/books")),
         default_book=os.getenv("DEFAULT_BOOK", "demo"),
         mem_backend=os.getenv("MEM_BACKEND", "mem0"),

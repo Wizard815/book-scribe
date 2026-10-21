@@ -8,7 +8,7 @@
     chat: ["Chat agent", "The model that writes and talks."],
     stt: ["Speech-to-text", "Whisper or any /v1/audio/transcriptions server."],
     tts: ["Text-to-speech", "Optional. If every tier fails or none is set, the browser's built-in voice reads replies."],
-    graph: ["Story graph (graphify)", "Builds the story's relationship graph in the background. Tried tier by tier, run by run."],
+    graph: ["Story graph (graphify)", "Optional. Builds the story graph in the background. Leave empty to reuse the chat tiers; a bigger or cheaper model is fine here."],
     embed: ["Embeddings", "Used by long-term memory (mem0). No failover: different models make incompatible vectors, so only the highest-priority provider is used."],
   };
   let snap = null;
