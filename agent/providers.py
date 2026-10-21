@@ -1,6 +1,7 @@
 """Model provider registry: which backend serves each role, editable at runtime from the admin menu.
 
-Roles: chat (LLM), embed (embeddings, used by mem0), stt (speech-to-text), tts (text-to-speech).
+Roles: chat (LLM), embed (embeddings, used by mem0), stt (speech-to-text), tts (text-to-speech),
+graph (the model graphify uses to extract the story graph; a stronger/cheaper model than chat is fine).
 Every provider is an OpenAI-compatible endpoint, so "local" (llama-swap, faster-whisper on Unraid) and
 "cloud" (OpenAI, OpenRouter, Anthropic's OpenAI-compatible API, ...) are the same shape — just a base URL,
 an optional API key and a model name. State lives in <state_dir>/providers.json.
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from settings import Settings
 
-ROLES = ("chat", "embed", "stt", "tts")
+ROLES = ("chat", "embed", "stt", "tts", "graph")
 
 # Suggested starting points for the admin form. Purely UI sugar; any URL works.
 PRESETS = [
@@ -72,6 +73,14 @@ class Registry:
         self.active: dict[str, str] = {}
         if self.path.exists():
             self._read()
+            missing = [r for r in ROLES if not self.profiles[r]]  # roles added after this file was written
+            if missing:
+                fresh = Registry.__new__(Registry)
+                fresh.profiles, fresh.active = {r: [] for r in ROLES}, {}
+                fresh._seed(s)
+                for r in missing:
+                    self.profiles[r], self.active[r] = fresh.profiles[r], fresh.active[r]
+                self._write()
         else:
             self._seed(s)
             self._write()
@@ -83,10 +92,12 @@ class Registry:
             "embed": Profile("local-embed", "Local embeddings", "local", s.llama_swap_url, "", s.embed_model),
             "stt": Profile("local-stt", "Local whisper", "local", _strip(s.whisper_url, "/v1/audio/transcriptions"), "", s.whisper_model),
             "tts": Profile("local-tts", "Local TTS", "local", _strip(s.tts_url, "/v1/audio/speech"), "", s.tts_model, s.tts_voice),
+            "graph": Profile("local-graph", "Local graph extraction", "local", s.llama_swap_url, "", s.llm_model),
         }
         for role, p in seeds.items():
             self.profiles[role] = [p]
             self.active[role] = p.id
+        self._seeds = seeds
 
     def _read(self) -> None:
         raw = json.loads(self.path.read_text())

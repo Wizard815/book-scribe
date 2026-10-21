@@ -4,3 +4,4 @@ __pycache__/
 data/books/*/.state/
 data/books/.state/
 cloudflared/*.json
+data/books/*/graphify-out/

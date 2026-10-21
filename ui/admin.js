@@ -8,6 +8,7 @@
     embed: ["Embeddings", "Used by long-term memory (mem0)."],
     stt: ["Speech-to-text", "Whisper or any /v1/audio/transcriptions server."],
     tts: ["Text-to-speech", "Optional. Without one, the browser's built-in voice reads replies."],
+    graph: ["Story graph (graphify)", "Builds the story's relationship graph in the background. Slow, so a bigger or cheaper model than chat is fine."],
   };
   let snap = null;
   let models = {}; // `${role}:${id}` → model names found by the last Test

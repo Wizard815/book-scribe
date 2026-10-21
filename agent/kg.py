@@ -1,9 +1,8 @@
-"""Story knowledge graph.
+"""Fast, LLM-free paragraph locator.
 
-Lightweight in-process KG over characters.md / bible.md / chapters, built so it can be swapped for
-graphify-novel (or Neo4j) later behind the same three methods: `refresh`, `find_paragraphs`, `context_for`.
-Nodes are characters; edges are co-occurrence in a paragraph. Good enough to resolve "the café scene" or
-"where Mira meets Jonas" to paragraph_ids and to feed relevant facts into the prompt.
+Character mentions + token overlap over the manuscript, used to resolve "the café scene" or "where Mira meets
+Jonas" to paragraph_ids instantly (it runs on the voice path). Canon facts come from bible.py and
+relationships from story_graph.py (graphify); this module only answers *where in the text*.
 """
 from __future__ import annotations
 
@@ -28,7 +27,7 @@ class StoryKG:
         self._paras = []
 
     def refresh(self, book: str) -> None:
-        self.characters = self._parse_characters(self.store.read_doc(book, "characters"))
+        self.characters = {n: e.summary() for n, e in self.store.bible(book).characters().items()}
         self._paras = self.store.all_paragraphs(book)
         self.mentions.clear()
         self.edges.clear()
@@ -39,22 +38,6 @@ class StoryKG:
             for i, a in enumerate(present):
                 for b in present[i + 1 :]:
                     self.edges[tuple(sorted((a, b)))] += 1
-
-    @staticmethod
-    def _parse_characters(md: str) -> dict[str, str]:
-        out: dict[str, str] = {}
-        name, buf = None, []
-        for line in md.splitlines():
-            m = re.match(r"^#{2,3}\s+(.+)", line)
-            if m:
-                if name:
-                    out[name] = "\n".join(buf).strip()
-                name, buf = m.group(1).strip(), []
-            elif name:
-                buf.append(line)
-        if name:
-            out[name] = "\n".join(buf).strip()
-        return out
 
     def find_paragraphs(self, query: str, limit: int = 3) -> list:
         """Rank paragraphs by token overlap, boosted when a named character in the query appears."""

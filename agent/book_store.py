@@ -1,4 +1,4 @@
-"""Manuscript store: bible.md + characters.md + chapters/*.md with stable paragraph_ids.
+"""Manuscript store: chapters/*.md with stable paragraph_ids (the bible lives in bible.py).
 
 Chapter format (see BOOK_WRITER.md):
 
@@ -89,27 +89,22 @@ class BookStore:
     def book_dir(self, book: str) -> Path:
         return self.root / _safe_name(book)
 
+    def bible(self, book: str):
+        from bible import Bible  # local import: bible.py needs yaml, book_store stays dependency-free
+
+        return Bible(self.book_dir(book))
+
     def ensure_book(self, book: str) -> Path:
         d = self.book_dir(book)
         (d / "chapters").mkdir(parents=True, exist_ok=True)
         (d / "memory").mkdir(exist_ok=True)
-        for f, title in (("bible.md", "Story Bible"), ("characters.md", "Characters")):
-            p = d / f
-            if not p.exists():
-                p.write_text(f"# {title}\n\n")
+        bible = self.bible(book)
+        bible.migrate_legacy()
+        bible.ensure()
+        ignore = d / ".graphifyignore"  # graphify reads only what is canon: bible/ + chapters/
+        if not ignore.exists():
+            ignore.write_text("memory/\ndraft/\nstatic/\ngraphify-out/\n")
         return d
-
-    def read_doc(self, book: str, name: str) -> str:
-        if name not in ("bible", "characters"):
-            raise BookError("unknown doc")
-        p = self.book_dir(book) / f"{name}.md"
-        return p.read_text() if p.exists() else ""
-
-    def append_doc(self, book: str, name: str, text: str) -> None:
-        self.ensure_book(book)
-        p = self.book_dir(book) / f"{name}.md"
-        with p.open("a") as fh:
-            fh.write(text.rstrip() + "\n\n")
 
     # --- chapters ----------------------------------------------------
     def chapter_numbers(self, book: str) -> list[int]:
