@@ -109,7 +109,7 @@ def test_api_chat_and_voice(books):
     class STT:
         http = FakeLLM().http
         async def transcribe(self, *a, **k): return "go to chapter 1"
-    app = create_app(Settings(project_dir=books, admin_token="tok"), llm=FakeLLM(), stt=STT(), memory=FileMemory(books / "m.json"))
+    app = create_app(Settings(project_dir=books, admin_token=TOKEN), llm=FakeLLM(), stt=STT(), memory=FileMemory(books / "m.json"))
     with TestClient(app) as c:
         assert c.get("/api/health").json()["ok"]
         r = c.post("/api/voice", files={"audio": ("a.webm", b"x", "audio/webm")}).json()
@@ -118,9 +118,13 @@ def test_api_chat_and_voice(books):
         assert c.post("/api/tts", json={"text": "hi"}).status_code == 501
 
 
-def admin_client(books, token="tok"):
+TOKEN = "a-long-enough-token-1234"
+
+
+def admin_client(books, token=TOKEN):
     s = Settings(project_dir=books, admin_token=token, chat_url="http://llm:8080", stt_url="http://stt:9000")
-    app = create_app(s, llm=FakeLLM(), stt=FakeLLM(), tts=FakeLLM(), memory=FileMemory(books / "m.json"))
+    tts = FakeLLM(); tts.enabled = False
+    app = create_app(s, llm=FakeLLM(), stt=FakeLLM(), tts=tts, memory=FileMemory(books / "m.json"))
     return TestClient(app)
 
 
@@ -128,13 +132,13 @@ def test_admin_requires_token(books):
     with admin_client(books) as c:
         assert c.get("/api/admin/providers").status_code == 401
         assert c.get("/api/admin/providers", headers={"x-admin-token": "bad"}).status_code == 401
-        assert c.get("/api/admin/providers", headers={"x-admin-token": "tok"}).status_code == 200
+        assert c.get("/api/admin/providers", headers={"x-admin-token": TOKEN}).status_code == 200
     with admin_client(books, token="") as c:
         assert c.get("/api/admin/providers", headers={"x-admin-token": ""}).status_code == 503
 
 
 def test_admin_provider_lifecycle_hides_keys(books):
-    H = {"x-admin-token": "tok"}
+    H = {"x-admin-token": TOKEN}
     with admin_client(books) as c:
         snap = c.get("/api/admin/providers", headers=H).json()
         assert snap["roles"]["chat"]["tiers"] == [["env-chat"], [], []]
@@ -158,7 +162,7 @@ def test_admin_provider_lifecycle_hides_keys(books):
 
 
 def test_admin_tiers_and_settings(books):
-    H = {"x-admin-token": "tok"}
+    H = {"x-admin-token": TOKEN}
     with admin_client(books) as c:
         a = c.put("/api/admin/providers/stt", headers=H, json={"label": "CPU", "base_url": "http://cpu:9000", "tier": 2}).json()
         ok = c.put("/api/admin/tiers/stt", headers=H, json={"tiers": [["env-stt"], [a["id"]], []]})
@@ -169,3 +173,11 @@ def test_admin_tiers_and_settings(books):
         s = c.put("/api/admin/tier-settings", headers=H, json={"labels": ["Fast", "Slow", "Cloud"], "cooldown": 5}).json()
         assert s["labels"] == ["Fast", "Slow", "Cloud"] and s["cooldown"] == 5
         assert c.put("/api/admin/tier-settings", headers=H, json={"labels": ["only one"]}).status_code == 400
+
+
+def test_weak_admin_tokens_are_refused(books):
+    for weak in ("change-me", "tok", "short-token"):
+        with admin_client(books, token=weak) as c:
+            r = c.get("/api/admin/providers", headers={"x-admin-token": weak})
+            assert r.status_code == 503 and "too weak" in r.json()["detail"], weak
+            assert c.get("/api/health").json()["admin_enabled"] is False
