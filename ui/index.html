@@ -13,7 +13,7 @@
       <article id="prose" aria-live="polite"></article>
     </section>
     <section class="half chat" aria-label="Conversation">
-      <header><span id="mode">Narrator</span><span id="status" role="status">Ready</span></header>
+      <header><span id="mode">Narrator</span><span id="status" role="status">Ready</span><button id="gear" aria-label="Admin settings">⚙️</button></header>
       <div id="log" aria-live="polite"></div>
       <div id="pending" hidden>
         <button id="yes">Yes, save</button><button id="no">No</button>
@@ -21,6 +21,18 @@
       <button id="mic" aria-label="Hold to talk">🎙️ Hold to talk</button>
     </section>
   </main>
+  <div id="admin" hidden role="dialog" aria-modal="true" aria-label="Admin settings">
+    <div class="panel">
+      <div class="bar"><h2>Admin · Models</h2><button id="admin-close" aria-label="Close">✕</button></div>
+      <form id="gate" hidden>
+        <label>Admin token <input id="token" type="password" autocomplete="current-password" required></label>
+        <button>Unlock</button>
+      </form>
+      <p id="admin-msg" role="status"></p>
+      <div id="roles"></div>
+    </div>
+  </div>
   <script src="app.js"></script>
+  <script src="admin.js"></script>
 </body>
 </html>

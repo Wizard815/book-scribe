@@ -259,3 +259,21 @@ Guiding Generative Storytelling with Knowledge Graphs  (arXiv:2505.24803)
 ---
 
 *Research date: 2026-09-27*
+
+---
+
+## Running it (current state)
+
+```bash
+cp .env.example .env        # set ADMIN_TOKEN and the first-run local URLs
+docker compose up -d        # UI on :8080, agent API behind it at /api
+```
+
+- **Models:** open the UI and tap ⚙️ (admin token required). Each of chat / embeddings / speech-to-text / text-to-speech
+  has its own list of providers — local (llama-swap, whisper) or cloud (OpenAI, OpenRouter, Anthropic's OpenAI-compatible API,
+  or any OpenAI-compatible URL). "Use this" switches live; "Test" checks the connection and lists available models.
+  Settings, including API keys, are stored in `data/books/.state/providers.json` (mode 0600; keep it out of git).
+- **Cloudflare Tunnel:** run it in its own container and point it at `book-ui:80` (or host port 8080).
+- **Vendored dependencies:** `vendor/mem0` and `vendor/graphify-novel` — see `vendor/VENDOR.md`.
+- **Tests:** `cd agent && pip install -r requirements-dev.txt ../vendor/mem0 && pytest`
+

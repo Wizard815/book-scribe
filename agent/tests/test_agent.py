@@ -109,10 +109,45 @@ def test_api_chat_and_voice(books):
     class STT:
         http = FakeLLM().http
         async def transcribe(self, *a, **k): return "go to chapter 1"
-    app = create_app(Settings(project_dir=books), llm=FakeLLM(), stt=STT(), memory=FileMemory(books / "m.json"))
+    app = create_app(Settings(project_dir=books, admin_token="tok"), llm=FakeLLM(), stt=STT(), memory=FileMemory(books / "m.json"))
     with TestClient(app) as c:
         assert c.get("/api/health").json()["ok"]
         r = c.post("/api/voice", files={"audio": ("a.webm", b"x", "audio/webm")}).json()
         assert r["user_text"] == "go to chapter 1" and r["chapter"] == 1
         assert len(c.get("/api/books/demo/chapters/1").json()["paragraphs"]) == 3
         assert c.post("/api/tts", json={"text": "hi"}).status_code == 501
+
+
+def admin_client(books, token="tok"):
+    s = Settings(project_dir=books, admin_token=token, llama_swap_url="http://llm:8080")
+    app = create_app(s, llm=FakeLLM(), stt=FakeLLM(), tts=FakeLLM(), memory=FileMemory(books / "m.json"))
+    return TestClient(app)
+
+
+def test_admin_requires_token(books):
+    with admin_client(books) as c:
+        assert c.get("/api/admin/providers").status_code == 401
+        assert c.get("/api/admin/providers", headers={"x-admin-token": "bad"}).status_code == 401
+        assert c.get("/api/admin/providers", headers={"x-admin-token": "tok"}).status_code == 200
+    with admin_client(books, token="") as c:
+        assert c.get("/api/admin/providers", headers={"x-admin-token": ""}).status_code == 503
+
+
+def test_admin_provider_lifecycle_hides_keys(books):
+    H = {"x-admin-token": "tok"}
+    with admin_client(books) as c:
+        snap = c.get("/api/admin/providers", headers=H).json()
+        assert snap["roles"]["chat"]["active"] == "local-chat"
+        assert snap["roles"]["chat"]["profiles"][0]["base_url"] == "http://llm:8080"
+        p = c.put("/api/admin/providers/chat", headers=H, json={"label": "GPT", "kind": "cloud", "base_url": "https://api.openai.com/v1/", "api_key": "sk-secret-1234", "model": "gpt-x"}).json()
+        assert p["base_url"] == "https://api.openai.com" and p["has_key"] and "secret" not in str(p)
+        assert "sk-secret" not in c.get("/api/admin/providers", headers=H).text
+        c.post(f"/api/admin/providers/chat/{p['id']}/activate", headers=H)
+        c.put("/api/admin/providers/chat", headers=H, json={"id": p["id"], "label": "GPT", "kind": "cloud", "base_url": "https://api.openai.com", "model": "gpt-y"})  # blank key keeps old
+        f = books / ".state" / "providers.json"
+        assert "sk-secret-1234" in f.read_text() and (f.stat().st_mode & 0o077) == 0
+        assert c.get("/api/admin/providers", headers=H).json()["roles"]["chat"]["active"] == p["id"]
+        assert c.put("/api/admin/providers/chat", headers=H, json={"label": "x", "base_url": "ftp://x"}).status_code == 400
+        assert c.put("/api/admin/providers/nope", headers=H, json={"label": "x"}).status_code == 400
+        assert c.delete("/api/admin/providers/chat/local-chat", headers=H).status_code == 200
+        assert c.delete(f"/api/admin/providers/chat/{p['id']}", headers=H).status_code == 400

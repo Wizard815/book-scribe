@@ -13,15 +13,16 @@ class Settings:
     llama_swap_url: str = "http://localhost:8080"
     llm_model: str = "default"
     embed_model: str = "embed"
-    whisper_url: str = "http://localhost:8000/v1/audio/transcriptions"
+    whisper_url: str = "http://localhost:8000"  # base URL (a full /v1/audio/transcriptions URL is also accepted)
     whisper_model: str = "whisper-1"
-    tts_url: str = ""  # OpenAI-compatible /v1/audio/speech; empty disables server TTS
+    tts_url: str = ""  # base URL of an OpenAI-compatible TTS server; empty = browser speech
     tts_model: str = "tts-1"
     tts_voice: str = "alloy"
     project_dir: Path = Path("/data/books")
     default_book: str = "demo"
     mem_backend: str = "mem0"  # mem0 | file
     user_id: str = "writer"
+    admin_token: str = ""  # required for /api/admin/*; empty disables the admin API
     # config.yaml → writer_profile
     writer_age: str | None = None
     tts_mode: str = "single"  # single | multi
@@ -48,6 +49,7 @@ def load_settings(config_path: str | None = None) -> Settings:
         default_book=os.getenv("DEFAULT_BOOK", "demo"),
         mem_backend=os.getenv("MEM_BACKEND", "mem0"),
         user_id=os.getenv("WRITER_ID", "writer"),
+        admin_token=os.getenv("ADMIN_TOKEN", ""),
     )
     path = Path(config_path or os.getenv("CONFIG_PATH", "/app/config.yaml"))
     if path.is_file():
