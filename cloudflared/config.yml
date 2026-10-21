@@ -1,0 +1,7 @@
+# Replace tunnel UUID + hostname; credentials-file comes from `cloudflared tunnel create`.
+tunnel: REPLACE_WITH_TUNNEL_UUID
+credentials-file: /etc/cloudflared/REPLACE_WITH_TUNNEL_UUID.json
+ingress:
+  - hostname: book.example.com
+    service: http://book-ui:80
+  - service: http_status:404

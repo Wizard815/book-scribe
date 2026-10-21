@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Book Scribe</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="split">
+    <section id="book" class="half book" aria-label="Manuscript">
+      <header><span id="chapter-title">Chapter 1</span></header>
+      <article id="prose" aria-live="polite"></article>
+    </section>
+    <section class="half chat" aria-label="Conversation">
+      <header><span id="mode">Narrator</span><span id="status" role="status">Ready</span></header>
+      <div id="log" aria-live="polite"></div>
+      <div id="pending" hidden>
+        <button id="yes">Yes, save</button><button id="no">No</button>
+      </div>
+      <button id="mic" aria-label="Hold to talk">🎙️ Hold to talk</button>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
