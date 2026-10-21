@@ -19,6 +19,7 @@ from clients import LLM, STT, TTS, NotConfigured, probe
 from kg import StoryKG
 from memory.store import MemoryManager
 from providers import ProviderError, Registry
+from story_graph import StoryGraph
 from settings import load_settings
 
 
@@ -43,7 +44,7 @@ class ProfileIn(BaseModel):
     voice: str = ""
 
 
-def create_app(settings=None, llm=None, stt=None, tts=None, memory=None) -> FastAPI:
+def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=None, check_drift=True) -> FastAPI:
     s = settings or load_settings()
     store = BookStore(s.project_dir)
     store.ensure_book(s.default_book)
@@ -51,7 +52,8 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None) -> Fast
     reg = Registry(s)
     mem = memory or MemoryManager(s, reg)
     llm, stt, tts = llm or LLM(reg), stt or STT(reg), tts or TTS(reg)
-    agent = Agent(s, store, llm, mem, StoryKG(store))
+    graph = graph or StoryGraph(store, reg)
+    agent = Agent(s, store, llm, mem, StoryKG(store), graph, check_drift)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -79,7 +81,8 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None) -> Fast
             models = f"unreachable: {e.__class__.__name__}"
         mem.search("ping", 1)  # lets the manager settle on a backend before we report it
         return {"ok": True, "memory": getattr(mem, "backend", "injected"), "memory_error": getattr(mem, "error", ""),
-                "tts": tts.enabled, "llm_models": models, "kg": agent.kg.stats(), "admin_enabled": bool(s.admin_token)}
+                "tts": tts.enabled, "llm_models": models, "kg": agent.kg.stats(), "admin_enabled": bool(s.admin_token),
+                "graph": graph.info(s.default_book)}
 
     @app.post("/api/chat")
     async def chat(body: ChatIn):
@@ -151,6 +154,24 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None) -> Fast
         if not p:
             raise HTTPException(404, "unknown profile")
         return await probe(llm.http, role, p)
+
+    @app.post("/api/admin/books/{book}/graph/rebuild", dependencies=[Depends(admin)])
+    async def graph_rebuild(book: str):
+        """Rebuild now (admin only: it spends LLM tokens). Returns immediately; poll the status endpoint."""
+        try:
+            store.book_dir(book)
+        except BookError as e:
+            raise HTTPException(400, str(e))
+        graph.schedule_now(book)
+        return graph.info(book)
+
+    @app.get("/api/books/{book}/graph")
+    async def graph_status(book: str):
+        try:
+            store.book_dir(book)
+        except BookError as e:
+            raise HTTPException(400, str(e))
+        return graph.info(book)
 
     # --- manuscript (read by the UI's book half) -----------------------
     @app.get("/api/books/{book}/chapters")

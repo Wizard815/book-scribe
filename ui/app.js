@@ -57,7 +57,7 @@ async function render(res) {
   say("bot", res.text);
   $("mode").textContent = res.mode === "therapist" ? "Feedback" : "Narrator";
   $("pending").hidden = !res.pending;
-  (res.notes || []).forEach((n) => say("note", "Style note: " + n));
+  (res.notes || []).forEach((n) => say("note", n));
   await loadChapter(res.chapter, res.focus, res.changed && res.changed.length);
   status("Ready");
   speak(res.text);

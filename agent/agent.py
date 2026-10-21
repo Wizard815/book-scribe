@@ -6,7 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from book_store import BookError, BookStore, Paragraph
+import asyncio
+
 from clients import LLM
+from drift import review as drift_review
 from kg import StoryKG
 from modes import MODES
 from quality import check
@@ -43,6 +46,7 @@ class Session:
     focus: str | None = None
     history: list[dict] = field(default_factory=list)
     pending: Pending | None = None
+    notices: list[str] = field(default_factory=list)  # background findings, delivered on the next reply
 
 
 @dataclass
@@ -57,9 +61,11 @@ class Reply:
 
 
 class Agent:
-    def __init__(self, s: Settings, store: BookStore, llm: LLM, memory, kg: StoryKG):
+    def __init__(self, s: Settings, store: BookStore, llm: LLM, memory, kg: StoryKG, graph=None, check_drift: bool = False):
         self.s, self.store, self.llm, self.memory, self.kg = s, store, llm, memory, kg
+        self.graph, self.check_drift = graph, check_drift
         self.sessions: dict[str, Session] = {}
+        self._bg: set[asyncio.Task] = set()
 
     def session(self, sid: str, book: str | None = None) -> Session:
         book = book or self.s.default_book
@@ -148,12 +154,12 @@ class Agent:
             sys.append(f"The writer is {self.s.writer_age}; let that subtly shape idiom and description density. Never mention it.")
         if prefs:
             sys.append("WRITER PREFERENCES / MEMORY:\n- " + "\n- ".join(prefs))
-        bible = self.store.read_doc(sess.book, "bible").strip()
+        bible = self.store.bible(sess.book).context_for(text + " " + extra)
         if bible:
-            sys.append("STORY BIBLE:\n" + bible[:4000])
-        kg_ctx = self.kg.context_for(text + " " + extra)
-        if kg_ctx:
-            sys.append("CHARACTERS IN PLAY:\n" + kg_ctx)
+            sys.append("STORY BIBLE (canon; never contradict):\n" + bible)
+        rel = self.graph.context_for(sess.book, text + " " + extra) if self.graph else ""
+        if rel:
+            sys.append("STORY GRAPH (EXTRACTED = stated in the text, INFERRED = a guess):\n" + rel)
         return [{"role": "system", "content": "\n\n".join(sys)}] + sess.history[-10:]
 
     async def _gated(self, messages: list[dict]) -> tuple[str, list[str]]:
@@ -187,7 +193,7 @@ class Agent:
         sess.chapter, sess.focus = target.chapter, target.id
         sess.pending = Pending("edit", new, target.chapter, paragraph_id=target.id)
         reply = self._reply(sess, f"Here is the new version of chapter {target.chapter}, paragraph {target.id.split('_p')[-1]}: {new} Should I save it?")
-        reply.notes = issues
+        reply.notes += [f"Style note: {i}" for i in issues]
         return reply
 
     async def _propose_draft(self, sess: Session, text: str) -> Reply:
@@ -200,7 +206,7 @@ class Agent:
         new, issues = await self._gated(msgs)
         sess.pending = Pending("append", new, sess.chapter)
         reply = self._reply(sess, f"Here's a draft: {new} Should I add it to chapter {sess.chapter}?")
-        reply.notes = issues
+        reply.notes += [f"Style note: {i}" for i in issues]
         return reply
 
     def _commit(self, sess: Session) -> Reply:
@@ -214,9 +220,30 @@ class Agent:
             return self._reply(sess, f"I couldn't save that: {e}")
         sess.focus = para.id
         self.kg.refresh(sess.book)
+        self._after_save(sess, para)
         r = self._reply(sess, "Saved.")
         r.changed = [para.id]
         return r
+
+    # --- background work after a save ---------------------------------------
+    def _after_save(self, sess: Session, para: Paragraph) -> None:
+        if self.graph:
+            self.graph.schedule(sess.book)
+        if self.check_drift:
+            task = asyncio.create_task(self._drift(sess, para))
+            self._bg.add(task)
+            task.add_done_callback(self._bg.discard)
+
+    async def _drift(self, sess: Session, para: Paragraph) -> None:
+        try:
+            bible = self.store.bible(sess.book).context_for(para.text)
+            graph = self.graph.context_for(sess.book, para.text) if self.graph else ""
+            issues = await drift_review(self.llm, bible, graph, para.id, para.text)
+        except Exception:
+            return  # a failed background check must never disturb the writing session
+        for i in issues:
+            self.memory.add(f"Drift from canon: {i}", "drift")
+            sess.notices.append(f"Heads up, this may contradict the story bible. {i}")
 
     # --- memory ----------------------------------------------------------
     def _learn(self, text: str) -> None:
@@ -225,4 +252,5 @@ class Agent:
 
     def _reply(self, sess: Session, text: str) -> Reply:
         pend = {"kind": sess.pending.kind, "text": sess.pending.text, "paragraph_id": sess.pending.paragraph_id} if sess.pending else None
-        return Reply(text=text, mode=sess.mode, chapter=sess.chapter, focus=sess.focus, pending=pend)
+        notices, sess.notices = sess.notices, []
+        return Reply(text=text, mode=sess.mode, chapter=sess.chapter, focus=sess.focus, pending=pend, notes=notices)

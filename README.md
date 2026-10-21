@@ -274,6 +274,10 @@ docker compose up -d        # UI on :8080, agent API behind it at /api
   or any OpenAI-compatible URL). "Use this" switches live; "Test" checks the connection and lists available models.
   Settings, including API keys, are stored in `data/books/.state/providers.json` (mode 0600; keep it out of git).
 - **Cloudflare Tunnel:** run it in its own container and point it at `book-ui:80` (or host port 8080).
-- **Vendored dependencies:** `vendor/mem0` and `vendor/graphify-novel` — see `vendor/VENDOR.md`.
+- **Memory model:** three layers with separate jobs.
+  **Bible** (`data/books/<book>/bible/`, graphify-novel layout) = exact canon, read directly, only changed with the writer's confirmation.
+  **Story graph** (`graphify-out/graph.json`, built by vendored graphify in the background after saves) = relationships, with each edge tagged EXTRACTED/INFERRED.
+  **mem0** = writer preferences, rejected edits and *drift* notes (new text that contradicts the bible), recalled into later prompts.
+- **Vendored dependencies:** `vendor/mem0`, `vendor/graphify`, `vendor/graphify-novel` — see `vendor/VENDOR.md`.
 - **Tests:** `cd agent && pip install -r requirements-dev.txt ../vendor/mem0 && pytest`
 
