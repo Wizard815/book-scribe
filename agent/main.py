@@ -23,6 +23,9 @@ from story_graph import StoryGraph
 from settings import load_settings
 
 
+WEAK_TOKENS = {"change-me", "changeme", "admin", "password", "token", "secret"}
+
+
 class ChatIn(BaseModel):
     text: str
     session_id: str | None = None
@@ -86,6 +89,8 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     def admin(x_admin_token: str = Header("")):
         if not s.admin_token:
             raise HTTPException(503, "Admin is disabled: set ADMIN_TOKEN in .env and restart the agent.")
+        if len(s.admin_token) < 16 or s.admin_token.lower() in WEAK_TOKENS:
+            raise HTTPException(503, "Admin is disabled: ADMIN_TOKEN is too weak. Use 16+ random characters (e.g. `openssl rand -hex 24`).")
         if not hmac.compare_digest(x_admin_token.encode(), s.admin_token.encode()):
             raise HTTPException(401, "Wrong admin token.")
 
@@ -97,7 +102,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
             models = f"unreachable: {e.__class__.__name__}"
         mem.search("ping", 1)  # lets the manager settle on a backend before we report it
         return {"ok": True, "memory": getattr(mem, "backend", "injected"), "memory_error": getattr(mem, "error", ""),
-                "tts": tts.enabled, "llm_models": models, "kg": agent.kg.stats(), "admin_enabled": bool(s.admin_token),
+                "tts": tts.enabled, "llm_models": models, "kg": agent.kg.stats(), "admin_enabled": len(s.admin_token) >= 16 and s.admin_token.lower() not in WEAK_TOKENS,
                 "graph": graph.info(s.default_book)}
 
     @app.post("/api/chat")
