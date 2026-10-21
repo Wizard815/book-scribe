@@ -4,4 +4,10 @@ httpx>=0.27
 python-multipart>=0.0.9
 pyyaml>=6.0
 pydantic>=2.7
-mem0ai>=0.1.100      # optional at runtime: falls back to a JSON file store if unavailable
+# mem0 is vendored in ../vendor/mem0 and installed by the Dockerfile; its runtime deps:
+qdrant-client>=1.12.0
+openai>=1.90.0
+posthog>=7.14.0
+pytz>=2024.1
+sqlalchemy>=2.0.31
+protobuf>=5.29.6,<7.0.0
