@@ -1,6 +1,6 @@
 """Story graph via graphify (vendor/graphify): *how things connect* across bible + chapters.
 
-graphify runs headless (`graphify extract`) against the book folder using the active **graph** provider from
+graphify runs headless (`graphify extract`) against the book folder using the **graph** tiers from
 the admin menu (any OpenAI-compatible endpoint, local or cloud). It is slow and costs LLM calls, so it never
 runs on the voice path: saves schedule a debounced background rebuild, and the agent reads whatever
 `graphify-out/graph.json` exists. Edges are tagged EXTRACTED or INFERRED by graphify; the prompt shows
@@ -58,26 +58,31 @@ class StoryGraph:
         if lock.locked():
             return self.status[book]
         async with lock:
-            p = self.reg.get("graph")
-            if not p:
-                self.status[book] = {"state": "disabled", "detail": "No graph provider configured."}
+            chain = self.reg.chain("graph")
+            if not chain:
+                self.status[book] = {"state": "disabled", "detail": "No graph provider is in any tier."}
                 return self.status[book]
             self.status[book] = st = {"state": "running", "started": time.time(), "dirty": False}
-            env = {**os.environ, "OPENAI_BASE_URL": f"{p.base_url}/v1", "OPENAI_API_KEY": p.api_key or "none",
-                   "GRAPHIFY_OPENAI_MODEL": p.model or "default", "GRAPHIFY_BACKEND": "openai"}
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *self.command, cwd=self.store.book_dir(book), env=env,
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-                out, _ = await asyncio.wait_for(proc.communicate(), self.timeout)
-                tail = out.decode(errors="replace")[-600:]
-                ok = proc.returncode == 0 and self._path(book).exists()
-                st.update(state="ok" if ok else "error", detail=tail, finished=time.time())
+            errors = []
+            for tier, p in chain:  # graphify takes one backend per run, so tiers are tried run by run
+                env = {**os.environ, "OPENAI_BASE_URL": f"{p.base_url}/v1", "OPENAI_API_KEY": p.api_key or "none",
+                       "GRAPHIFY_OPENAI_MODEL": p.model or "default", "GRAPHIFY_BACKEND": "openai"}
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        *self.command, cwd=self.store.book_dir(book), env=env,
+                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+                    out, _ = await asyncio.wait_for(proc.communicate(), p.timeout or self.timeout)
+                    tail = out.decode(errors="replace")[-600:]
+                    ok = proc.returncode == 0 and self._path(book).exists()
+                except Exception as e:  # missing graphify, timeout, ...
+                    ok, tail = False, f"{e.__class__.__name__}: {e}"
                 if ok:
                     g = self.load(book)
-                    st.update(nodes=len(g["nodes"]), edges=len(g["links"]))
-            except Exception as e:  # missing graphify, timeout, ...
-                st.update(state="error", detail=f"{e.__class__.__name__}: {e}", finished=time.time())
+                    st.update(state="ok", detail=tail, finished=time.time(), tier=self.reg.labels[tier], provider=p.label, nodes=len(g["nodes"]), edges=len(g["links"]))
+                    break
+                errors.append(f"{self.reg.labels[tier]} / {p.label}: {tail[-160:]}")
+            else:
+                st.update(state="error", detail=" | ".join(errors), finished=time.time())
             if st.pop("dirty", False):
                 self.schedule(book)
             return st

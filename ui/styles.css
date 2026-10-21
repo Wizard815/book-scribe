@@ -47,3 +47,13 @@ header #status { margin-left: auto; }
 .form { border: 2px dashed var(--focus); border-radius: 12px; padding: 12px; margin-top: 8px; }
 .form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; } @media (max-width: 600px) { .form .row { grid-template-columns: 1fr; } }
 #admin-msg { color: var(--bad); min-height: 1.4em; }
+
+/* --- tiers ------------------------------------------------------------ */
+.lane { border-left: 4px solid var(--accent); padding-left: 10px; margin: 10px 0; }
+.lane:nth-of-type(2) { border-color: #6aa9ff; } .lane:nth-of-type(3) { border-color: #c792ea; } .lane.off { border-color: var(--focus); opacity: .85; }
+.lane-title { font: 700 15px system-ui, sans-serif; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
+.empty { color: var(--dim); font-size: 14px; padding: 4px 0; }
+.row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 8px 0; } @media (max-width: 600px) { .row3 { grid-template-columns: 1fr; } }
+.badge.ok { background: #1f4d38; color: #bff3d9; } .badge.bad { background: #5a2323; color: #ffd0d0; }
+.err { color: var(--bad); }
+#admin .prof select { width: auto; padding: 7px; }

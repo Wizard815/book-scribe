@@ -59,7 +59,10 @@ async function render(res) {
   $("pending").hidden = !res.pending;
   (res.notes || []).forEach((n) => say("note", n));
   await loadChapter(res.chapter, res.focus, res.changed && res.changed.length);
-  status("Ready");
+  // Tell the writer when a lower tier answered, so a quality or latency change is never a mystery.
+  const fb = Object.entries(res.served_by || {}).filter(([, s]) => s.fell_back);
+  fb.forEach(([role, s]) => say("note", `Using fallback for ${role}: ${s.label}`));
+  status(fb.length ? "Ready (fallback)" : "Ready");
   speak(res.text);
 }
 
