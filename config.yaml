@@ -1,0 +1,6 @@
+# Writer-facing options. Everything else lives in .env
+writer_profile:
+  # age: 42        # optional; subtly shapes idiom/description density. Omit unless the writer volunteers it.
+tts:
+  mode: single     # single | multi (multi = per-character voices, not implemented yet)
+voice_profile: {}  # e.g. {voice: "alloy"} or a voice id your TTS backend exposes

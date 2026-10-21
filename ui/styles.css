@@ -1,0 +1,25 @@
+:root { --bg:#0b0d10; --panel:#12161b; --fg:#f4f1ea; --dim:#a9b0b8; --accent:#ffd166; --focus:#27313d; --ok:#4cc38a; --bad:#ff6b6b; }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font: 22px/1.6 Georgia, "Times New Roman", serif; }
+.split { display: grid; grid-template-columns: 1fr 1fr; height: 100%; }
+.half { display: flex; flex-direction: column; min-height: 0; padding: 16px 24px; }
+.book { background: var(--bg); border-right: 2px solid var(--focus); overflow-y: auto; }
+.chat { background: var(--panel); }
+header { display: flex; justify-content: space-between; color: var(--dim); font: 600 18px system-ui, sans-serif; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 12px; }
+#prose p { margin: 0 0 1.1em; padding: 8px 12px; border-left: 6px solid transparent; border-radius: 6px; }
+#prose p.focus { background: var(--focus); border-left-color: var(--accent); }
+#prose p.flash { animation: flash 1.6s ease-out; }
+@keyframes flash { from { background: #2f5d46; } }
+#log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-bottom: 12px; }
+.msg { padding: 10px 14px; border-radius: 12px; max-width: 92%; white-space: pre-wrap; }
+.msg.you { align-self: flex-end; background: #243447; font-family: system-ui, sans-serif; }
+.msg.bot { align-self: flex-start; background: #1b222a; }
+.msg.note { align-self: center; color: var(--dim); font: 16px system-ui, sans-serif; }
+#pending { display: flex; gap: 12px; margin-bottom: 12px; }
+#pending[hidden] { display: none; }
+#pending button { flex: 1; font: 700 24px system-ui, sans-serif; padding: 18px; border: 0; border-radius: 14px; color: #06120c; background: var(--ok); }
+#pending #no { background: var(--bad); color: #1a0606; }
+#mic { font: 700 28px system-ui, sans-serif; padding: 28px; border: 3px solid var(--accent); border-radius: 20px; background: transparent; color: var(--accent); touch-action: none; user-select: none; -webkit-user-select: none; }
+#mic.rec { background: var(--accent); color: #1b1400; }
+button:focus-visible { outline: 4px solid #fff; outline-offset: 3px; }
+@media (max-width: 800px) { .split { grid-template-columns: 1fr; grid-template-rows: 45% 55%; } .book { border-right: 0; border-bottom: 2px solid var(--focus); } html, body { font-size: 20px; } }

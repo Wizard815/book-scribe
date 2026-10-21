@@ -1,0 +1,31 @@
+# App layer on the Ubuntu host. LLM + embeddings + whisper live on the Unraid box (see .env).
+services:
+  book-agent:
+    build: ./agent
+    env_file: .env
+    environment:
+      PROJECT_DIR: /data/books
+      CONFIG_PATH: /app/config.yaml
+    volumes:
+      - ./data/books:/data/books
+      - ./config.yaml:/app/config.yaml:ro
+    expose: ["8000"]
+    restart: unless-stopped
+
+  book-ui:
+    image: nginx:stable-alpine
+    ports: ["8080:80"]
+    volumes:
+      - ./ui:/usr/share/nginx/html:ro
+      - ./ui/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [book-agent]
+    restart: unless-stopped
+
+  # Public HTTPS: `docker compose --profile tunnel up -d` once cloudflared/config.yml is filled in.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes: ["./cloudflared:/etc/cloudflared:ro"]
+    depends_on: [book-ui]
+    restart: unless-stopped
