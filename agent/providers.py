@@ -1,10 +1,10 @@
 """Model provider registry with tiered fallback, editable at runtime from the admin menu.
 
 Roles: chat (LLM), embed (embeddings, used by mem0), stt (speech-to-text), tts (text-to-speech),
-graph (the model graphify uses to extract the story graph).
+graph (the model graphify uses to extract the story graph; empty tiers = reuse the chat tiers).
 
 Every provider is an OpenAI-compatible endpoint (base URL + optional key + model), so "local" (Argos,
-llama-swap, whisper.cpp on ROCm, a CPU container) and "cloud" (OpenAI, OpenRouter, ...) are the same shape.
+llama-swap, whisper.cpp, a CPU container) and "cloud" (OpenAI, OpenRouter, ...) are the same shape.
 
 Each role has three ordered **tiers** (default labels: T1 Local ROCm, T2 CPU fallback, T3 Frontier). A call tries
 T1's profiles first; only when all of them fail does it try T2, then T3 (see router.py). A profile that is in no
@@ -27,7 +27,7 @@ DEFAULT_LABELS = ["T1 · Local ROCm", "T2 · CPU fallback", "T3 · Frontier"]
 
 # Suggested starting points for the admin form. Purely UI sugar; any URL works.
 PRESETS = [
-    {"id": "local", "label": "Local (Argos / llama-swap / whisper on your LAN)", "kind": "local", "base_url": "http://UNRAID_IP:8080"},
+    {"id": "local", "label": "Local / LAN server (any OpenAI-compatible)", "kind": "local", "base_url": "http://UNRAID_IP:8080"},
     {"id": "openai", "label": "OpenAI", "kind": "cloud", "base_url": "https://api.openai.com"},
     {"id": "openrouter", "label": "OpenRouter", "kind": "cloud", "base_url": "https://openrouter.ai/api"},
     {"id": "anthropic", "label": "Anthropic (OpenAI-compatible)", "kind": "cloud", "base_url": "https://api.anthropic.com"},
@@ -82,10 +82,9 @@ class Registry:
         self.cooldown: int = 30  # seconds a failed profile is skipped before it is tried first again
         if self.path.exists():
             self._read()
-            missing = [r for r in ROLES if not self.profiles[r]]  # roles added after this file was written
-            if missing:
-                for r in missing:
-                    self._seed_role(r, s)
+            # roles added to the code since this file was written get seeded once; roles already in the file never are
+            added = [self._seed_role(r, s) for r in ROLES if r not in self._known and not self.profiles[r]]
+            if any(added):
                 self._write()
         else:
             for r in ROLES:
@@ -94,22 +93,30 @@ class Registry:
 
     # --- persistence ----------------------------------------------------
     @staticmethod
-    def _seed_profile(role: str, s: Settings) -> Profile:
-        return {
-            "chat": Profile("local-chat", "Local chat", "local", s.llama_swap_url, "", s.llm_model),
-            "embed": Profile("local-embed", "Local embeddings", "local", s.llama_swap_url, "", s.embed_model),
-            "stt": Profile("local-stt", "Local whisper", "local", _strip(s.whisper_url, "/v1/audio/transcriptions"), "", s.whisper_model),
-            "tts": Profile("local-tts", "Local TTS", "local", _strip(s.tts_url, "/v1/audio/speech"), "", s.tts_model, s.tts_voice),
-            "graph": Profile("local-graph", "Local graph extraction", "local", s.llama_swap_url, "", s.llm_model),
-        }[role]
+    def _seed_profile(role: str, s: Settings) -> Profile | None:
+        """A starting provider from the environment, or None when that backend's URL isn't set."""
+        url, model = {
+            "chat": (s.chat_url, s.chat_model),
+            "embed": (s.embed_url or s.chat_url, s.embed_model),
+            "stt": (_strip(s.stt_url, "/v1/audio/transcriptions"), s.stt_model),
+            "tts": (_strip(s.tts_url, "/v1/audio/speech"), s.tts_model),
+        }.get(role, ("", ""))  # graph is never seeded: with empty tiers it reuses the chat tiers
+        if not url:
+            return None
+        label = {"chat": "Chat", "embed": "Embeddings", "stt": "Speech-to-text", "tts": "Text-to-speech"}[role]
+        return Profile(f"env-{role}", f"{label} (from .env)", "local", url, "", model, s.tts_voice if role == "tts" else "")
 
-    def _seed_role(self, role: str, s: Settings) -> None:
+    def _seed_role(self, role: str, s: Settings) -> bool:
         p = self._seed_profile(role, s)
+        if not p:
+            return False
         self.profiles[role] = [p]
         self.tiers[role] = [[p.id], [], []]
+        return True
 
     def _read(self) -> None:
         raw = json.loads(self.path.read_text())
+        self._known = set(raw.get("profiles", {}))
         for role in ROLES:
             self.profiles[role] = [Profile(**p) for p in raw.get("profiles", {}).get(role, [])]
         self.labels = (raw.get("labels") or DEFAULT_LABELS)[:N_TIERS]

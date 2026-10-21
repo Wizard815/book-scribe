@@ -15,7 +15,10 @@ const status = (t) => ($("status").textContent = t);
 
 async function api(path, opts) {
   const r = await fetch("/api" + path, opts);
-  if (!r.ok) throw new Error(path + " → " + r.status);
+  if (!r.ok) {
+    const j = await r.clone().json().catch(() => ({}));  // the server explains itself, e.g. "No chat provider is in any tier"
+    throw new Error(j.detail || path + " → " + r.status);
+  }
   return r;
 }
 
