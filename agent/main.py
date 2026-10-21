@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from agent import Agent
 from book_store import BookError, BookStore
-from clients import LLM, STT, TTS, NotConfigured, probe
+from clients import LLM, STT, TTS, AllTiersFailed, NotConfigured, Router, probe
 from kg import StoryKG
 from memory.store import MemoryManager
 from providers import ProviderError, Registry
@@ -33,6 +33,15 @@ class EditIn(BaseModel):
     text: str
 
 
+class TiersIn(BaseModel):
+    tiers: list[list[str]]
+
+
+class TierSettingsIn(BaseModel):
+    labels: list[str] | None = None
+    cooldown: int | None = None
+
+
 class ProfileIn(BaseModel):
     id: str | None = None
     label: str = ""
@@ -42,6 +51,8 @@ class ProfileIn(BaseModel):
     clear_key: bool = False
     model: str = ""
     voice: str = ""
+    timeout: float = 0
+    tier: int | None = None
 
 
 def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=None, check_drift=True) -> FastAPI:
@@ -51,7 +62,8 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     s.state_dir.mkdir(parents=True, exist_ok=True)
     reg = Registry(s)
     mem = memory or MemoryManager(s, reg)
-    llm, stt, tts = llm or LLM(reg), stt or STT(reg), tts or TTS(reg)
+    router = Router(reg)
+    llm, stt, tts = llm or LLM(router), stt or STT(router), tts or TTS(router)
     graph = graph or StoryGraph(store, reg)
     agent = Agent(s, store, llm, mem, StoryKG(store), graph, check_drift)
 
@@ -66,6 +78,10 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     @app.exception_handler(NotConfigured)
     async def _not_configured(_, e: NotConfigured):
         return JSONResponse({"detail": str(e)}, status_code=503)
+
+    @app.exception_handler(AllTiersFailed)
+    async def _all_failed(_, e: AllTiersFailed):
+        return JSONResponse({"detail": str(e), "errors": e.errors}, status_code=502)
 
     def admin(x_admin_token: str = Header("")):
         if not s.admin_token:
@@ -88,7 +104,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     async def chat(body: ChatIn):
         sid = body.session_id or uuid.uuid4().hex
         reply = await agent.handle(sid, body.text, body.book)
-        return {"session_id": sid, "user_text": body.text, **asdict(reply)}
+        return {"session_id": sid, "user_text": body.text, **asdict(reply), "served_by": router.served("chat")}
 
     @app.post("/api/transcribe")
     async def transcribe(audio: UploadFile = File(...)):
@@ -100,13 +116,14 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         text = await stt.transcribe(await audio.read(), audio.filename or "audio.webm", audio.content_type or "audio/webm")
         sid = session_id or uuid.uuid4().hex
         reply = await agent.handle(sid, text, book or None)
-        return {"session_id": sid, "user_text": text, **asdict(reply)}
+        return {"session_id": sid, "user_text": text, **asdict(reply), "served_by": router.served("stt", "chat")}
 
     @app.post("/api/tts")
     async def speak(body: EditIn):
         if not tts.enabled:
             raise HTTPException(501, "TTS_URL not configured; the UI falls back to browser speech")
-        return Response(await tts.speak(body.text), media_type="audio/mpeg")
+        audio = await tts.speak(body.text)
+        return Response(audio, media_type="audio/mpeg", headers={"X-Served-Tier": router.last["tts"].label.encode("ascii", "replace").decode()})
 
     @app.post("/api/voice-profile")
     async def voice_profile(audio: UploadFile = File(...)):
@@ -123,12 +140,12 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     # --- admin: model providers (token-protected; holds API keys) ------------
     @app.get("/api/admin/providers", dependencies=[Depends(admin)])
     async def admin_list():
-        return reg.snapshot()
+        return reg.snapshot(router.health_snapshot())
 
     @app.put("/api/admin/providers/{role}", dependencies=[Depends(admin)])
     async def admin_upsert(role: str, body: ProfileIn):
         try:
-            return reg.upsert(role, body.model_dump()).public()
+            return reg.upsert(role, body.model_dump(exclude_unset=True)).public()
         except ProviderError as e:
             raise HTTPException(400, str(e))
 
@@ -138,15 +155,24 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
             reg.delete(role, pid)
         except ProviderError as e:
             raise HTTPException(400, str(e))
-        return reg.snapshot()
+        return reg.snapshot(router.health_snapshot())
 
-    @app.post("/api/admin/providers/{role}/{pid}/activate", dependencies=[Depends(admin)])
-    async def admin_activate(role: str, pid: str):
+    @app.put("/api/admin/tiers/{role}", dependencies=[Depends(admin)])
+    async def admin_tiers(role: str, body: TiersIn):
+        """Replace a role's three ordered tiers: {"tiers": [[ids], [ids], [ids]]}."""
         try:
-            reg.activate(role, pid)
+            reg.set_tiers(role, body.tiers)
         except ProviderError as e:
             raise HTTPException(400, str(e))
-        return reg.snapshot()
+        return reg.snapshot(router.health_snapshot())
+
+    @app.put("/api/admin/tier-settings", dependencies=[Depends(admin)])
+    async def admin_tier_settings(body: TierSettingsIn):
+        try:
+            reg.set_settings(body.labels, body.cooldown)
+        except (ProviderError, ValueError) as e:
+            raise HTTPException(400, str(e))
+        return reg.snapshot(router.health_snapshot())
 
     @app.post("/api/admin/providers/{role}/{pid}/test", dependencies=[Depends(admin)])
     async def admin_test(role: str, pid: str):

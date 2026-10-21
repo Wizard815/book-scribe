@@ -1,6 +1,7 @@
 """Writer-preference memory on the vendored mem0 (vendor/mem0). JSON-file fallback so the agent always runs.
 
-mem0's LLM and embedder follow the *active* chat/embed providers from the admin menu; the memory object is
+mem0's LLM and embedder follow the highest-priority chat/embed providers in the admin menu's tiers (embeddings never fail over:
+different models give incompatible vectors); the memory object is
 rebuilt automatically when those change. Memories live in a Qdrant collection named after the embedder, so
 switching to an embedding model with different dimensions never corrupts an existing collection.
 """

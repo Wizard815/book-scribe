@@ -137,17 +137,35 @@ def test_admin_provider_lifecycle_hides_keys(books):
     H = {"x-admin-token": "tok"}
     with admin_client(books) as c:
         snap = c.get("/api/admin/providers", headers=H).json()
-        assert snap["roles"]["chat"]["active"] == "local-chat"
+        assert snap["roles"]["chat"]["tiers"] == [["local-chat"], [], []]
         assert snap["roles"]["chat"]["profiles"][0]["base_url"] == "http://llm:8080"
-        p = c.put("/api/admin/providers/chat", headers=H, json={"label": "GPT", "kind": "cloud", "base_url": "https://api.openai.com/v1/", "api_key": "sk-secret-1234", "model": "gpt-x"}).json()
+        p = c.put("/api/admin/providers/chat", headers=H, json={"label": "GPT", "kind": "cloud", "base_url": "https://api.openai.com/v1/", "api_key": "sk-secret-1234", "model": "gpt-x", "tier": 3}).json()
         assert p["base_url"] == "https://api.openai.com" and p["has_key"] and "secret" not in str(p)
         assert "sk-secret" not in c.get("/api/admin/providers", headers=H).text
-        c.post(f"/api/admin/providers/chat/{p['id']}/activate", headers=H)
-        c.put("/api/admin/providers/chat", headers=H, json={"id": p["id"], "label": "GPT", "kind": "cloud", "base_url": "https://api.openai.com", "model": "gpt-y"})  # blank key keeps old
+        # editing without key/kind/url keeps the stored values
+        c.put("/api/admin/providers/chat", headers=H, json={"id": p["id"], "model": "gpt-y"})
         f = books / ".state" / "providers.json"
         assert "sk-secret-1234" in f.read_text() and (f.stat().st_mode & 0o077) == 0
-        assert c.get("/api/admin/providers", headers=H).json()["roles"]["chat"]["active"] == p["id"]
+        got = c.get("/api/admin/providers", headers=H).json()["roles"]["chat"]
+        assert got["tiers"] == [["local-chat"], [], [p["id"]]]
+        cloud = next(x for x in got["profiles"] if x["id"] == p["id"])
+        assert cloud["kind"] == "cloud" and cloud["model"] == "gpt-y" and cloud["base_url"] == "https://api.openai.com"
         assert c.put("/api/admin/providers/chat", headers=H, json={"label": "x", "base_url": "ftp://x"}).status_code == 400
         assert c.put("/api/admin/providers/nope", headers=H, json={"label": "x"}).status_code == 400
+        assert c.put("/api/admin/providers/chat", headers=H, json={"label": "x", "tier": 9}).status_code == 400
         assert c.delete("/api/admin/providers/chat/local-chat", headers=H).status_code == 200
-        assert c.delete(f"/api/admin/providers/chat/{p['id']}", headers=H).status_code == 400
+        assert c.get("/api/admin/providers", headers=H).json()["roles"]["chat"]["tiers"] == [[], [], [p["id"]]]
+
+
+def test_admin_tiers_and_settings(books):
+    H = {"x-admin-token": "tok"}
+    with admin_client(books) as c:
+        a = c.put("/api/admin/providers/stt", headers=H, json={"label": "CPU", "base_url": "http://cpu:9000", "tier": 2}).json()
+        ok = c.put("/api/admin/tiers/stt", headers=H, json={"tiers": [["local-stt"], [a["id"]], []]})
+        assert ok.status_code == 200
+        assert c.put("/api/admin/tiers/stt", headers=H, json={"tiers": [[a["id"]], [a["id"]], []]}).status_code == 400  # duplicate
+        assert c.put("/api/admin/tiers/stt", headers=H, json={"tiers": [["ghost"], [], []]}).status_code == 400
+        assert c.put("/api/admin/tiers/stt", headers=H, json={"tiers": [[], []]}).status_code == 400
+        s = c.put("/api/admin/tier-settings", headers=H, json={"labels": ["Fast", "Slow", "Cloud"], "cooldown": 5}).json()
+        assert s["labels"] == ["Fast", "Slow", "Cloud"] and s["cooldown"] == 5
+        assert c.put("/api/admin/tier-settings", headers=H, json={"labels": ["only one"]}).status_code == 400

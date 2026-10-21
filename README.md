@@ -269,9 +269,15 @@ cp .env.example .env        # set ADMIN_TOKEN and the first-run local URLs
 docker compose up -d        # UI on :8080, agent API behind it at /api
 ```
 
-- **Models:** open the UI and tap ⚙️ (admin token required). Each of chat / embeddings / speech-to-text / text-to-speech
-  has its own list of providers — local (llama-swap, whisper) or cloud (OpenAI, OpenRouter, Anthropic's OpenAI-compatible API,
-  or any OpenAI-compatible URL). "Use this" switches live; "Test" checks the connection and lists available models.
+- **Models and tiers:** tap ⚙️ (admin token required). Chat, speech-to-text, text-to-speech and the story graph each have
+  three ordered tiers, named by you (default: **T1 Local ROCm → T2 CPU fallback → T3 Frontier**). A request goes to T1; T2 is
+  tried only after every T1 provider failed, and T3 (the paid one) only after T2 failed too. A failed provider is skipped for
+  a cooldown (default 30 s) so a dead GPU box costs one timeout, not one per request. Any error counts as failure
+  (down, timeout, 5xx, bad key, garbled reply). The UI tells the writer when a fallback answered. Providers can be saved
+  unassigned; "Test" checks one provider directly. **Embeddings don't fail over** (different models make incompatible vectors,
+  which would corrupt memory), so that role uses its highest-priority provider only.
+  Every provider is just a base URL + model + optional key, so [Argos](https://github.com/Wizard815/argos) (its `/v1`),
+  whisper.cpp (`--inference-path /v1/audio/transcriptions --convert`), a CPU container or a cloud API all fit.
   Settings, including API keys, are stored in `data/books/.state/providers.json` (mode 0600; keep it out of git).
 - **Cloudflare Tunnel:** run it in its own container and point it at `book-ui:80` (or host port 8080).
 - **Memory model:** three layers with separate jobs.
