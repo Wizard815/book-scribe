@@ -38,3 +38,18 @@ def check(text: str) -> list[str]:
     if re.search(r"[*_#`]{2,}|^\s*[-*]\s", text, re.M):
         issues.append("Plain prose only: no markdown, bullets, or headings.")
     return issues
+
+
+_PREAMBLE = re.compile(r"^(?:sure|certainly|of course|here(?:'s| is| are)|okay|ok)\b[^\n]*:\s*$", re.I)
+
+
+def clean_output(text: str) -> str:
+    """Strip what chat models wrap around requested prose: code fences, a 'Here is the rewritten paragraph:' lead-in,
+    surrounding quotes. Applied before the quality gate and before anything is shown or saved."""
+    s = re.sub(r"^```\w*\n|\n```$", "", text.strip())
+    lines = s.split("\n")
+    if len(lines) > 1 and _PREAMBLE.match(lines[0].strip()):
+        s = "\n".join(lines[1:]).strip()
+    if len(s) > 1 and s[0] == s[-1] == '"' and s.count('"') == 2:
+        s = s[1:-1].strip()
+    return s

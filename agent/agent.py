@@ -10,29 +10,27 @@ import asyncio
 
 from clients import LLM
 from drift import review as drift_review
-from kg import StoryKG
+import intent
+from kg import StoryKG, tokens
 from modes import MODES
-from quality import check
+from quality import check, clean_output
 from settings import Settings
 
 SYSTEM = (Path(__file__).parent / "system_prompt.md").read_text()
 
-YES = re.compile(r"^\s*(yes|yeah|yep|sure|ok(ay)?|do it|save( it)?|go ahead|confirm|sounds good)\b", re.I)
-NO = re.compile(r"^\s*(no|nope|cancel|never mind|don'?t|discard|scrap that)\b", re.I)
-EDIT = re.compile(r"\b(change|make|rewrite|rephrase|fix|edit|tweak|soften|tighten|revise|replace)\b", re.I)
-DRAFT = re.compile(r"\b(write|draft|continue|next scene|add a (scene|paragraph)|keep going)\b", re.I)
-PREF = re.compile(r"\b(i (prefer|like|love|hate|don'?t like|dislike)|always|never|too (long|flowery|wordy|formal)|remember (that|this))\b", re.I)
-REF = re.compile(
-    r"chapter\s+(\d+)(?:\D+?scene\s+(\d+))?(?:\D+?(?:paragraph|para)\s+(\d+))?", re.I
-)
-GOTO = re.compile(r"\b(?:go to|open|show|read)\s+chapter\s+(\d+)\b", re.I)
-NUMWORDS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5}
+PREF = re.compile(r"\b(i (prefer|like|love|hate|don'?t like|dislike)|always|never|too (long|flowery|wordy|formal)|remember (that|this))\b|^\s*(please )?(don'?t|do not|stop|avoid)\b", re.I)
+EXCERPT_WORDS = 10
+
+
+def excerpt(text: str, n: int = EXCERPT_WORDS) -> str:
+    w = text.split()
+    return " ".join(w[:n]) + ("…" if len(w) > n else "")
 
 
 @dataclass
 class Pending:
-    kind: str  # "edit" | "append"
-    text: str
+    kind: str  # "edit" | "append" | "confirm_target"
+    text: str  # proposed text (edit/append) or the writer's original instruction (confirm_target)
     chapter: int
     paragraph_id: str | None = None
     scene: int | None = None
@@ -84,39 +82,55 @@ class Agent:
         if not text:
             return self._reply(sess, "I didn't catch that. Try again.")
 
-        self._learn(text)
-
-        low = text.lower()
-        if "therapist" in low and "mode" in low or "quick feedback" in low:
-            sess.mode = "therapist"
-            return self._reply(sess, "Switching to feedback mode. Tell me what you're working on.")
-        if "narrator" in low and "mode" in low:
-            sess.mode = "narrator"
-            return self._reply(sess, "Back to narrator mode.")
-
+        # Answers to a pending proposal come first, so "okay" confirms rather than being discarded as noise.
         if sess.pending:
-            if YES.match(text):
-                return self._commit(sess)
-            if NO.match(text):
+            kind, rest = intent.confirmation(text)
+            if kind == "hold":
+                return self._reply(sess, "Okay, I'll wait. Say yes to save it, or tell me what to change.")
+            if kind == "yes" and not rest:
+                return await self._accept(sess)
+            if kind == "no" and not rest:
                 self.memory.add(f"Writer rejected a proposed {sess.pending.kind}: '{sess.pending.text[:120]}'", "preference")
                 sess.pending = None
                 return self._reply(sess, "Okay, dropped it. What would you like instead?")
-            sess.pending = None  # anything else abandons the proposal and is handled normally
+            if kind and rest and sess.pending.kind != "confirm_target":
+                return await self._revise(sess, rest)  # "yes but make it shorter" / "no, make it longer": never save or drop blindly
+            if kind == "no" and rest:  # "no, I mean chapter 3 paragraph 2": the guess was wrong; keep the instruction, change the target
+                original, sess.pending = sess.pending.text, None
+                target, sure = self._resolve(sess, rest)
+                if target:
+                    return await self._propose_edit(sess, original, target=target, sure=sure)
+                text = rest
+            else:
+                sess.pending = None  # anything else is a new command; the unsaved proposal is abandoned, and we say so
+                sess.notices.append("I dropped the unsaved proposal.")
 
-        if m := GOTO.search(text):
-            n = int(m.group(1))
+        if intent.is_noise(text):  # silence that the speech model turned into "Thank you."
+            return Reply(text="", mode=sess.mode, chapter=sess.chapter, focus=sess.focus)
+
+        self._learn(text)
+
+        if mode := intent.detect_mode(text):
+            sess.mode = mode
+            return self._reply(sess, "Switching to feedback mode. Tell me what you're working on." if mode == "therapist" else "Back to narrator mode.")
+
+        if (n := intent.goto_chapter(text)) is not None:
             if n in self.store.chapter_numbers(sess.book):
                 sess.chapter, sess.focus = n, None
                 return self._reply(sess, f"Chapter {n}.")
             return self._reply(sess, f"There is no chapter {n} yet.")
-        if re.search(r"\bnext (paragraph|section)\b", low):
-            return self._step(sess, +1)
-        if re.search(r"\b(previous|last) (paragraph|section)\b", low):
-            return self._step(sess, -1)
+        if d := intent.step_direction(text):
+            return self._step(sess, d)
+        if intent.is_read_aloud(text):
+            target = self._by_ref(sess, intent.parse_ref(text))
+            if target:
+                sess.chapter, sess.focus = target.chapter, target.id
+                return self._reply(sess, target.text)
+            return self._reply(sess, "I couldn't find that paragraph.")
 
-        if sess.mode == "narrator" and EDIT.search(text):
+        if sess.mode == "narrator" and intent.is_edit(text):
             return await self._propose_edit(sess, text)
-        if sess.mode == "narrator" and DRAFT.search(text):
+        if sess.mode == "narrator" and intent.is_draft(text):
             return await self._propose_draft(sess, text)
         return await self._converse(sess, text)
 
@@ -126,28 +140,62 @@ class Agent:
         if not paras:
             return self._reply(sess, "This chapter is empty.")
         ids = [p.id for p in paras]
-        i = ids.index(sess.focus) + d if sess.focus in ids else (0 if d > 0 else len(ids) - 1)
-        i = max(0, min(len(ids) - 1, i))
+        if sess.focus in ids:
+            i = ids.index(sess.focus) + d
+            if not 0 <= i < len(ids):  # run off the end of the chapter: say so instead of repeating the same paragraph
+                nxt = sess.chapter + d
+                if nxt in self.store.chapter_numbers(sess.book):
+                    sess.chapter, sess.focus = nxt, None
+                    return self._reply(sess, f"That was the {'last' if d > 0 else 'first'} paragraph. Moving to chapter {nxt}.")
+                return self._reply(sess, f"That is the {'end' if d > 0 else 'start'} of the book.")
+        else:
+            i = 0 if d > 0 else len(ids) - 1
         sess.focus = ids[i]
         return self._reply(sess, paras[i].text)
 
     # --- target resolution -----------------------------------------------
-    def _resolve(self, sess: Session, text: str) -> Paragraph | None:
-        if m := REF.search(text):
-            ch = int(m.group(1))
-            scene = int(m.group(2) or 1)
-            if m.group(3):
-                return self.store.resolve_ref(sess.book, ch, scene, int(m.group(3)))
-        for word, n in NUMWORDS.items():
-            if re.search(rf"\b{word} paragraph\b", text, re.I):
-                return self.store.resolve_ref(sess.book, sess.chapter, 1, n)
-        if re.search(r"\b(this|that|the current) (part|paragraph|bit|section)\b", text, re.I) and sess.focus:
-            return self.store.find(sess.book, sess.focus)
-        hits = self.kg.find_paragraphs(text, limit=1)
-        return hits[0] if hits else None
+    def _by_ref(self, sess: Session, ref: intent.Ref) -> Paragraph | None:
+        if ref.para is None:
+            return None
+        return self.store.nth_paragraph(sess.book, ref.chapter or sess.chapter, ref.para, ref.scene)
+
+    def _resolve(self, sess: Session, text: str) -> tuple[Paragraph | None, bool]:
+        """-> (paragraph, sure). sure=False means "this is my best guess; read it back before touching it"."""
+        ref = intent.parse_ref(text)
+        if ref.explicit:
+            return self._by_ref(sess, ref), True
+        if sess.focus and re.search(r"\b(this|that|the current|it)\b", intent.norm(text)) and not self.kg.named_in(text):
+            return self.store.find(sess.book, sess.focus), True
+        query = intent.locator_query(text)  # describe-where words only; the instruction ("more sarcastic") must not steer the search
+        hits = self.kg.search(query, limit=3, chapter=ref.chapter)
+        if not hits:
+            return None, False
+        return hits[0].para, self.kg.confident(hits, len(tokens(query)))
+
+    def _where(self, sess: Session, para: Paragraph) -> str:
+        """How the writer counts: the paragraph's position in the chapter, not its within-scene id suffix."""
+        ids = [p.id for p in self.store.paragraphs(sess.book, para.chapter)]
+        return f"chapter {para.chapter}, paragraph {ids.index(para.id) + 1}"
 
     # --- LLM helpers -----------------------------------------------------
-    def _context(self, sess: Session, text: str, extra: str = "") -> list[dict]:
+    def _manuscript(self, sess: Session, target: Paragraph | None = None) -> str:
+        """The actual text around the work: neighbours of the target, else the focus, else the end of the current chapter.
+        Without this the model only ever sees the bible and cannot keep a rewrite consistent with what is on the page."""
+        try:
+            paras = self.store.paragraphs(sess.book, (target.chapter if target else sess.chapter))
+        except BookError:
+            return ""
+        ids = [p.id for p in paras]
+        anchor = target.id if target else (sess.focus if sess.focus in ids else None)
+        if anchor:
+            i = ids.index(anchor)
+            before, after = paras[max(0, i - 2) : i], paras[i + 1 : i + 2]
+            parts = [("PRECEDING", p.text) for p in before] + [("FOLLOWING", p.text) for p in after]
+        else:
+            parts = [("RECENT", p.text) for p in paras[-3:]]
+        return "\n\n".join(f"[{k}] {v}" for k, v in parts)[:3000]
+
+    def _context(self, sess: Session, text: str, extra: str = "", target: Paragraph | None = None) -> list[dict]:
         prefs = self.memory.search(text, limit=6)
         sys = [SYSTEM, MODES[sess.mode]]
         if self.s.writer_age:
@@ -160,20 +208,27 @@ class Agent:
         rel = self.graph.context_for(sess.book, text + " " + extra) if self.graph else ""
         if rel:
             sys.append("STORY GRAPH (EXTRACTED = stated in the text, INFERRED = a guess):\n" + rel)
+        ms = self._manuscript(sess, target)
+        if ms:
+            sys.append("MANUSCRIPT AROUND THE WORK (for continuity; do not repeat it):\n" + ms)
         return [{"role": "system", "content": "\n\n".join(sys)}] + sess.history[-10:]
 
     async def _gated(self, messages: list[dict]) -> tuple[str, list[str]]:
-        out = await self.llm.chat(messages)
+        out = clean_output(await self.llm.chat(messages))
         issues = check(out)
         for _ in range(self.s.max_rewrite_attempts):
             if not issues:
                 break
-            out = await self.llm.chat(
+            out = clean_output(await self.llm.chat(
                 messages + [{"role": "assistant", "content": out},
                             {"role": "user", "content": "Rewrite it fixing these problems, output only the text:\n- " + "\n- ".join(issues)}]
-            )
+            ))
             issues = check(out)
         return out, issues
+
+    def _remember(self, sess: Session, user: str, assistant: str) -> None:
+        sess.history += [{"role": "user", "content": user}, {"role": "assistant", "content": assistant}]
+        del sess.history[:-12]
 
     # --- flows -----------------------------------------------------------
     async def _converse(self, sess: Session, text: str) -> Reply:
@@ -182,17 +237,24 @@ class Agent:
         sess.history.append({"role": "assistant", "content": out})
         return self._reply(sess, out)
 
-    async def _propose_edit(self, sess: Session, text: str) -> Reply:
-        target = self._resolve(sess, text)
+    async def _propose_edit(self, sess: Session, text: str, target: Paragraph | None = None, sure: bool = True) -> Reply:
+        if target is None:
+            target, sure = self._resolve(sess, text)
         if not target:
             return self._reply(sess, "Which part? Say the chapter and paragraph, or describe the scene.")
-        msgs = self._context(sess, text, target.text) + [
+        where = self._where(sess, target)
+        if not sure:  # a guess: read it back and wait, rather than rewriting something the writer didn't mean
+            sess.chapter, sess.focus = target.chapter, target.id
+            sess.pending = Pending("confirm_target", text, target.chapter, paragraph_id=target.id)
+            return self._reply(sess, f"Do you mean {where}, starting: {excerpt(target.text)} Say yes to go ahead, or tell me which part.")
+        msgs = self._context(sess, text, target.text, target) + [
             {"role": "user", "content": f"Rewrite ONLY this paragraph.\nInstruction: {text}\n\nORIGINAL:\n{target.text}\n\nOutput only the new paragraph."}
         ]
         new, issues = await self._gated(msgs)
         sess.chapter, sess.focus = target.chapter, target.id
         sess.pending = Pending("edit", new, target.chapter, paragraph_id=target.id)
-        reply = self._reply(sess, f"Here is the new version of chapter {target.chapter}, paragraph {target.id.split('_p')[-1]}: {new} Should I save it?")
+        self._remember(sess, text, f"[proposed a rewrite of {where}]")
+        reply = self._reply(sess, f"Changing {where}, which starts: {excerpt(target.text, 6)} Here is the new version: {new} Should I save it?")
         reply.notes += [f"Style note: {i}" for i in issues]
         return reply
 
@@ -205,9 +267,34 @@ class Agent:
         ]
         new, issues = await self._gated(msgs)
         sess.pending = Pending("append", new, sess.chapter)
+        self._remember(sess, text, "[proposed a new paragraph]")
         reply = self._reply(sess, f"Here's a draft: {new} Should I add it to chapter {sess.chapter}?")
         reply.notes += [f"Style note: {i}" for i in issues]
         return reply
+
+    async def _revise(self, sess: Session, instruction: str) -> Reply:
+        """The writer answered a proposal with changes ("yes but shorter", "no, make it longer"): redo it, don't save or drop."""
+        p = sess.pending
+        if p.kind == "edit":
+            orig = self.store.find(sess.book, p.paragraph_id)
+            msgs = self._context(sess, instruction, orig.text, orig) + [{"role": "user", "content":
+                f"Rewrite ONLY this paragraph.\n\nORIGINAL:\n{orig.text}\n\nYOUR PREVIOUS ATTEMPT (not saved):\n{p.text}\n\n"
+                f"The writer now says: {instruction}\nRevise the previous attempt accordingly. Output only the new paragraph."}]
+        else:
+            msgs = self._context(sess, instruction, p.text) + [{"role": "user", "content":
+                f"YOUR PREVIOUS DRAFT (not saved):\n{p.text}\n\nThe writer now says: {instruction}\nRevise the draft accordingly. Output only the paragraph."}]
+        new, issues = await self._gated(msgs)
+        p.text = new
+        self._remember(sess, instruction, "[revised the proposal]")
+        reply = self._reply(sess, f"Revised: {new} Should I save it?")
+        reply.notes += [f"Style note: {i}" for i in issues]
+        return reply
+
+    async def _accept(self, sess: Session) -> Reply:
+        if sess.pending.kind == "confirm_target":
+            p, sess.pending = sess.pending, None
+            return await self._propose_edit(sess, p.text, target=self.store.find(sess.book, p.paragraph_id), sure=True)
+        return self._commit(sess)
 
     def _commit(self, sess: Session) -> Reply:
         p, sess.pending = sess.pending, None

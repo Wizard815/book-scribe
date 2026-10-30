@@ -26,6 +26,21 @@ class BookError(Exception):
     pass
 
 
+def clean_paragraph(text: str) -> str:
+    """One paragraph, one line, nothing that could be mistaken for file structure.
+
+    Model output sometimes contains blank lines (extra paragraphs), a leading '#' or an HTML comment; written raw, those
+    would silently split or corrupt the chapter file and orphan later paragraph_ids.
+    """
+    s = re.sub(r"<!--.*?-->", " ", text, flags=re.S)
+    s = re.sub(r"\s*\n\s*", " ", s.strip())
+    s = re.sub(r"^#+\s*", "", s)
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    if not s:
+        raise BookError("empty paragraph")
+    return s
+
+
 @dataclass
 class Paragraph:
     id: str
@@ -140,8 +155,9 @@ class BookStore:
         p = self.chapter_path(book, n)
         if p.exists():
             raise BookError(f"chapter {n} already exists")
-        title = title.replace('"', "'") or f"Chapter {n}"
-        p.write_text(f'---\nchapter: {n}\ntitle: "{title}"\n---\n\n# Chapter {n}: {title}\n\n## Scene 1\n\n')
+        title = title.replace('"', "'").strip()
+        head = f"Chapter {n}: {title}" if title else f"Chapter {n}"
+        p.write_text(f'---\nchapter: {n}\ntitle: "{title or f"Chapter {n}"}"\n---\n\n# {head}\n\n## Scene 1\n\n')
         return n
 
     def find(self, book: str, paragraph_id: str) -> Paragraph:
@@ -161,7 +177,7 @@ class BookStore:
         end = marker + 1
         while end < len(lines) and lines[end].strip() and not PID_RE.match(lines[end].strip()) and not lines[end].startswith("#"):
             end += 1
-        lines[marker + 1 : end] = new_text.strip().split("\n")
+        lines[marker + 1 : end] = [clean_paragraph(new_text)]
         path.write_text("\n".join(lines))
         return self.find(book, paragraph_id)
 
@@ -174,8 +190,19 @@ class BookStore:
         raw = path.read_text()
         if not any(SCENE_RE.match(l.strip()) and int(SCENE_RE.match(l.strip()).group(1)) == scene for l in raw.splitlines()):
             raw = raw.rstrip("\n") + f"\n\n## Scene {scene}\n"
-        path.write_text(raw.rstrip("\n") + f"\n\n<!-- paragraph_id: {pid} -->\n{text.strip()}\n")
-        return Paragraph(pid, text.strip(), chapter, scene)
+        text = clean_paragraph(text)
+        path.write_text(raw.rstrip("\n") + f"\n\n<!-- paragraph_id: {pid} -->\n{text}\n")
+        return Paragraph(pid, text, chapter, scene)
+
+    def nth_paragraph(self, book: str, chapter: int, n: int, scene: int | None = None) -> Paragraph | None:
+        """n-th paragraph of a chapter (1-based, -1 = last), optionally within one scene. None if out of range."""
+        try:
+            paras = [p for p in self.paragraphs(book, chapter) if scene is None or p.scene == scene]
+        except BookError:
+            return None
+        if not paras or n == 0 or abs(n) > len(paras):
+            return None
+        return paras[n - 1] if n > 0 else paras[n]
 
     def resolve_ref(self, book: str, chapter: int, scene: int, para: int) -> Paragraph | None:
         pid = f"ch{chapter}_s{scene}_p{para}"
