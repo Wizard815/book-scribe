@@ -205,6 +205,11 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         return graph.info(book)
 
     # --- manuscript (read by the UI's book half) -----------------------
+    @app.get("/api/books")
+    async def books():
+        found = sorted(d.name for d in s.project_dir.iterdir() if d.is_dir() and not d.name.startswith(".") and (d / "chapters").is_dir()) if s.project_dir.is_dir() else []
+        return {"books": found, "default": s.default_book}
+
     @app.get("/api/books/{book}/chapters")
     async def chapters(book: str):
         try:

@@ -2,7 +2,7 @@
 const $ = (id) => document.getElementById(id);
 const sid = localStorage.getItem("bs_sid") || crypto.randomUUID().replace(/-/g, "");
 localStorage.setItem("bs_sid", sid);
-const state = { chapter: null, rec: null, chunks: [], speaking: null };
+const state = { chapter: null, rec: null, chunks: [], speaking: null, book: "demo", holding: false, ttsOff: false };
 
 function say(kind, text) {
   const d = document.createElement("div");
@@ -23,7 +23,7 @@ async function api(path, opts) {
 }
 
 async function loadChapter(n, focus, flash) {
-  const { paragraphs } = await (await api(`/books/demo/chapters/${n}`)).json();
+  const { paragraphs } = await (await api(`/books/${state.book}/chapters/${n}`)).json();
   state.chapter = n;
   $("chapter-title").textContent = "Chapter " + n;
   const root = $("prose");
@@ -41,12 +41,14 @@ async function loadChapter(n, focus, flash) {
 async function speak(text) {
   stopSpeaking();
   try {
+    if (state.ttsOff) throw new Error("no server TTS");
     const r = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
     if (r.ok) {
       const a = new Audio(URL.createObjectURL(await r.blob()));
       state.speaking = a;
       return a.play();
     }
+    if (r.status === 501) state.ttsOff = true;  // not configured: stop asking, use the browser's voice
   } catch (_) { /* fall through to browser voice */ }
   if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(text));
 }
@@ -56,6 +58,7 @@ function stopSpeaking() {
 }
 
 async function render(res) {
+  if (!res.text) { status("Ready"); return; }  // silence the speech model mis-heard as "Thank you." is ignored server-side: no bubble, no reply
   if (res.user_text) say("you", res.user_text);
   say("bot", res.text);
   $("mode").textContent = res.mode === "therapist" ? "Feedback" : "Narrator";
@@ -83,9 +86,11 @@ $("no").onclick = () => sendText("no");
 // Hold-to-talk. Pointer events cover mouse, touch and pen; Space also works for keyboard users.
 async function startRec() {
   stopSpeaking();
-  if (state.rec) return;
+  if (state.rec || state.holding) return;
+  state.holding = true;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (!state.holding) { stream.getTracks().forEach((t) => t.stop()); return; }  // released before the mic was ready
     state.chunks = [];
     state.rec = new MediaRecorder(stream);
     state.rec.ondataavailable = (e) => state.chunks.push(e.data);
@@ -103,9 +108,10 @@ async function startRec() {
     $("mic").classList.add("rec");
     $("mic").textContent = "🔴 Listening… release to send";
     status("Listening");
-  } catch (e) { status("Mic blocked"); say("note", "Allow microphone access in the browser."); }
+  } catch (e) { state.holding = false; status("Mic blocked"); say("note", "Allow microphone access in the browser."); }
 }
 function stopRec() {
+  state.holding = false;
   $("mic").classList.remove("rec");
   $("mic").textContent = "🎙️ Hold to talk";
   if (state.rec && state.rec.state === "recording") state.rec.stop();
@@ -120,7 +126,8 @@ addEventListener("keyup", (e) => { if (e.code === "Space") stopRec(); });
 
 (async () => {
   try {
-    const { chapters } = await (await api("/books/demo/chapters")).json();
+    state.book = (await (await api("/books")).json()).default;
+    const { chapters } = await (await api(`/books/${state.book}/chapters`)).json();
     if (chapters.length) await loadChapter(chapters[0]);
     say("note", "Hold the big button and talk.");
   } catch (e) { status("Offline"); say("note", String(e)); }

@@ -289,3 +289,20 @@ docker compose up -d        # UI on :8080, agent API behind it at /api
 - **Vendored dependencies:** `vendor/mem0`, `vendor/graphify`, `vendor/graphify-novel` — see `vendor/VENDOR.md`.
 - **Tests:** `cd agent && pip install -r requirements-dev.txt ../vendor/mem0 && pytest`
 
+## Importing an existing draft
+
+```bash
+cd agent
+PROJECT_DIR=../data/books python import_text.py --book mybook --file draft.txt [--chapters 5]
+```
+Splits on `Chapter N` headings, joins hard-wrapped lines into one paragraph each, and assigns stable `paragraph_id`s. Add
+characters to `data/books/mybook/bible/characters/*.md` (YAML front-matter; an `aliases:` list helps spoken names, e.g. "Lizzy").
+
+## How spoken commands are handled
+
+Transcripts are messy, so routing works on a normalised copy (`agent/intent.py`): number words ("chapter two"), "mister" = "Mr.",
+commas optional. Edits only touch a paragraph the agent is **sure** of (explicit "chapter 3 paragraph 2", "the opening line", or a
+clear match for the *described scene*, ignoring the instruction words); otherwise it reads its guess back ("Do you mean chapter 1,
+paragraph 3, starting …?") and waits. "Yes, but shorter" and "no, make it longer" revise the proposal; only a clean "yes" saves.
+Silence that whisper turned into "Thank you." is ignored without a model call.
+
