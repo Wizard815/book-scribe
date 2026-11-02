@@ -37,6 +37,7 @@ def norm(text: str) -> str:
             out.append(t)
         i += 1
     s = re.sub(r"(?<=\w)\.(?=\s|$)", "", "".join(out))  # "mr." -> "mr"
+    s = re.sub(r"\b(?!(?:let|it|he|she|that|there|here|what|who|how|where|when|why|one)'s\b)(\w+)'s\b", r"\1", s)  # "Jonas's voice" -> "jonas voice"
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]", " ", s)).strip()
 
 
@@ -225,3 +226,31 @@ def locator_query(text: str) -> str:
     if v and v.start() > 0:  # "...when they meet at the cafe make him nervous": the clause ends where the instruction starts
         tail = tail[: v.start()]
     return tail.strip() or text
+
+
+# --- voices ---------------------------------------------------------------------------------------------------
+_V_LIST = re.compile(r"\b(?:what|which|list|show|tell me)\b.*\bvoices?\b|\bavailable voices\b|\bvoice options\b")
+_V_RESET = re.compile(r"\b(?:reset|forget|clear|remove|undo|start over)\b.*\bvoice\b")
+_V_ANOTHER = re.compile(r"\b(?:another|different|other|new|next)\b.*\bvoice\b|\bvoice\b.*\b(?:another|different)\b|\btry another\b|\bnot (?:this|that) voice\b")
+_V_AUDITION = re.compile(r"^(?:(?:please|ok|okay|now|and|so)\s+)*(?:let me hear|lets hear|let's hear|can i hear|could i hear|i want to hear|i'd like to hear|play|play me|audition|test|try out|say something (?:as|in)|read (?:me )?a line (?:as|in)|what does .+ sound like|how does .+ sound)\b|\bsound(?:s)? like\b")
+
+
+def voice_command(text: str) -> dict | None:
+    """A request about how someone *sounds*. Returns {"action": ...} or None.
+
+    The caller still has to find out *whose* voice (a character, the narrator, "your voice"): "play the next paragraph"
+    matches the audition shape but names nobody, so it is not a voice command.
+    """
+    n = norm(text)
+    has_voice = bool(re.search(r"\bvoices?\b", n))
+    if _V_LIST.search(n) and has_voice:
+        return {"action": "list"}
+    if _V_RESET.search(n):
+        return {"action": "reset"}
+    if _V_ANOTHER.search(n):
+        return {"action": "another"}
+    if _V_AUDITION.search(n) and not re.search(r"\b(?:more|less|too|deeper|slower|faster|higher|lower)\b", n):
+        return {"action": "audition"}
+    if has_voice:
+        return {"action": "adjust", "feedback": text}
+    return None

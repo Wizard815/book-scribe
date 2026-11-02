@@ -28,7 +28,10 @@ DEFAULT_LABELS = ["T1 · Local ROCm", "T2 · CPU fallback", "T3 · Frontier"]
 # Suggested starting points for the admin form. Purely UI sugar; any URL works.
 PRESETS = [
     {"id": "local", "label": "Local / LAN server (any OpenAI-compatible)", "kind": "local", "base_url": "http://UNRAID_IP:8080"},
-    {"id": "openai", "label": "OpenAI", "kind": "cloud", "base_url": "https://api.openai.com"},
+    {"id": "openai", "label": "OpenAI", "kind": "cloud", "base_url": "https://api.openai.com",
+     # Starting points for the text-to-speech form; tags are my judgement of each voice, so edit them freely.
+     "tts_model": "gpt-4o-mini-tts", "tts_style_field": "instructions",
+     "tts_voices": "alloy:neutral, ash:male, ballad:male, coral:female, echo:male, fable:male, nova:female, onyx:male/low, sage:female, shimmer:female/high, verse:male"},
     {"id": "openrouter", "label": "OpenRouter", "kind": "cloud", "base_url": "https://openrouter.ai/api"},
     {"id": "anthropic", "label": "Anthropic (OpenAI-compatible)", "kind": "cloud", "base_url": "https://api.anthropic.com"},
     {"id": "custom", "label": "Custom OpenAI-compatible URL", "kind": "cloud", "base_url": ""},
@@ -43,7 +46,9 @@ class Profile:
     base_url: str = ""
     api_key: str = ""
     model: str = ""
-    voice: str = ""  # tts only
+    voice: str = ""  # tts only: the default voice (used for the assistant)
+    voices: str = ""  # tts only: the voices this backend offers, "alloy, onyx:male/low, nova:female" (tags after ":" separated by "/" help auto-picking)
+    style_field: str = ""  # tts only: request field that carries a delivery instruction ("instructions" for OpenAI gpt-4o-mini-tts)
     timeout: float = 0  # seconds to wait for a reply; 0 = role default
 
     def public(self) -> dict:
@@ -202,6 +207,10 @@ class Registry:
             p.kind, p.base_url, p.timeout = kind, base, timeout
             p.model = str(data.get("model", p.model)).strip()
             p.voice = str(data.get("voice", p.voice)).strip()
+            p.voices = str(data.get("voices", p.voices)).strip()[:2000]
+            p.style_field = str(data.get("style_field", p.style_field)).strip()
+            if p.style_field and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,40}", p.style_field):
+                raise ProviderError("style_field must be a plain field name such as instructions")
             if data.get("api_key"):
                 p.api_key = str(data["api_key"]).strip()
             if data.get("clear_key"):

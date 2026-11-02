@@ -20,6 +20,7 @@ from kg import StoryKG
 from memory.store import MemoryManager
 from providers import ProviderError, Registry
 from story_graph import StoryGraph
+from voices import VoiceBook
 from settings import load_settings
 
 
@@ -34,6 +35,13 @@ class ChatIn(BaseModel):
 
 class EditIn(BaseModel):
     text: str
+
+
+class SpeakIn(BaseModel):
+    text: str
+    speaker: str = "assistant"  # assistant | narrator | a character's name
+    draft: str | None = None  # an unsaved voice being auditioned
+    book: str | None = None
 
 
 class TiersIn(BaseModel):
@@ -54,6 +62,8 @@ class ProfileIn(BaseModel):
     clear_key: bool = False
     model: str = ""
     voice: str = ""
+    voices: str = ""
+    style_field: str = ""
     timeout: float = 0
     tier: int | None = None
 
@@ -66,9 +76,10 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     reg = Registry(s)
     mem = memory or MemoryManager(s, reg)
     router = Router(reg)
-    llm, stt, tts = llm or LLM(router), stt or STT(router), tts or TTS(router)
+    voices = VoiceBook(store, reg)
+    llm, stt, tts = llm or LLM(router), stt or STT(router), tts or TTS(router, voices=voices, default_book=s.default_book)
     graph = graph or StoryGraph(store, reg)
-    agent = Agent(s, store, llm, mem, StoryKG(store), graph, check_drift)
+    agent = Agent(s, store, llm, mem, StoryKG(store), graph, check_drift, voices)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -124,10 +135,10 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         return {"session_id": sid, "user_text": text, **asdict(reply), "served_by": router.served("stt", "chat")}
 
     @app.post("/api/tts")
-    async def speak(body: EditIn):
+    async def speak(body: SpeakIn):
         if not tts.enabled:
             raise HTTPException(501, "TTS_URL not configured; the UI falls back to browser speech")
-        audio = await tts.speak(body.text)
+        audio = await tts.speak(body.text, body.speaker, body.book, body.draft)
         return Response(audio, media_type="audio/mpeg", headers={"X-Served-Tier": router.last["tts"].label.encode("ascii", "replace").decode()})
 
     @app.post("/api/voice-profile")
@@ -209,6 +220,17 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     async def books():
         found = sorted(d.name for d in s.project_dir.iterdir() if d.is_dir() and not d.name.startswith(".") and (d / "chapters").is_dir()) if s.project_dir.is_dir() else []
         return {"books": found, "default": s.default_book}
+
+    @app.get("/api/books/{book}/voices")
+    async def book_voices(book: str):
+        """Saved voice profiles for a book plus the voices the TTS provider offers."""
+        try:
+            store.book_dir(book)
+        except BookError as e:
+            raise HTTPException(400, str(e))
+        from voices import parse_pool
+        prim = voices.primary()
+        return {"profiles": voices.all_profiles(book), "pool": [{"name": v.name, "tags": sorted(v.tags)} for v in parse_pool(prim)] if prim else []}
 
     @app.get("/api/books/{book}/chapters")
     async def chapters(book: str):
