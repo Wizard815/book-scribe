@@ -30,6 +30,8 @@ class Settings:
     writer_age: str | None = None
     tts_mode: str = "single"  # single | multi
     voice_profile: dict = field(default_factory=dict)
+    # reading aloud
+    speech_llm: bool = True  # let the chat model assign speakers to dialogue the rules can't place (cached)
     # quality gate
     max_rewrite_attempts: int = 1
 

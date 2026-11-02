@@ -306,3 +306,22 @@ clear match for the *described scene*, ignoring the instruction words); otherwis
 paragraph 3, starting …?") and waits. "Yes, but shorter" and "no, make it longer" revise the proposal; only a clean "yes" saves.
 Silence that whisper turned into "Thank you." is ignored without a model call.
 
+## Character voices
+
+Each character gets a remembered voice (`data/books/<book>/voices.json`); the narrator and the assistant have their own. Reading
+a paragraph aloud splits it into narration and dialogue and speaks each part in the right voice (`agent/speech.py`).
+
+- **Setup:** in the admin menu, on a text-to-speech provider, list the voices it offers, e.g. `alloy, onyx:male/low, nova:female`
+  (tags after `:` separated by `/`; Kokoro-style names like `af_heart` are tagged automatically). Optionally set a *style field*
+  (OpenAI `gpt-4o-mini-tts` uses `instructions`) so a character's delivery ("dry, deadpan") is sent too.
+- **Auto-pick:** from the bible entry: gender and age words, titles (Mr./Mrs.), temperament, plus an optional `gender:` or
+  `aliases:` in the character's front-matter. Everyone gets a different voice while the list allows, and the choice is saved.
+- **Per tier:** a character is stored as traits (gender, pitch), speed and style, with a concrete voice **per TTS provider**, so
+  a T3 cloud fallback still picks a similar-sounding voice from *its* list rather than a local voice name it doesn't have.
+- **Who is speaking:** dialogue tags ("said Mr. Bennet", "cried his wife" with `aliases: [his wife]`), then "he/she" by gender,
+  then two-person alternation, then people addressed by name ("My dear Mr. Bennet, …"). Quotes it can't place are read by the
+  narrator; if a chat model is available it resolves the leftovers (cached).
+- **Edit by talking:** "let me hear Mr. Bennet" · "deeper and a bit slower" · "more sarcastic" · "make him sound like a tired
+  professor" (model-assisted) · "use onyx for the narrator" · "try another voice" · "what voices do you have" · "forget Jane's
+  voice". Nothing is saved until you say *keep it*; what you heard is exactly what is saved.
+

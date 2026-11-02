@@ -2,7 +2,7 @@
 const $ = (id) => document.getElementById(id);
 const sid = localStorage.getItem("bs_sid") || crypto.randomUUID().replace(/-/g, "");
 localStorage.setItem("bs_sid", sid);
-const state = { chapter: null, rec: null, chunks: [], speaking: null, book: "demo", holding: false, ttsOff: false };
+const state = { chapter: null, rec: null, chunks: [], speaking: null, book: "demo", holding: false, ttsOff: false, speakToken: 0 };
 
 function say(kind, text) {
   const d = document.createElement("div");
@@ -38,21 +38,69 @@ async function loadChapter(n, focus, flash) {
   if (f) f.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
-async function speak(text) {
-  stopSpeaking();
-  try {
-    if (state.ttsOff) throw new Error("no server TTS");
-    const r = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
-    if (r.ok) {
-      const a = new Audio(URL.createObjectURL(await r.blob()));
-      state.speaking = a;
-      return a.play();
-    }
-    if (r.status === 501) state.ttsOff = true;  // not configured: stop asking, use the browser's voice
-  } catch (_) { /* fall through to browser voice */ }
-  if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+// --- speech: one segment per speaker, each in that speaker's remembered voice -----------------------------------
+function browserVoiceFor(speaker) {
+  // Fallback when the server has no TTS: still keep one distinct, remembered browser voice per speaker.
+  const voices = (window.speechSynthesis && speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang))) || [];
+  if (!voices.length) return null;
+  let map = {};
+  try { map = JSON.parse(localStorage.getItem("bs_browser_voices") || "{}"); } catch (_) {}
+  if (map[speaker] === undefined) {
+    const used = new Set(Object.values(map));
+    let i = [...speaker].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % voices.length;
+    for (let k = 0; k < voices.length && used.has(i); k++) i = (i + 1) % voices.length;
+    map[speaker] = i;
+    try { localStorage.setItem("bs_browser_voices", JSON.stringify(map)); } catch (_) {}
+  }
+  return voices[map[speaker] % voices.length];
 }
+
+function speakInBrowser(seg) {
+  return new Promise((done) => {
+    if (!("speechSynthesis" in window)) return done();
+    const u = new SpeechSynthesisUtterance(seg.text);
+    const v = browserVoiceFor(seg.speaker);
+    if (v) u.voice = v;
+    u.onend = u.onerror = () => done();
+    speechSynthesis.speak(u);
+  });
+}
+
+async function fetchSegment(seg) {
+  if (state.ttsOff) return null;
+  try {
+    const r = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: seg.text, speaker: seg.speaker || "assistant", draft: seg.draft || null }) });
+    if (r.status === 501) { state.ttsOff = true; return null; }  // not configured: stop asking, use the browser's voices
+    return r.ok ? await r.blob() : null;
+  } catch (_) { return null; }
+}
+
+function playBlob(blob) {
+  return new Promise((done) => {
+    const a = new Audio(URL.createObjectURL(blob));
+    state.speaking = a;
+    a.onended = a.onerror = () => done();
+    a.play().catch(() => done());
+  });
+}
+
+async function speakSegments(segs) {
+  stopSpeaking();
+  const token = ++state.speakToken;
+  segs = (segs || []).filter((s) => s.text && s.text.trim());
+  let next = segs.length ? fetchSegment(segs[0]) : null;
+  for (let i = 0; i < segs.length; i++) {
+    const blob = await next;
+    if (token !== state.speakToken) return;  // the writer pressed the mic or a newer reply arrived
+    next = i + 1 < segs.length ? fetchSegment(segs[i + 1]) : null;  // fetch the next voice while this one plays
+    if (blob) await playBlob(blob); else await speakInBrowser(segs[i]);
+    if (token !== state.speakToken) return;
+  }
+}
+
 function stopSpeaking() {
+  state.speakToken++;
   if (state.speaking) state.speaking.pause();
   if ("speechSynthesis" in window) speechSynthesis.cancel();
 }
@@ -63,13 +111,18 @@ async function render(res) {
   say("bot", res.text);
   $("mode").textContent = res.mode === "therapist" ? "Feedback" : "Narrator";
   $("pending").hidden = !res.pending;
+  const voice = res.pending && res.pending.kind === "voice";  // auditioning a voice: different buttons
+  $("yes").textContent = voice ? "Keep this voice" : "Yes, save";
+  $("no").textContent = voice ? "Discard" : "No";
+  $("another").hidden = !voice;
+  $("log").scrollTop = $("log").scrollHeight;  // the buttons just shrank the log: keep the newest message visible above them
   (res.notes || []).forEach((n) => say("note", n));
   await loadChapter(res.chapter, res.focus, res.changed && res.changed.length);
   // Tell the writer when a lower tier answered, so a quality or latency change is never a mystery.
   const fb = Object.entries(res.served_by || {}).filter(([, s]) => s.fell_back);
   fb.forEach(([role, s]) => say("note", `Using fallback for ${role}: ${s.label}`));
   status(fb.length ? "Ready (fallback)" : "Ready");
-  speak(res.text);
+  speakSegments(res.speech && res.speech.length ? res.speech : [{ speaker: "assistant", text: res.text }]);
 }
 
 async function send(promise) {
@@ -82,6 +135,7 @@ const sendText = (text) => send(api("/chat", { method: "POST", headers: { "Conte
 
 $("yes").onclick = () => sendText("yes, save it");
 $("no").onclick = () => sendText("no");
+$("another").onclick = () => sendText("try another voice");
 
 // Hold-to-talk. Pointer events cover mouse, touch and pen; Space also works for keyboard users.
 async function startRec() {

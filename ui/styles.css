@@ -57,3 +57,6 @@ header #status { margin-left: auto; }
 .badge.ok { background: #1f4d38; color: #bff3d9; } .badge.bad { background: #5a2323; color: #ffd0d0; }
 .err { color: var(--bad); }
 #admin .prof select { width: auto; padding: 7px; }
+
+#pending #another { background: var(--accent); color: #1b1400; }
+#pending #another[hidden] { display: none; }

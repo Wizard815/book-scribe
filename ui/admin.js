@@ -147,6 +147,7 @@
       const x = snap.presets.find((q) => q.id === preset.value);
       if (!x) return;
       f.base_url.value = x.base_url; f.kind.value = x.kind;
+      if (role === "tts" && x.tts_voices) { f.voices.value = x.tts_voices; f.style_field.value = x.tts_style_field || ""; f.model.value = f.model.value || x.tts_model || ""; }
       if (x.kind === "cloud" && f.tier.value === "1") f.tier.value = "3";
       if (!f.label.value) f.label.value = x.label.split(" (")[0];
     } }, h("option", { value: "", textContent: "Start from a preset…" }), ...snap.presets.map((x) => h("option", { value: x.id, textContent: x.label })));
@@ -168,7 +169,9 @@
         field(p && p.has_key ? `API key (stored ${p.key_hint}; leave blank to keep)` : "API key (cloud only)", "api_key", "password", { value: "", autocomplete: "new-password" })),
       h("div", { className: "row" },
         field("Give up after (seconds, 0 = default)", "timeout", "number", { min: 0, max: 3600, step: 1 }),
-        role === "tts" ? field("Voice", "voice") : h("div")),
+        role === "tts" ? field("Default voice (used for my own speech)", "voice") : h("div")),
+      role === "tts" ? field("Voices on this server, to give characters different ones: name, or name:tag/tag (male, female, neutral, low, high)", "voices", "text", { placeholder: "alloy, onyx:male/low, nova:female" }) : null,
+      role === "tts" ? field("Style field (optional; the request field for delivery instructions, e.g. instructions for OpenAI gpt-4o-mini-tts)", "style_field") : null,
       dl,
       h("button", { className: "primary", textContent: "Save" }),
       h("button", { type: "button", textContent: "Cancel", onclick: () => host.replaceChildren() }));

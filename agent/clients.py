@@ -62,15 +62,28 @@ class STT(_Base):
 class TTS(_Base):
     role = "tts"
 
+    def __init__(self, router: Router, client: httpx.AsyncClient | None = None, voices=None, default_book: str = "demo"):
+        super().__init__(router, client)
+        self.voices, self.default_book = voices, default_book
+
     @property
     def enabled(self) -> bool:
         return bool(self.router.reg.chain("tts"))
 
-    async def speak(self, text: str, voice: str | None = None) -> bytes:
+    async def speak(self, text: str, speaker: str = "assistant", book: str | None = None, draft: str | None = None) -> bytes:
+        """Speak `text` as `speaker` (assistant, narrator or a character). The voice is resolved per provider *inside* the
+        failover loop: if T1 is down and T3 answers, the same character gets T3's closest voice, not a T1 voice name."""
         async def go(p: Profile) -> bytes:
-            r = await self.http.post(
-                f"{p.base_url}/v1/audio/speech", headers=headers(p), timeout=timeout_for("tts", p),
-                json={"model": p.model or "tts-1", "input": text, "voice": voice or p.voice or "alloy"})
+            voice, speed, style = (p.voice or "alloy", 1.0, "")
+            if self.voices:
+                r = self.voices.resolve(book or self.default_book, speaker, p, draft)
+                voice, speed, style = r.voice or voice, r.speed, r.style
+            body = {"model": p.model or "tts-1", "input": text, "voice": voice}
+            if abs(speed - 1.0) > 0.01:
+                body["speed"] = speed
+            if style and p.style_field:
+                body[p.style_field] = style
+            r = await self.http.post(f"{p.base_url}/v1/audio/speech", headers=headers(p), timeout=timeout_for("tts", p), json=body)
             r.raise_for_status()
             return r.content
 
