@@ -1,0 +1,349 @@
+<style>
+/* Site-only parts: the writer login and the Settings page. Same tokens and the same big-button rules as the workspace. */
+.overlay { position: fixed; inset: 0; z-index: 200; overflow-y: auto; background: var(--bg); padding: 16px max(16px, env(safe-area-inset-left, 0px)); }
+.overlay[hidden] { display: none; }
+.card, .panel { max-width: 720px; margin: 4vh auto; background: var(--surface); border: 2px solid var(--line); border-radius: 20px; padding: 24px; display: flex; flex-direction: column; gap: 12px; }
+.panel { max-width: 960px; margin: 0 auto; }
+.card h2, .panel h2 { margin: 0; font-size: 32px; }
+.overlay label { font-size: 22px; font-weight: 700; margin-top: 6px; }
+.overlay .hint { margin: 0; font-size: 19px; color: var(--muted); }
+.overlay input[type=text], .overlay input[type=password], .overlay input[type=number], .overlay select, .overlay textarea {
+  width: 100%; min-height: 60px; padding: 10px 14px; font: inherit; font-size: 24px; color: var(--fg); background: var(--bg); border: 3px solid var(--line); border-radius: 14px;
+}
+.overlay textarea { min-height: 140px; resize: vertical; }
+.overlay button, .overlay a.btn { min-height: 60px; padding: 8px 22px; font: inherit; font-size: 22px; font-weight: 700; color: var(--fg); background: var(--surface); border: 3px solid var(--line); border-radius: 14px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+.overlay button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.overlay button.danger { border-color: var(--live); color: var(--live); }
+.overlay button[aria-pressed="true"], .overlay button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.overlay a.link { font-size: 20px; color: var(--fg); }
+.err { color: var(--live); font-size: 22px; font-weight: 700; min-height: 1.3em; margin: 0; }
+.ok { color: var(--muted); font-size: 22px; font-weight: 700; margin: 0; min-height: 1.3em; }
+.sbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.entry { border: 2px solid var(--line); border-radius: 14px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.entry .name { font-size: 24px; font-weight: 700; flex: 1 1 200px; }
+.entry .meta { font-size: 18px; color: var(--muted); flex: 1 1 100%; }
+.sect { margin: 16px 0 4px; font-size: 26px; font-weight: 700; }
+.form { border: 3px dashed var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+@media (max-width: 600px) { .card, .panel { padding: 14px; border-radius: 14px; } .overlay button { font-size: 19px; min-height: 54px; padding: 6px 14px; } .card h2, .panel h2 { font-size: 26px; } }
+</style>
+
+<div id="loginView" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+  <form id="loginForm" class="card">
+    <h2 id="loginTitle">Book Scribe</h2>
+    <p id="loginNote" class="hint">Log in to write.</p>
+    <label for="loginUser">Username</label>
+    <input id="loginUser" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    <label for="loginPass">Password</label>
+    <input id="loginPass" type="password" autocomplete="current-password" required>
+    <button type="button" id="showPass">Show password</button>
+    <p id="loginErr" class="err" role="alert"></p>
+    <button type="submit" class="primary" id="loginGo">Log in</button>
+    <a class="link" href="/admin.html">Admin login</a>
+  </form>
+</div>
+
+<div id="settingsView" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="setTitle">
+  <div class="panel">
+    <div class="sbar"><h2 id="setTitle">Settings</h2><button type="button" id="setClose" class="primary">Close</button></div>
+    <div class="tabs" role="tablist" aria-label="Settings sections">
+      <button type="button" role="tab" data-tab="words">My words</button>
+      <button type="button" role="tab" data-tab="bible">Story bible</button>
+      <button type="button" role="tab" data-tab="voices">Voices</button>
+      <button type="button" role="tab" data-tab="books">Books</button>
+      <button type="button" role="tab" data-tab="account">Account</button>
+    </div>
+    <div id="setBody" role="tabpanel" style="display:flex;flex-direction:column;gap:10px"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const BS = window.BS, $ = (id) => document.getElementById(id);
+  let status = { writer_account: false, auth_required: true }, tab = "words", settingsOpen = false;
+
+  // ---- small helpers ---------------------------------------------------------------------------------------------
+  function h(tag, props = {}, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) k.startsWith("aria-") || k === "for" || k === "role" ? el.setAttribute(k, v) : (el[k] = v);
+    el.append(...kids.filter((x) => x != null && x !== false));
+    return el;
+  }
+  async function call(method, path, body) {
+    const r = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) { showLogin("Please log in again."); throw new Error("Please log in again."); }
+    if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : "That did not work. Please check what you typed.");
+    return j;
+  }
+  const book = () => BS.state.bookName;
+  const enc = encodeURIComponent;
+  const msg = (box, text, bad) => { box.className = bad ? "err" : "ok"; box.textContent = text || ""; };
+
+  // ---- login -------------------------------------------------------------------------------------------------------
+  function showLogin(note) {
+    $("settingsView").hidden = true; settingsOpen = false;
+    $("loginView").hidden = false;
+    $("loginNote").textContent = note || (status.writer_account ? "Log in to write." : "There is no account yet. The admin creates it on the admin page.");
+    $("loginErr").textContent = "";
+    $("loginPass").value = "";
+    setTimeout(() => $("loginUser").focus(), 50);
+  }
+  function hideLogin() { $("loginView").hidden = true; }
+  $("showPass").onclick = () => {
+    const p = $("loginPass"), show = p.type === "password";
+    p.type = show ? "text" : "password"; $("showPass").textContent = show ? "Hide password" : "Show password";
+  };
+  $("loginForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("loginGo").disabled = true; $("loginErr").textContent = "";
+    try {
+      const r = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: $("loginUser").value, password: $("loginPass").value }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { $("loginErr").textContent = typeof j.detail === "string" ? j.detail : "I could not log you in."; return; }
+      $("loginPass").value = ""; hideLogin(); BS.authNeeded = false; mountTools(); await BS.afterLogin();
+    } catch (_) { $("loginErr").textContent = "I could not reach the server."; }
+    finally { $("loginGo").disabled = false; }
+  });
+  BS.needLogin = () => showLogin();
+
+  function mountTools() {
+    const box = $("siteTools"); box.hidden = false; box.replaceChildren();
+    const s = h("button", { type: "button", textContent: "Settings" }); s.onclick = () => openSettings();
+    box.append(s);
+    if (status.auth_required) {
+      const o = h("button", { type: "button", textContent: "Log out" });
+      o.onclick = async () => { try { await fetch("/api/auth/logout", { method: "POST" }); } catch (_) {} location.reload(); };
+      box.append(o);
+    }
+  }
+
+  // ---- settings shell -------------------------------------------------------------------------------------------------
+  function openSettings(t) {
+    settingsOpen = true; $("settingsView").hidden = false; render(t || tab);
+    setTimeout(() => document.querySelector("#settingsView .tabs button").focus(), 50);
+  }
+  function closeSettings() { settingsOpen = false; $("settingsView").hidden = true; }
+  $("setClose").onclick = closeSettings;
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && settingsOpen) closeSettings(); });
+  document.querySelectorAll("#settingsView .tabs button").forEach((b) => (b.onclick = () => render(b.dataset.tab)));
+  let seq = 0;
+  async function render(t) {
+    const mine = ++seq;  // ignore a slow tab that finishes after the writer moved on
+    tab = t;
+    document.querySelectorAll("#settingsView .tabs button").forEach((b) => { b.setAttribute("aria-selected", String(b.dataset.tab === t)); });
+    const body = $("setBody"); body.replaceChildren(h("p", { className: "hint", textContent: "Loading…" }));
+    try { const dom = await ({ words: tabWords, bible: tabBible, voices: tabVoices, books: tabBooks, account: tabAccount }[t])(); if (mine === seq) body.replaceChildren(...dom); }
+    catch (e) { if (mine === seq) body.replaceChildren(h("p", { className: "err", textContent: e.message })); }
+  }
+
+  // ---- My words -----------------------------------------------------------------------------------------------------------
+  async function tabWords() {
+    const prefs = await call("GET", "/api/settings");
+    const out = h("p", { className: "ok" });
+    const size = h("span", { className: "hint" });
+    const upd = () => { size.textContent = `Words are ${[18, 22, 26, 32, 40][BS.state.size]} pixels tall.`; };
+    upd();
+    const bigger = h("button", { type: "button", textContent: "Bigger A +" }), smaller = h("button", { type: "button", textContent: "Smaller A −" });
+    bigger.onclick = () => { BS.state.size = Math.min(4, BS.state.size + 1); BS.applySize(); upd(); };
+    smaller.onclick = () => { BS.state.size = Math.max(0, BS.state.size - 1); BS.applySize(); upd(); };
+    const read = h("button", { type: "button" }); const paintRead = () => { read.textContent = "Read aloud: " + (BS.state.read ? "On" : "Off"); read.setAttribute("aria-pressed", String(BS.state.read)); };
+    read.onclick = () => { BS.state.read = !BS.state.read; BS.applyRead(); paintRead(); }; paintRead();
+    const age = h("input", { id: "prefAge", type: "text", value: prefs.writer_age, maxLength: 20, inputMode: "numeric" });
+    const name = h("input", { id: "prefName", type: "text", value: prefs.display_name, maxLength: 60 });
+    const save = h("button", { type: "button", className: "primary", textContent: "Save" });
+    save.onclick = async () => { try { await call("PUT", "/api/settings", { writer_age: age.value, display_name: name.value }); msg(out, "Saved."); } catch (e) { msg(out, e.message, true); } };
+    return [
+      h("div", { className: "sect", textContent: "Words on the screen" }), size, h("div", { className: "row" }, smaller, bigger),
+      h("div", { className: "sect", textContent: "Reading to me" }), read,
+      h("div", { className: "sect", textContent: "About me" }),
+      h("p", { className: "hint", textContent: "Optional. Your age helps me match the style of the words I suggest. I never mention it." }),
+      h("label", { for: "prefAge", textContent: "Your age" }), age,
+      h("label", { for: "prefName", textContent: "What should I call you?" }), name,
+      h("div", { className: "row" }, save), out,
+    ];
+  }
+
+  // ---- Story bible -------------------------------------------------------------------------------------------------------------
+  const KINDS = {
+    characters: { title: "Characters", one: "character", add: "Add a character" },
+    threads: { title: "Story threads", one: "thread", add: "Add a thread" },
+    world: { title: "World and places", one: "place or rule", add: "Add a place or rule" },
+  };
+  async function tabBible() {
+    if (!book()) return [h("p", { className: "hint", textContent: "Open a book first." })];
+    const b = await call("GET", `/api/books/${enc(book())}/bible`);
+    const out = [h("p", { className: "hint", textContent: `Book: ${book()}. The story bible is what I treat as true about your story. I never go against it.` })];
+    // premise
+    const prem = h("textarea", { id: "premise", value: b.premise.replace(/^# Premise\s*/, "") }), pmsg = h("p", { className: "ok" });
+    const psave = h("button", { type: "button", className: "primary", textContent: "Save premise" });
+    psave.onclick = async () => { try { await call("PUT", `/api/books/${enc(book())}/bible/doc/premise`, { text: "# Premise\n\n" + prem.value.trim() }); msg(pmsg, "Saved."); } catch (e) { msg(pmsg, e.message, true); } };
+    out.push(h("div", { className: "sect", textContent: "The idea of the story" }), h("label", { for: "premise", className: "sr", textContent: "Premise" }), prem, h("div", { className: "row" }, psave), pmsg);
+    for (const kind of Object.keys(KINDS)) {
+      const host = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+      const list = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+      for (const e of b[kind]) list.append(entryRow(kind, e, host));
+      const add = h("button", { type: "button", textContent: KINDS[kind].add }); add.onclick = () => host.replaceChildren(entryForm(kind, null, host));
+      out.push(h("div", { className: "sect", textContent: KINDS[kind].title }), list, h("div", { className: "row" }, add), host);
+    }
+    return out;
+  }
+  function summary(kind, e) {
+    const s = e.state || {};
+    return [kind === "characters" && (s.role || s.gender), kind === "threads" && (s.status || "open"), s.temperament, Array.isArray(s.aliases) && s.aliases.length ? "also called " + s.aliases.join(", ") : null].filter(Boolean).join(" · ");
+  }
+  function entryRow(kind, e, host) {
+    const del = h("button", { type: "button", className: "danger", textContent: "Delete" });
+    let armed = 0;
+    del.onclick = async () => {
+      if (!armed) { armed = setTimeout(() => { armed = 0; del.textContent = "Delete"; }, 4000); del.textContent = "Really delete? Tap again"; return; }
+      clearTimeout(armed);
+      try { await call("DELETE", `/api/books/${enc(book())}/bible/${kind}/${enc(e.slug)}`); render("bible"); } catch (err) { del.textContent = err.message; }
+    };
+    const edit = h("button", { type: "button", textContent: "Edit" }); edit.onclick = () => host.replaceChildren(entryForm(kind, e, host));
+    return h("div", { className: "entry" }, h("span", { className: "name", textContent: e.name }), edit, del, summary(kind, e) ? h("span", { className: "meta", textContent: summary(kind, e) }) : null);
+  }
+  function entryForm(kind, e, host) {
+    const st = (e && e.state) || {};
+    const f = h("form", { className: "form" });
+    const text = (id, label, val, extra = {}) => [h("label", { for: id, textContent: label }), h("input", { id, type: "text", value: val || "", maxLength: 300, ...extra })];
+    const name = text("bfName", `Name of the ${KINDS[kind].one}`, e && e.name, { required: true, maxLength: 80 });
+    const fields = [...name];
+    let gender, role, aliases, temper, status;
+    if (kind === "characters") {
+      gender = h("select", { id: "bfGender" }, ...[["", "Not set"], ["male", "Male"], ["female", "Female"], ["neutral", "Neither / not said"]].map(([v, l]) => h("option", { value: v, textContent: l })));
+      gender.value = st.gender || "";
+      role = text("bfRole", "Role in the story (mother, friend, villain…)", st.role);
+      aliases = text("bfAlias", "Also called (separate with commas, e.g. Lizzy, Eliza, his wife)", Array.isArray(st.aliases) ? st.aliases.join(", ") : st.aliases || "");
+      temper = text("bfTemper", "How they come across (dry, nervous, warm…)", st.temperament);
+      fields.push(h("label", { for: "bfGender", textContent: "Gender (picks their voice)" }), gender, ...role, ...aliases, ...temper);
+    }
+    if (kind === "threads") {
+      status = h("select", { id: "bfStatus" }, h("option", { value: "open", textContent: "Still open" }), h("option", { value: "resolved", textContent: "Resolved" }));
+      status.value = st.status || "open";
+      fields.push(h("label", { for: "bfStatus", textContent: "Where it stands" }), status);
+    }
+    const body = h("textarea", { id: "bfBody", value: (e && e.body) || "" });
+    const msgBox = h("p", { className: "err", role: "alert" });
+    const save = h("button", { type: "submit", className: "primary", textContent: "Save" });
+    const cancel = h("button", { type: "button", textContent: "Cancel" }); cancel.onclick = () => host.replaceChildren();
+    f.append(...fields, h("label", { for: "bfBody", textContent: "About it, in your own words" }), body, h("div", { className: "row" }, save, cancel), msgBox);
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const state = { ...st };  // keep any fields this form does not show
+      const set = (k, v) => { if (v) state[k] = v; else delete state[k]; };
+      if (kind === "characters") {
+        set("gender", gender.value); set("role", role[1].value.trim()); set("temperament", temper[1].value.trim());
+        const list = aliases[1].value.split(",").map((x) => x.trim()).filter(Boolean); if (list.length) state.aliases = list; else delete state.aliases;
+      }
+      if (kind === "threads") state.status = status.value;
+      try { await call("PUT", `/api/books/${enc(book())}/bible/${kind}`, { slug: e ? e.slug : null, name: name[1].value.trim(), state, body: body.value }); render("bible"); }
+      catch (err) { msg(msgBox, err.message, true); }
+    };
+    setTimeout(() => name[1].focus(), 30);
+    return f;
+  }
+
+  // ---- Voices ----------------------------------------------------------------------------------------------------------------------
+  let playing = null;
+  async function hear(speaker, say) {
+    if (playing) { try { playing.pause(); } catch (_) {} }
+    const r = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: say, speaker, book: book() }) });
+    if (r.status === 401) { showLogin("Please log in again."); return; }
+    if (!r.ok) { if ("speechSynthesis" in window) { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(say)); } return; }
+    playing = new Audio(URL.createObjectURL(await r.blob())); playing.play().catch(() => {});
+  }
+  async function tabVoices() {
+    if (!book()) return [h("p", { className: "hint", textContent: "Open a book first." })];
+    const [v, bible] = await Promise.all([call("GET", `/api/books/${enc(book())}/voices`), call("GET", `/api/books/${enc(book())}/bible`)]);
+    const out = [h("p", { className: "hint", textContent: "Each character has their own voice. To change one, tell the chat: “let me hear Mr. Bennet”, then say deeper, slower, or try another." })];
+    if (!v.pool.length) out.push(h("p", { className: "ok", textContent: "No list of voices has been set up yet, so everyone sounds the same. The admin adds the voices on the admin page, under Text-to-speech." }));
+    const names = ["narrator", "assistant", ...bible.characters.map((c) => c.name)];
+    const label = { narrator: "The narrator (the story's own voice)", assistant: "Me (Book Scribe)" };
+    for (const sp of names) {
+      const p = v.profiles[sp];
+      const voiceNames = p ? [...new Set([...Object.values(p.pinned || {}), ...Object.values(p.assigned || {})])].join(" / ") : "";
+      const meta = p ? [voiceNames ? "voice " + voiceNames : "", p.speed && p.speed !== 1 ? "speed " + p.speed : "", p.style, p.auto ? "chosen automatically" : "approved by you"].filter(Boolean).join(" · ") : "No voice yet. One is picked the first time they speak.";
+      const hearBtn = h("button", { type: "button", textContent: "Hear" }); hearBtn.onclick = () => hear(sp, sp === "assistant" ? "Hello. This is how I sound when we talk." : sp === "narrator" ? "The evening was quiet, and the road ahead was long." : "I had not expected to see you here tonight.");
+      const row = h("div", { className: "entry" }, h("span", { className: "name", textContent: label[sp] || sp }), hearBtn);
+      if (p) { const f = h("button", { type: "button", className: "danger", textContent: "Forget" }); f.onclick = async () => { try { await call("DELETE", `/api/books/${enc(book())}/voices/${enc(sp)}`); render("voices"); } catch (_) {} }; row.append(f); }
+      row.append(h("span", { className: "meta", textContent: meta }));
+      out.push(row);
+    }
+    return out;
+  }
+
+  // ---- Books --------------------------------------------------------------------------------------------------------------------------
+  async function tabBooks() {
+    const info = await call("GET", "/api/books");
+    const out = [h("p", { className: "hint", textContent: "Pick the book you are working on, start a new one, or bring in a draft you already wrote." })];
+    out.push(h("div", { className: "sect", textContent: "Your books" }));
+    for (const n of info.books) {
+      const cur = n === book();
+      const b = h("button", { type: "button", textContent: cur ? "Open now" : "Open this book", disabled: cur, className: cur ? "" : "primary" });
+      b.onclick = async () => { await BS.setBook(n); render("books"); };
+      out.push(h("div", { className: "entry" }, h("span", { className: "name", textContent: n }), b));
+    }
+    const nm = h("input", { id: "newBook", type: "text", maxLength: 60, placeholder: "A name for the new book" }), m1 = h("p", { className: "ok" });
+    const mk = h("button", { type: "button", className: "primary", textContent: "Start a new book" });
+    mk.onclick = async () => { try { const r = await call("POST", "/api/books", { name: nm.value }); await BS.setBook(r.name); render("books"); } catch (e) { msg(m1, e.message, true); } };
+    out.push(h("div", { className: "sect", textContent: "A new book" }), h("label", { for: "newBook", className: "sr", textContent: "Name of the new book" }), nm, h("div", { className: "row" }, mk), m1);
+    // import
+    const target = h("select", { id: "impBook" }, ...info.books.map((n) => h("option", { value: n, textContent: n })));
+    target.value = book() || info.books[0];
+    const file = h("input", { id: "impFile", type: "file", accept: ".txt,.md,text/plain" });
+    const paste = h("textarea", { id: "impText", placeholder: "…or paste your draft here. Start each chapter with a line like: Chapter 1" });
+    const m2 = h("p", { className: "ok" });
+    file.onchange = async () => { const f = file.files[0]; if (f) paste.value = await f.text(); };
+    const go = h("button", { type: "button", className: "primary", textContent: "Bring it in" });
+    go.onclick = async () => {
+      try {
+        const r = await call("POST", `/api/books/${enc(target.value)}/import`, { text: paste.value });
+        msg(m2, `Done. ${r.chapters} chapters and ${r.paragraphs} paragraphs.`);
+        if (target.value === book()) await BS.loadSiteBook();
+      } catch (e) { msg(m2, e.message, true); }
+    };
+    out.push(h("div", { className: "sect", textContent: "Bring in a draft" }), h("p", { className: "hint", textContent: "Only into a book that has no chapters yet, so nothing you wrote can be overwritten." }),
+      h("label", { for: "impBook", textContent: "Into which book" }), target, h("label", { for: "impFile", textContent: "A text file" }), file, paste, h("div", { className: "row" }, go), m2);
+    return out;
+  }
+
+  // ---- Account ---------------------------------------------------------------------------------------------------------------------------
+  async function tabAccount() {
+    const me = await call("GET", "/api/auth/me");
+    const cur = h("input", { id: "accCur", type: "password", autocomplete: "current-password" });
+    const user = h("input", { id: "accUser", type: "text", value: me.username, autocomplete: "username", autocapitalize: "none" });
+    const pw = h("input", { id: "accNew", type: "password", autocomplete: "new-password" });
+    const pw2 = h("input", { id: "accNew2", type: "password", autocomplete: "new-password" });
+    const m = h("p", { className: "ok", role: "status" });
+    const save = h("button", { type: "button", className: "primary", textContent: "Change my login" });
+    save.onclick = async () => {
+      if (pw.value !== pw2.value) return msg(m, "The two new passwords are not the same.", true);
+      try { const r = await call("POST", "/api/account/password", { current: cur.value, new_password: pw.value, new_username: user.value }); cur.value = pw.value = pw2.value = ""; msg(m, `Done. You are now ${r.username}. Other devices have been logged out.`); }
+      catch (e) { msg(m, e.message, true); }
+    };
+    return [
+      h("p", { className: "hint", textContent: `You are logged in as ${me.username}. There is one account for this whole Book Scribe.` }),
+      h("label", { for: "accUser", textContent: "Username" }), user,
+      h("label", { for: "accCur", textContent: "Your password now" }), cur,
+      h("label", { for: "accNew", textContent: "New password (8 or more characters)" }), pw,
+      h("label", { for: "accNew2", textContent: "New password again" }), pw2,
+      h("div", { className: "row" }, save), m,
+    ];
+  }
+
+  // ---- start ----------------------------------------------------------------------------------------------------------------------------
+  (async () => {
+    try { status = await (await fetch("/api/auth/status")).json(); } catch (_) {}
+    if (!status.auth_required) { mountTools(); return; }
+    try {
+      const r = await fetch("/api/auth/me");
+      if (r.ok && (await r.json()).role === "writer") { mountTools(); return; }
+    } catch (_) {}
+    showLogin();
+  })();
+  if (BS.authNeeded) showLogin();
+})();
+</script>

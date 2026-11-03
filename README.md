@@ -265,11 +265,38 @@ Guiding Generative Storytelling with Knowledge Graphs  (arXiv:2505.24803)
 ## Running it (current state)
 
 ```bash
-cp .env.example .env        # set ADMIN_TOKEN and the first-run local URLs
-docker compose up -d        # UI on :8080, agent API behind it at /api
+cp .env.example .env        # set ADMIN_TOKEN (16+ random characters) and, optionally, the first-run model URLs
+python ui/make_site.py      # only if you edit ui/simple.fragment.html or ui/site.extra.html (index.html is committed built)
+docker compose up -d        # site on :8080, API behind it at /api
 ```
 
-- **Models and tiers:** tap ⚙️ (admin token required). Chat, speech-to-text, text-to-speech and the story graph each have
+### Two logins, one writer per container
+
+| | Where | Username | Password |
+|---|---|---|---|
+| **Writer** | `/` (the book and chat) | chosen by the admin | chosen by the admin, changeable by the writer |
+| **Admin** | `/admin.html` | `ADMIN_USER` (default `admin`) | `ADMIN_TOKEN` |
+
+- Nothing the writer uses is reachable without the writer login; nothing in `/api/admin` without the admin login. The admin cannot
+  read the book, and the writer cannot open the admin panel.
+- First start: open `/admin.html`, log in, and under **Writer account** create the writer's username and password. (Or seed it once with
+  `WRITER_USERNAME` / `WRITER_PASSWORD` in `.env`.) Resetting or changing the password logs every other device out.
+- Passwords are stored hashed (scrypt); sessions are HttpOnly, SameSite=Strict cookies (Secure behind https); wrong guesses are
+  rate-limited; cross-site requests are refused. Set `TRUST_PROXY=1` when you reach the site through your own tunnel so the limit uses the
+  real client address. There is no password-recovery email: the admin resets the writer's password.
+
+### What is where
+
+- **Writer page (`/`)**: Book and Chat panes (split, resize, detach), then **Settings**: *My words* (size, read aloud, age), *Story bible*
+  (premise, characters with gender and "also called" names, threads, world), *Voices* (hear or forget each character's voice), *Books*
+  (switch, start new, import a draft), *Account* (change password).
+- **Admin page (`/admin.html`)**: *Writer account*, *Models and fallbacks* (below), *Embeddings and memory* (provider, paragraph index
+  status and rebuild, mem0), *Story graph* (status and rebuild), *System*.
+- **Paragraph embeddings:** the locator matches words first; when it is not confident, a meaning-based index (one vector per paragraph from the
+  embedding provider, updated automatically after saves) proposes the paragraph. The agent still reads its guess back unless word and
+  meaning agree.
+
+- **Models and tiers:** on the admin page, *Models and fallbacks*. Chat, speech-to-text, text-to-speech and the story graph each have
   three ordered tiers, named by you (default: **T1 Local ROCm → T2 CPU fallback → T3 Frontier**). A request goes to T1; T2 is
   tried only after every T1 provider failed, and T3 (the paid one) only after T2 failed too. A failed provider is skipped for
   a cooldown (default 30 s) so a dead GPU box costs one timeout, not one per request. Any error counts as failure

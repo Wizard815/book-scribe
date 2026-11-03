@@ -146,6 +146,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
         <button type="button" id="smaller" aria-label="Smaller words">A −</button>
         <button type="button" id="bigger" aria-label="Bigger words">A +</button>
       </div>
+      <div class="group" id="siteTools" role="group" aria-label="Account and settings" hidden></div>
       <button type="button" id="attachAll" hidden>Attach all</button>
     </div>
   </header>
@@ -336,6 +337,18 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   document.querySelectorAll("[data-grip]").forEach((g) => gesture(g, g.dataset.grip, "size"));
   for (const p of ["book", "chat"]) panes[p].addEventListener("pointerdown", () => { if (ui.floats[p]) panes[p].style.zIndex = String(++zTop); });
 
+  // On your website every request to the server goes through here. A 401 means "log in", which the site's login screen handles.
+  window.BS = window.BS || {};
+  async function siteFetch(url, opts) {
+    const r = await fetch(url, opts);
+    if (r.status === 401) {
+      window.BS.authNeeded = true;
+      if (window.BS.needLogin) window.BS.needLogin();
+      throw Object.assign(new Error("auth"), { code: "auth", detail: "Please log in." });
+    }
+    return r;
+  }
+
   // ================================================================ chat =============================================
   function setStatus(t) { $("status").textContent = t; }
   function scrollChat() { const c = $("chat"); c.scrollTop = c.scrollHeight; }
@@ -463,7 +476,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     } catch (e) { b.el.remove(); throw e; }
   }
   async function askServer(text) {
-    const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, session_id: state.sid }) });
+    const r = await siteFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, session_id: state.sid, book: state.bookName }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(j.detail || "server"), { code: "server", detail: j.detail });
     return j;
@@ -471,6 +484,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   function explain(e) {
     if (e && e.code === "not_granted") return "Please allow Claude to answer on this page, then press Send again.";
     if (e && e.code === "rate_limited") return "That was too fast. Wait a moment, then press Send again.";
+    if (e && e.code === "auth") return "Please log in again.";
     if (e && e.detail) return e.detail;
     return "I could not get an answer. Please try again.";
   }
@@ -506,8 +520,8 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   async function uploadVoice(blob) {
     busy(true);
     try {
-      const fd = new FormData(); fd.append("audio", blob, "speech.webm"); fd.append("session_id", state.sid);
-      const r = await fetch("/api/voice", { method: "POST", body: fd });
+      const fd = new FormData(); fd.append("audio", blob, "speech.webm"); fd.append("session_id", state.sid); fd.append("book", state.bookName || "");
+      const r = await siteFetch("/api/voice", { method: "POST", body: fd });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw Object.assign(new Error("voice"), { code: "server", detail: j.detail });
       showIdeas(false); busy(false);
@@ -614,14 +628,21 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   }
 
   // --- on your website: the real manuscript from the server
-  async function api(path) { const r = await fetch("/api" + path); if (!r.ok) throw new Error(path); return r.json(); }
+  async function api(path) { const r = await siteFetch("/api" + path); if (!r.ok) throw new Error(path); return r.json(); }
   async function loadSiteBook() {
     try {
-      state.bookName = (await api("/books")).default;
+      const info = await api("/books");
+      const saved = store.get("bs_book_name", "");
+      state.bookName = info.books.includes(saved) ? saved : info.default;
       state.chapters = (await api(`/books/${encodeURIComponent(state.bookName)}/chapters`)).chapters;
       if (state.chapters.length) await showChapter(state.chapters[0]);
-      else siteMessage("This book has no chapters yet.");
-    } catch (_) { siteMessage("I cannot reach your book. Is the Book Scribe server running?"); }
+      else siteMessage("This book has no chapters yet. Ask me to write the first paragraph, or import a draft in Settings.");
+    } catch (e) { siteMessage(e && e.code === "auth" ? "Please log in to see your book." : "I cannot reach your book. Is the Book Scribe server running?"); }
+  }
+  async function setBook(name) {  // switch which book is open (Settings > Books)
+    state.bookName = name; store.set("bs_book_name", name);
+    state.history = []; state.sid = state.sid.slice(0, 20) + Date.now().toString(36);
+    await loadSiteBook(); welcome();
   }
   function siteMessage(t) {
     const p = document.createElement("p"); p.id = "bookEmpty"; p.textContent = t; $("book").replaceChildren(p);
@@ -666,6 +687,10 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   narrowQ.addEventListener("change", applyUI);
   window.addEventListener("resize", () => { for (const p of ["book", "chat"]) if (ui.floats[p]) placeFloat(p); });
 
+  Object.assign(window.BS, {
+    state, store, bubble, note, welcome, applySize, applyRead, siteFetch, loadSiteBook, setBook, setStatus,
+    afterLogin: async () => { await loadSiteBook(); setStatus("Ready"); },
+  });
   applySize(); applyRead(); applyUI(); welcome();
   ready = detect();
 })();
