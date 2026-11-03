@@ -109,9 +109,9 @@ def test_api_chat_and_voice(books):
     class STT:
         http = FakeLLM().http
         async def transcribe(self, *a, **k): return "go to chapter 1"
-    app = create_app(Settings(project_dir=books, admin_token=TOKEN), llm=FakeLLM(), stt=STT(), memory=FileMemory(books / "m.json"))
+    app = create_app(Settings(project_dir=books, admin_token=TOKEN), llm=FakeLLM(), stt=STT(), memory=FileMemory(books / "m.json"), require_auth=False)
     with TestClient(app) as c:
-        assert c.get("/api/health").json()["ok"]
+        assert c.get("/api/health").json() == {"ok": True}  # public and minimal; details are admin-only
         r = c.post("/api/voice", files={"audio": ("a.webm", b"x", "audio/webm")}).json()
         assert r["user_text"] == "go to chapter 1" and r["chapter"] == 1
         assert len(c.get("/api/books/demo/chapters/1").json()["paragraphs"]) == 3
@@ -124,7 +124,7 @@ TOKEN = "a-long-enough-token-1234"
 def admin_client(books, token=TOKEN):
     s = Settings(project_dir=books, admin_token=token, chat_url="http://llm:8080", stt_url="http://stt:9000")
     tts = FakeLLM(); tts.enabled = False
-    app = create_app(s, llm=FakeLLM(), stt=FakeLLM(), tts=tts, memory=FileMemory(books / "m.json"))
+    app = create_app(s, llm=FakeLLM(), stt=FakeLLM(), tts=tts, memory=FileMemory(books / "m.json"), require_auth=False)
     return TestClient(app)
 
 
@@ -180,4 +180,4 @@ def test_weak_admin_tokens_are_refused(books):
         with admin_client(books, token=weak) as c:
             r = c.get("/api/admin/providers", headers={"x-admin-token": weak})
             assert r.status_code == 503 and "too weak" in r.json()["detail"], weak
-            assert c.get("/api/health").json()["admin_enabled"] is False
+            assert c.get("/api/auth/status").json()["admin_enabled"] is False
