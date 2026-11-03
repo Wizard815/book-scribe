@@ -1,38 +1,1058 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Book Scribe</title>
-  <link rel="stylesheet" href="styles.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{color-scheme:light}[hidden]{display:none!important}body{margin:0}</style>
 </head>
 <body>
-  <main class="split">
-    <section id="book" class="half book" aria-label="Manuscript">
-      <header><span id="chapter-title">Chapter 1</span></header>
-      <article id="prose" aria-live="polite"></article>
-    </section>
-    <section class="half chat" aria-label="Conversation">
-      <header><span id="mode">Narrator</span><span id="status" role="status">Ready</span><button id="gear" aria-label="Admin settings">⚙️</button></header>
-      <div id="log" aria-live="polite"></div>
-      <div id="pending" hidden>
-        <button id="yes">Yes, save</button><button id="another" hidden>Try another</button><button id="no">No</button>
+<title>Book Scribe</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+/* Layout: a top bar of big controls, then two panes (Book, Chat) in one dock. The dock splits side by side or stacked, shows one pane
+   alone, and any pane can float as its own window and be attached again.
+   Type: Atkinson Hyperlegible throughout. It was drawn for low vision, so every letter shape is distinct.
+   Color: ink-blue on cool paper, one blue for every action, red only while listening. */
+:root {
+  --bg: #F1F4F8; --surface: #FFFFFF; --fg: #0F1B2A; --muted: #43546A; --line: #BCC8D6;
+  --accent: #1B4FD6; --accent-fg: #FFFFFF; --live: #B3261E; --live-fg: #FFFFFF;
+  --mine: #DDE7FF; --note: #FFF1C2; --note-fg: #3A2C00; --focus: #0F1B2A; --mark: #FFF3B8; --shadow: rgba(15, 27, 42, .28);
+  --font: "Atkinson Hyperlegible", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --fs: 26px; --split: 55;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0B1521; --surface: #14212F; --fg: #EEF3F8; --muted: #AFBED0; --line: #33475C;
+    --accent: #8DB0FF; --accent-fg: #07122A; --live: #FF9A90; --live-fg: #2A0805;
+    --mine: #1E3358; --note: #3B3213; --note-fg: #FFEFB8; --focus: #EEF3F8; --mark: #3A3410; --shadow: rgba(0, 0, 0, .6); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0B1521; --surface: #14212F; --fg: #EEF3F8; --muted: #AFBED0; --line: #33475C;
+  --accent: #8DB0FF; --accent-fg: #07122A; --live: #FF9A90; --live-fg: #2A0805;
+  --mine: #1E3358; --note: #3B3213; --note-fg: #FFEFB8; --focus: #EEF3F8; --mark: #3A3410; --shadow: rgba(0, 0, 0, .6); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 20px; line-height: 1.45;
+  padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+button { font: inherit; cursor: pointer; color: var(--fg); }
+button:disabled { opacity: .5; cursor: default; }
+button:focus-visible, textarea:focus-visible, #divider:focus-visible, .para:focus-visible { outline: 4px solid var(--focus); outline-offset: 3px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.app { height: 100%; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+/* top bar */
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; }
+h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
+#status { margin: 0 0 0 auto; font-size: 18px; color: var(--muted); font-weight: 700; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; flex: 1 1 100%; order: 3; }
+.group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.glabel { font-size: 15px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+.bar button { min-height: 52px; padding: 6px 16px; font-size: 19px; font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 14px; }
+.bar button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+
+/* dock + panes */
+.dock { flex: 1; min-height: 0; display: grid; position: relative; }
+.dock[data-layout="side"] { grid-template-columns: calc(var(--split) * 1%) 16px minmax(0, 1fr); }
+.dock[data-layout="stack"] { grid-template-rows: calc(var(--split) * 1%) 16px minmax(0, 1fr); }
+.dock[data-layout="one"] { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+.dock[data-layout="one"] > .pane:not(.floating) { grid-area: 1 / 1; }
+#divider { background: var(--line); border-radius: 8px; margin: 6px; touch-action: none; position: relative; }
+#divider::after { content: ""; position: absolute; inset: 0; margin: auto; width: 4px; height: 44px; border-radius: 4px; background: var(--muted); }
+.dock[data-layout="side"] #divider { cursor: col-resize; }
+.dock[data-layout="stack"] #divider { cursor: row-resize; }
+.dock[data-layout="stack"] #divider::after { width: 44px; height: 4px; }
+
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); border: 2px solid var(--line); border-radius: 18px; overflow: hidden; }
+.pane.floating { position: fixed; z-index: 30; box-shadow: 0 14px 40px var(--shadow); border-color: var(--accent); }
+.phead { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 16px; border-bottom: 2px solid var(--line); background: var(--bg); touch-action: none; }
+.pane.floating .phead { cursor: grab; }
+.phead h2 { margin: 0; font-size: 24px; flex: 1; }
+.phead button { min-height: 48px; padding: 4px 16px; font-size: 18px; font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; }
+.grip { position: absolute; right: 0; bottom: 0; width: 32px; height: 32px; cursor: nwse-resize; touch-action: none; display: none; }
+.pane.floating .grip { display: block; }
+.grip::after { content: ""; position: absolute; right: 6px; bottom: 6px; width: 16px; height: 16px; border-right: 4px solid var(--muted); border-bottom: 4px solid var(--muted); border-radius: 0 0 6px 0; }
+.pbody { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.pane.floating .pbody { padding-bottom: 34px; }  /* room for the resize handle */
+#empty { margin: auto; text-align: center; padding: 24px; font-size: 26px; max-width: 520px; }
+#empty button { min-height: 60px; font-size: 22px; font-weight: 700; padding: 8px 24px; background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 14px; margin-top: 12px; }
+
+/* chat */
+#chat { flex: 1; min-height: 100px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 2px; }
+.msg { max-width: 96%; padding: 12px 16px; border-radius: 18px; background: var(--bg); border: 2px solid var(--line); font-size: var(--fs); line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg .who { display: block; font-size: 15px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 4px; }
+.msg.me { align-self: flex-end; background: var(--mine); border-color: transparent; }
+.msg.note { align-self: center; background: var(--note); color: var(--note-fg); border-color: transparent; font-size: 22px; text-align: center; }
+.msg.note .who { display: none; }
+.addbtn { display: block; margin-top: 10px; min-height: 52px; padding: 6px 18px; font-size: 20px; font-weight: 700; background: var(--surface); border: 3px solid var(--accent); border-radius: 14px; }
+.addbtn:disabled { border-color: var(--line); }
+.ideas, #pending { display: flex; flex-wrap: wrap; gap: 10px; }
+.chip { min-height: 58px; padding: 8px 18px; font-size: 22px; font-weight: 700; background: var(--surface); border: 3px solid var(--accent); border-radius: 16px; }
+#pending button { flex: 1; min-height: 64px; font-size: 24px; font-weight: 700; background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 16px; padding: 6px 16px; }
+#pending button.no { background: var(--surface); color: var(--fg); border: 3px solid var(--line); }
+#talk { width: 100%; min-height: 90px; display: flex; align-items: center; justify-content: center; gap: 14px; font-size: 36px; font-weight: 700; color: var(--accent-fg); background: var(--accent); border: 0; border-radius: 22px; }
+#talk svg { width: 44px; height: 44px; flex: none; }
+#talk.live { background: var(--live); color: var(--live-fg); }
+#form { display: flex; gap: 10px; align-items: stretch; }
+#msg { flex: 1; min-width: 0; min-height: 72px; resize: none; padding: 12px 14px; font: inherit; font-size: 24px; color: var(--fg); background: var(--surface); border: 3px solid var(--line); border-radius: 16px; }
+#send { min-width: 120px; font-size: 28px; font-weight: 700; color: var(--accent-fg); background: var(--accent); border: 0; border-radius: 16px; padding: 0 18px; }
+.tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.tools button { min-height: 50px; padding: 4px 16px; font-size: 18px; font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; }
+.tools button[aria-pressed="true"] { border-color: var(--accent); }
+
+/* book */
+.bookbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.bookbar button { min-height: 52px; padding: 4px 16px; font-size: 19px; font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; }
+#chapterLabel { font-size: 20px; font-weight: 700; color: var(--muted); padding: 0 6px; }
+#book { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px 40px; }
+.para { margin: 0 0 1em; padding: 8px 12px; border-left: 6px solid transparent; border-radius: 8px; font-size: var(--fs); line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; }
+.para.mark { background: var(--mark); border-left-color: var(--accent); }
+.para textarea { width: 100%; min-height: 140px; font: inherit; font-size: var(--fs); color: var(--fg); background: var(--surface); border: 3px solid var(--accent); border-radius: 12px; padding: 10px; resize: vertical; }
+.para .row { display: flex; gap: 8px; margin-top: 8px; }
+.para .row button { min-height: 52px; padding: 4px 18px; font-size: 19px; font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; }
+#bookEmpty { color: var(--muted); font-size: 24px; padding: 8px 12px; }
+
+@media (max-width: 760px) {
+  h1 { font-size: 24px; } .top { gap: 4px 12px; } .bar { gap: 6px 10px; } .glabel { display: none; }
+  .bar button { min-height: 46px; font-size: 17px; padding: 4px 12px; } .bar button[data-layout="side"] { display: none; }
+  .phead { padding: 4px 8px 4px 14px; } .phead h2 { font-size: 20px; } .phead button { min-height: 42px; font-size: 16px; }
+  #chat { min-height: 90px; }
+  #talk { min-height: 76px; font-size: 30px; } #talk svg { width: 36px; height: 36px; }
+  #msg { min-height: 60px; font-size: 21px; } #send { min-width: 92px; font-size: 24px; padding: 0 10px; }
+  .chip { min-height: 50px; font-size: 19px; } .tools button { min-height: 46px; font-size: 16px; padding: 4px 10px; }
+  .pbody { padding: 8px; } #pending button { min-height: 56px; font-size: 20px; }
+}
+@media (prefers-reduced-motion: no-preference) { #talk.live { animation: pulse 1.4s ease-in-out infinite; } }
+@keyframes pulse { 50% { opacity: .78; } }
+</style>
+
+<main class="app">
+  <header class="top">
+    <h1>Book Scribe</h1>
+    <p id="status" role="status">Getting ready…</p>
+    <div class="bar" role="toolbar" aria-label="Page controls">
+      <div class="group" role="group" aria-label="Layout">
+        <span class="glabel">Layout</span>
+        <button type="button" data-layout="side" aria-pressed="true">Side by side</button>
+        <button type="button" data-layout="stack" aria-pressed="false">Top and bottom</button>
+        <button type="button" data-layout="chat" aria-pressed="false">Chat only</button>
+        <button type="button" data-layout="book" aria-pressed="false">Book only</button>
       </div>
-      <button id="mic" aria-label="Hold to talk">🎙️ Hold to talk</button>
+      <div class="group" id="sizeGroup" role="group" aria-label="Size of each part">
+        <span class="glabel">Size</span>
+        <button type="button" id="bookWider">Book wider</button>
+        <button type="button" id="chatWider">Chat wider</button>
+        <button type="button" id="evenSplit">Even</button>
+      </div>
+      <div class="group" role="group" aria-label="Size of words">
+        <span class="glabel">Words</span>
+        <button type="button" id="smaller" aria-label="Smaller words">A −</button>
+        <button type="button" id="bigger" aria-label="Bigger words">A +</button>
+      </div>
+      <div class="group" id="siteTools" role="group" aria-label="Account and settings" hidden></div>
+      <button type="button" id="attachAll" hidden>Attach all</button>
+    </div>
+  </header>
+
+  <div class="dock" id="dock" data-layout="side">
+    <section class="pane" id="paneBook" aria-label="Book">
+      <div class="phead" data-drag="book">
+        <h2>Book</h2>
+        <button type="button" class="detach" data-pane="book" aria-label="Detach the book into its own window">Detach</button>
+      </div>
+      <div class="pbody">
+        <div class="bookbar" id="barSite" hidden>
+          <button type="button" id="prevCh">Earlier chapter</button>
+          <span id="chapterLabel">Chapter</span>
+          <button type="button" id="nextCh">Later chapter</button>
+        </div>
+        <div class="bookbar" id="barLocal" hidden>
+          <button type="button" id="copyBook">Copy all</button>
+          <button type="button" id="saveBook" hidden>Save as file</button>
+          <button type="button" id="clearBook">Clear book</button>
+        </div>
+        <div id="book" aria-live="polite"></div>
+      </div>
+      <div class="grip" data-grip="book" aria-hidden="true"></div>
     </section>
-  </main>
-  <div id="admin" hidden role="dialog" aria-modal="true" aria-label="Admin settings">
-    <div class="panel">
-      <div class="bar"><h2>Admin · Models</h2><button id="admin-close" aria-label="Close">✕</button></div>
-      <form id="gate" hidden>
-        <label>Admin token <input id="token" type="password" autocomplete="current-password" required></label>
-        <button>Unlock</button>
-      </form>
-      <p id="admin-msg" role="status"></p>
-      <div id="roles"></div>
+
+    <div id="divider" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Drag to change the size of the book and the chat. Arrow keys also work." aria-valuemin="20" aria-valuemax="80" aria-valuenow="55"></div>
+
+    <section class="pane" id="paneChat" aria-label="Chat">
+      <div class="phead" data-drag="chat">
+        <h2>Chat</h2>
+        <button type="button" class="detach" data-pane="chat" aria-label="Detach the chat into its own window">Detach</button>
+      </div>
+      <div class="pbody">
+        <div id="chat" aria-live="polite" aria-label="Conversation"></div>
+        <div id="pending" hidden></div>
+        <button id="talk" type="button" aria-label="Talk to Book Scribe">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 11.5a7 7 0 0 0 14 0M12 18.5v3M8.5 21.5h7"/></svg>
+          <span id="talkLabel">Talk</span>
+        </button>
+        <form id="form">
+          <label class="sr" for="msg">Type your message</label>
+          <textarea id="msg" rows="2" placeholder="Or type here"></textarea>
+          <button id="send" type="submit">Send</button>
+        </form>
+        <div class="tools">
+          <button id="read" type="button" aria-pressed="true">Read aloud: On</button>
+          <button id="stop" type="button">Stop talking</button>
+          <button id="fresh" type="button">New chat</button>
+        </div>
+      </div>
+      <div class="grip" data-grip="chat" aria-hidden="true"></div>
+    </section>
+
+    <div id="empty" hidden>
+      <p>Nothing is docked here. Your parts are floating.</p>
+      <button type="button" id="attachAll2">Attach all</button>
     </div>
   </div>
-  <script src="app.js"></script>
-  <script src="admin.js"></script>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (_) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} },
+  };
+  const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+
+  // One page, two backends. Inside Claude it asks Claude directly and keeps your draft in this browser.
+  // On your own website it talks to your Book Scribe server: /api/chat, /api/voice (microphone), /api/tts (character voices),
+  // and the book pane shows the real manuscript.
+  const INSTRUCTIONS =
+    "You are Book Scribe, a friendly writing partner for someone who finds typing and reading hard. Answer in plain, warm, " +
+    "short sentences, usually one to three. No lists, no markdown, no emoji. If they ask for writing, give one short paragraph " +
+    "that could go straight into their book. Ask at most one question at a time, and wait for the answer.";
+  const IDEAS = ["Help me start a story", "Describe a character for me", "Give me a writing idea"];
+  const SIZES = [18, 22, 26, 32, 40];
+
+  const state = {
+    mode: null, sample: null, downloads: null, history: [], busy: false, listening: false, rec: null, recog: null, chunks: [],
+    read: store.get("bs_read", "1") === "1", size: clamp(parseInt(store.get("bs_size", "2"), 10) || 2, 0, 4),
+    speakToken: 0, audio: null, sid: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, ""),
+    book: [], bookName: null, chapters: [], chapter: null,
+  };
+  let ready;
+
+  // ================================================================ layout: dock, split, detach =====================
+  // A phone opens on one part at a time; wider screens open side by side.
+  const ui = Object.assign({ layout: window.matchMedia("(max-width: 760px)").matches ? "chat" : "side", split: 55, floats: { book: null, chat: null } }, (() => { try { return JSON.parse(store.get("bs_ui", "{}")); } catch (_) { return {}; } })());
+  ui.floats = Object.assign({ book: null, chat: null }, ui.floats || {});
+  let zTop = 30;
+  const panes = { book: $("paneBook"), chat: $("paneChat") };
+  const narrowQ = window.matchMedia("(max-width: 760px)");
+  const saveUI = () => store.set("bs_ui", JSON.stringify(ui));
+
+  function defaultFloat(which) {
+    // Float below the docked panes' headers (so Detach / Attach stay reachable), book on the left and chat on the right.
+    const top = $("dock").getBoundingClientRect().top, vw = window.innerWidth;
+    const w = vw < 700 ? vw - 24 : Math.min(560, Math.round(vw * 0.46));
+    return { x: which === "book" ? 12 : Math.max(8, vw - w - 12), y: Math.round(top + 72), w, h: clamp(window.innerHeight - top - 100, 280, 620) };
+  }
+  function placeFloat(which) {
+    // Always keep the whole window on screen: a pane dragged half off the bottom would hide its own resize handle.
+    const f = ui.floats[which], el = panes[which], vw = window.innerWidth, vh = window.innerHeight;
+    f.w = clamp(f.w, Math.min(280, vw), vw); f.h = clamp(f.h, Math.min(240, vh), vh);
+    f.x = clamp(f.x, 0, vw - f.w); f.y = clamp(f.y, 0, vh - f.h);
+    Object.assign(el.style, { left: f.x + "px", top: f.y + "px", width: f.w + "px", height: f.h + "px" });
+  }
+  function applyUI() {
+    const narrow = narrowQ.matches;
+    const layout = narrow && ui.layout === "side" ? "stack" : ui.layout;  // two columns do not fit a phone
+    document.querySelectorAll("[data-layout]").forEach((b) => {
+      if (b.tagName !== "BUTTON") return;
+      b.setAttribute("aria-pressed", String(b.dataset.layout === layout));
+      if (b.dataset.layout === "side") b.disabled = narrow;
+    });
+    const docked = ["book", "chat"].filter((p) => !ui.floats[p]);
+    const show = layout === "chat" ? docked.filter((p) => p === "chat") : layout === "book" ? docked.filter((p) => p === "book") : docked;
+    const dock = $("dock");
+    dock.dataset.layout = show.length === 2 ? layout : "one";
+    dock.style.setProperty("--split", ui.split);
+    for (const p of ["book", "chat"]) {
+      const floating = !!ui.floats[p];
+      panes[p].classList.toggle("floating", floating);
+      panes[p].hidden = !floating && !show.includes(p);
+      if (floating) placeFloat(p); else ["left", "top", "width", "height"].forEach((k) => (panes[p].style[k] = ""));
+      const b = panes[p].querySelector(".detach");
+      b.textContent = floating ? "Attach" : "Detach";
+      b.setAttribute("aria-label", floating ? `Attach the ${p} back into the page` : `Detach the ${p} into its own window`);
+    }
+    // keep the DOM order book | divider | chat in the grid, and the divider only when both are docked side by side or stacked
+    const dv = $("divider");
+    dv.hidden = show.length !== 2;
+    dv.setAttribute("aria-orientation", layout === "stack" ? "horizontal" : "vertical");
+    dv.setAttribute("aria-valuenow", String(Math.round(ui.split)));
+    $("sizeGroup").hidden = show.length !== 2;  // only meaningful while both parts are docked
+    $("empty").hidden = show.length !== 0 || !(ui.floats.book || ui.floats.chat);
+    $("attachAll").hidden = !(ui.floats.book || ui.floats.chat);
+    saveUI();
+  }
+  function setLayout(l) { ui.layout = l; applyUI(); }
+  function nudge(d) { ui.split = clamp(ui.split + d, 20, 80); applyUI(); }
+  function toggleFloat(which) {
+    ui.floats[which] = ui.floats[which] ? null : defaultFloat(which);
+    if (ui.floats[which]) { panes[which].style.zIndex = String(++zTop); }
+    applyUI();
+    if (which === "chat" && !ui.floats.chat) scrollChat();
+  }
+  function attachAll() { ui.floats = { book: null, chat: null }; applyUI(); }
+
+  // divider drag (mouse, touch, pen) and arrow keys
+  $("divider").addEventListener("pointerdown", (e) => {
+    const dv = $("divider"), dock = $("dock"); dv.setPointerCapture(e.pointerId);
+    const stacked = dock.dataset.layout === "stack";
+    const move = (ev) => {
+      const r = dock.getBoundingClientRect();
+      ui.split = clamp(((stacked ? ev.clientY - r.top : ev.clientX - r.left) / (stacked ? r.height : r.width)) * 100, 20, 80);
+      dock.style.setProperty("--split", ui.split); dv.setAttribute("aria-valuenow", String(Math.round(ui.split)));
+    };
+    const up = () => { dv.removeEventListener("pointermove", move); dv.removeEventListener("pointerup", up); dv.removeEventListener("pointercancel", up); applyUI(); };
+    dv.addEventListener("pointermove", move); dv.addEventListener("pointerup", up); dv.addEventListener("pointercancel", up);
+  });
+  $("divider").addEventListener("keydown", (e) => {
+    const k = { ArrowLeft: -5, ArrowUp: -5, ArrowRight: 5, ArrowDown: 5 }[e.key];
+    if (k) { e.preventDefault(); nudge(k); }
+  });
+
+  // moving and resizing a floating pane
+  function gesture(el, which, mode) {
+    el.addEventListener("pointerdown", (e) => {
+      const f = ui.floats[which];
+      if (!f || (mode === "move" && e.target.closest("button"))) return;
+      e.preventDefault(); el.setPointerCapture(e.pointerId); panes[which].style.zIndex = String(++zTop);
+      const sx = e.clientX, sy = e.clientY, o = { ...f };
+      const move = (ev) => {
+        if (mode === "move") { f.x = o.x + ev.clientX - sx; f.y = o.y + ev.clientY - sy; }
+        else { f.w = clamp(o.w + ev.clientX - sx, 280, window.innerWidth - f.x); f.h = clamp(o.h + ev.clientY - sy, 240, window.innerHeight - f.y); }
+        placeFloat(which);
+      };
+      const up = () => { el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up); saveUI(); };
+      el.addEventListener("pointermove", move); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+    });
+  }
+  document.querySelectorAll("[data-drag]").forEach((h) => gesture(h, h.dataset.drag, "move"));
+  document.querySelectorAll("[data-grip]").forEach((g) => gesture(g, g.dataset.grip, "size"));
+  for (const p of ["book", "chat"]) panes[p].addEventListener("pointerdown", () => { if (ui.floats[p]) panes[p].style.zIndex = String(++zTop); });
+
+  // On your website every request to the server goes through here. A 401 means "log in", which the site's login screen handles.
+  window.BS = window.BS || {};
+  async function siteFetch(url, opts) {
+    const r = await fetch(url, opts);
+    if (r.status === 401) {
+      window.BS.authNeeded = true;
+      if (window.BS.needLogin) window.BS.needLogin();
+      throw Object.assign(new Error("auth"), { code: "auth", detail: "Please log in." });
+    }
+    return r;
+  }
+
+  // ================================================================ chat =============================================
+  function setStatus(t) { $("status").textContent = t; }
+  function scrollChat() { const c = $("chat"); c.scrollTop = c.scrollHeight; }
+  function bubble(kind, text) {
+    const el = document.createElement("div");
+    el.className = "msg " + kind;
+    const who = document.createElement("span");
+    who.className = "who"; who.textContent = kind === "me" ? "You" : "Book Scribe";
+    const body = document.createElement("span");
+    body.className = "body"; body.textContent = text;
+    el.append(who, body);
+    $("chat").append(el); scrollChat();
+    return { el, body };
+  }
+  function note(text) { bubble("note", text); setStatus(text); }
+  function offerAdd(b) {  // inside Claude there is no server book: every answer can be added to the local draft
+    if (state.mode !== "claude" || !b.body.textContent.trim() || b.body.textContent === "…") return;
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "addbtn"; btn.textContent = "Add to book";
+    btn.onclick = () => { addToBook(b.body.textContent); btn.textContent = "Added to the book"; btn.disabled = true; };
+    b.el.append(btn);
+  }
+  function applySize() {
+    document.documentElement.style.setProperty("--fs", SIZES[state.size] + "px");
+    $("bigger").disabled = state.size === SIZES.length - 1; $("smaller").disabled = state.size === 0;
+    store.set("bs_size", String(state.size));
+  }
+  function applyRead() {
+    $("read").textContent = "Read aloud: " + (state.read ? "On" : "Off");
+    $("read").setAttribute("aria-pressed", String(state.read));
+    store.set("bs_read", state.read ? "1" : "0");
+  }
+  function showIdeas(show) {  // the starter buttons sit inside the conversation, so they scroll away with it instead of taking fixed space
+    const old = $("chat").querySelector(".ideas"); if (old) old.remove();
+    if (!show) return;
+    const box = document.createElement("div"); box.className = "ideas"; box.setAttribute("aria-label", "Ideas to start with");
+    for (const t of IDEAS) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "chip"; b.textContent = t; b.onclick = () => send(t); box.append(b);
+    }
+    $("chat").append(box);
+  }
+  function setPending(p) {
+    const box = $("pending"); box.replaceChildren(); box.hidden = !p;
+    if (!p) return;
+    const labels = p.kind === "voice" ? [["Keep this voice", "keep it", ""], ["Try another", "try another voice", ""], ["Discard", "no", "no"]]
+      : p.kind === "confirm_target" ? [["Yes, that one", "yes", ""], ["No", "no", "no"]] : [["Yes, save", "yes, save it", ""], ["No", "no", "no"]];
+    for (const [label, say, cls] of labels) {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = label; if (cls) b.className = cls; b.onclick = () => send(say); box.append(b);
+    }
+  }
+  function welcome() {
+    $("chat").replaceChildren();
+    bubble("assistant", "Hello. I am Book Scribe. Tell me about your story, or ask me to help you write. Press Talk, or type below.");
+    showIdeas(true); setPending(null);
+  }
+  function busy(on) { state.busy = on; $("send").disabled = on; setStatus(on ? "Thinking…" : "Ready"); }
+
+  // --- talking back
+  function stopSpeaking() {
+    state.speakToken++;
+    if (state.audio) { try { state.audio.pause(); } catch (_) {} }
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+  }
+  function browserSpeak(text) {
+    return new Promise((done) => {
+      if (!("speechSynthesis" in window) || !text) return done();
+      const u = new SpeechSynthesisUtterance(text); u.rate = 0.95; u.onend = u.onerror = () => done();
+      speechSynthesis.speak(u);
+    });
+  }
+  async function fetchVoice(seg) {
+    try {
+      const r = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: seg.text, speaker: seg.speaker || "assistant", draft: seg.draft || null }) });
+      return r.ok ? await r.blob() : null;  // 501 = no server voice: use the browser's
+    } catch (_) { return null; }
+  }
+  function playBlob(blob) {
+    return new Promise((done) => { const a = new Audio(URL.createObjectURL(blob)); state.audio = a; a.onended = a.onerror = () => done(); a.play().catch(() => done()); });
+  }
+  async function speak(text, segments) {
+    if (!state.read || !text) return;
+    stopSpeaking();
+    const token = state.speakToken, site = state.mode === "scribe";
+    const segs = site && segments && segments.length ? segments.filter((s) => s.text && s.text.trim()) : [{ speaker: "assistant", text }];
+    let next = site ? fetchVoice(segs[0]) : null;
+    for (let i = 0; i < segs.length; i++) {
+      const blob = await next;
+      if (token !== state.speakToken) return;
+      next = site && i + 1 < segs.length ? fetchVoice(segs[i + 1]) : null;
+      if (blob) await playBlob(blob); else await browserSpeak(segs[i].text);
+      if (token !== state.speakToken) return;
+    }
+  }
+
+  // --- asking a model
+  async function detect() {
+    try {
+      if (window.claude && window.claude.use) {
+        state.sample = await window.claude.use("sample");
+        try { state.downloads = await window.claude.use("downloads"); } catch (_) { state.downloads = null; }
+      }
+    } catch (_) { state.sample = null; }
+    state.mode = state.sample ? "claude" : "scribe";
+    $("barSite").hidden = state.mode !== "scribe";
+    $("barLocal").hidden = state.mode !== "claude";
+    $("saveBook").hidden = !state.downloads;
+    if (state.mode === "claude") { loadLocalBook(); } else { await loadSiteBook(); }
+    setStatus("Ready");
+  }
+  function bookContext() {
+    const t = state.book.map((p) => p.text).join("\n\n");
+    return t ? "\n\nThe writer's book so far (the end of it):\n" + t.slice(-3000) : "";
+  }
+  async function askClaude() {
+    const msgs = state.history.slice(-20).map((m) => ({ role: m.role, content: m.text }));
+    while (msgs.length && msgs[0].role !== "user") msgs.shift();
+    msgs[0] = { role: "user", content: INSTRUCTIONS + bookContext() + "\n\nThe conversation so far:\n\n" + msgs[0].content };
+    const b = bubble("assistant", "…");
+    try {
+      const r = await state.sample(msgs, { cache: false, onText: ({ text }) => { b.body.textContent = text; scrollChat(); } });
+      b.body.textContent = r.text; offerAdd(b);
+      return { text: r.text };
+    } catch (e) { b.el.remove(); throw e; }
+  }
+  async function askServer(text) {
+    const r = await siteFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, session_id: state.sid, book: state.bookName }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(j.detail || "server"), { code: "server", detail: j.detail });
+    return j;
+  }
+  function explain(e) {
+    if (e && e.code === "not_granted") return "Please allow Claude to answer on this page, then press Send again.";
+    if (e && e.code === "rate_limited") return "That was too fast. Wait a moment, then press Send again.";
+    if (e && e.code === "auth") return "Please log in again.";
+    if (e && e.detail) return e.detail;
+    return "I could not get an answer. Please try again.";
+  }
+  function showServerReply(j) {  // chat, book and spoken reply for one answer from your server
+    if (j.text) bubble("assistant", j.text);
+    (j.notes || []).forEach((n) => bubble("note", n));
+    setPending(j.pending || null);
+    if (j.chapter) showChapter(j.chapter, j.focus, j.changed && j.changed.length);
+    state.history.push({ role: "assistant", text: j.text || "" });
+    speak(j.text, j.speech);
+  }
+  async function send(raw) {
+    const text = (raw || "").trim();
+    if (!text || state.busy) return;
+    stopSpeaking(); await ready; showIdeas(false); setPending(null);
+    $("msg").value = ""; bubble("me", text); state.history.push({ role: "user", text }); busy(true);
+    try {
+      if (state.mode === "claude") { const res = await askClaude(); state.history.push({ role: "assistant", text: res.text }); busy(false); speak(res.text); }
+      else { const j = await askServer(text); busy(false); showServerReply(j); }
+    } catch (e) { state.history.pop(); $("msg").value = text; busy(false); note(explain(e)); }
+  }
+
+  // --- the microphone
+  function noMic(why) {
+    setTalk(false);
+    note(why || "The microphone is not available here. Tap the box below and use the microphone key on your keyboard to talk, then press Send.");
+    $("msg").focus();
+  }
+  function setTalk(on) {
+    state.listening = on; $("talk").classList.toggle("live", on);
+    $("talkLabel").textContent = on ? "Listening. Tap to send" : "Talk"; setStatus(on ? "Listening…" : "Ready");
+  }
+  async function uploadVoice(blob) {
+    busy(true);
+    try {
+      const fd = new FormData(); fd.append("audio", blob, "speech.webm"); fd.append("session_id", state.sid); fd.append("book", state.bookName || "");
+      const r = await siteFetch("/api/voice", { method: "POST", body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw Object.assign(new Error("voice"), { code: "server", detail: j.detail });
+      showIdeas(false); busy(false);
+      if (!j.text) { note("I did not hear anything. Tap Talk and try again."); return; }
+      bubble("me", j.user_text); state.history.push({ role: "user", text: j.user_text }); showServerReply(j);
+    } catch (e) { busy(false); note(explain(e)); }
+  }
+  async function startRecording() {
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (_) { return noMic("The microphone is blocked. Allow it in your browser, or type below."); }
+    state.chunks = [];
+    const rec = new MediaRecorder(stream); state.rec = rec;
+    rec.ondataavailable = (e) => state.chunks.push(e.data);
+    rec.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(state.chunks, { type: rec.mimeType || "audio/webm" });
+      state.rec = null;
+      if (blob.size < 1500) { note("That was too short. Tap Talk and try again."); return; }
+      uploadVoice(blob);
+    };
+    rec.start(); setTalk(true);
+  }
+  function startRecognition(SR) {
+    const r = new SR(); r.lang = navigator.language || "en-US"; r.interimResults = false; r.maxAlternatives = 1;
+    let heard = "";
+    r.onresult = (e) => { heard = Array.from(e.results).map((x) => x[0].transcript).join(" "); };
+    r.onerror = () => noMic();
+    r.onend = () => { state.recog = null; if (state.listening) setTalk(false); if (heard.trim()) send(heard); };
+    state.recog = r;
+    try { r.start(); setTalk(true); } catch (_) { noMic(); }
+  }
+  async function toggleTalk() {
+    if (state.listening) {
+      setTalk(false);
+      if (state.rec && state.rec.state === "recording") state.rec.stop();
+      if (state.recog) try { state.recog.stop(); } catch (_) {}
+      return;
+    }
+    if (state.busy) return;
+    stopSpeaking(); await ready;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (state.mode === "scribe" && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder) return startRecording();
+    if (SR) return startRecognition(SR);
+    noMic();
+  }
+
+  // ================================================================ the book =========================================
+  // --- inside Claude: a draft kept in this browser
+  function saveLocalBook() { store.set("bs_book", JSON.stringify(state.book)); }
+  function loadLocalBook() {
+    try { state.book = JSON.parse(store.get("bs_book", "[]")).filter((p) => p && typeof p.text === "string"); } catch (_) { state.book = []; }
+    renderLocalBook();
+  }
+  function addToBook(text) {
+    state.book.push({ text: text.trim() }); saveLocalBook(); renderLocalBook();
+    const box = $("book"); box.scrollTop = box.scrollHeight; setStatus("Added to the book");
+  }
+  function renderLocalBook() {
+    const box = $("book"); box.replaceChildren();
+    if (!state.book.length) {
+      const p = document.createElement("p"); p.id = "bookEmpty";
+      p.textContent = "Your book is empty. Ask Book Scribe for an idea, then press Add to book under the answer you like. Tap a paragraph to change it.";
+      box.append(p); return;
+    }
+    state.book.forEach((p, i) => {
+      const d = document.createElement("p");
+      d.className = "para"; d.tabIndex = 0; d.textContent = p.text;
+      const open = () => editLocal(i, d);
+      d.onclick = open; d.onkeydown = (e) => { if (e.key === "Enter") open(); };
+      box.append(d);
+    });
+  }
+  function editLocal(i, node) {
+    const wrap = document.createElement("div"); wrap.className = "para";
+    const ta = document.createElement("textarea"); ta.value = state.book[i].text; ta.setAttribute("aria-label", "Edit this paragraph");
+    const row = document.createElement("div"); row.className = "row";
+    const mk = (label, fn) => { const b = document.createElement("button"); b.type = "button"; b.textContent = label; b.onclick = fn; return b; };
+    row.append(
+      mk("Save", () => { const t = ta.value.trim(); if (t) state.book[i].text = t; else state.book.splice(i, 1); saveLocalBook(); renderLocalBook(); }),
+      mk("Cancel", renderLocalBook),
+      mk("Delete", () => { state.book.splice(i, 1); saveLocalBook(); renderLocalBook(); }),
+    );
+    wrap.append(ta, row); node.replaceWith(wrap); ta.focus();
+  }
+  const bookText = () => state.book.map((p) => p.text).join("\n\n") + "\n";
+  async function copyBook() {
+    const text = bookText();
+    try { await navigator.clipboard.writeText(text); setStatus("Copied"); $("copyBook").textContent = "Copied"; setTimeout(() => ($("copyBook").textContent = "Copy all"), 1800); }
+    catch (_) {  // some viewers refuse the clipboard: show the text selected so it can be copied by hand
+      const ta = document.createElement("textarea"); ta.value = text; ta.className = "para"; ta.style.minHeight = "40vh"; $("book").replaceChildren(ta); ta.select();
+      setStatus("Select all and copy");
+    }
+  }
+  async function saveBook() {
+    if (!state.downloads) return;
+    try { await state.downloads.save({ filename: "my-book.txt", data: bookText() }); setStatus("Saved"); } catch (_) { setStatus("Not saved"); }
+  }
+  let clearArmed = 0;
+  function clearBook() {
+    const b = $("clearBook");
+    if (!clearArmed) { clearArmed = setTimeout(() => { clearArmed = 0; b.textContent = "Clear book"; }, 4000); b.textContent = "Really clear? Tap again"; return; }
+    clearTimeout(clearArmed); clearArmed = 0; b.textContent = "Clear book";
+    state.book = []; saveLocalBook(); renderLocalBook();
+  }
+
+  // --- on your website: the real manuscript from the server
+  async function api(path) { const r = await siteFetch("/api" + path); if (!r.ok) throw new Error(path); return r.json(); }
+  async function loadSiteBook() {
+    try {
+      const info = await api("/books");
+      const saved = store.get("bs_book_name", "");
+      state.bookName = info.books.includes(saved) ? saved : info.default;
+      state.chapters = (await api(`/books/${encodeURIComponent(state.bookName)}/chapters`)).chapters;
+      if (state.chapters.length) await showChapter(state.chapters[0]);
+      else siteMessage("This book has no chapters yet. Ask me to write the first paragraph, or import a draft in Settings.");
+    } catch (e) { siteMessage(e && e.code === "auth" ? "Please log in to see your book." : "I cannot reach your book. Is the Book Scribe server running?"); }
+  }
+  async function setBook(name) {  // switch which book is open (Settings > Books)
+    state.bookName = name; store.set("bs_book_name", name);
+    state.history = []; state.sid = state.sid.slice(0, 20) + Date.now().toString(36);
+    await loadSiteBook(); welcome();
+  }
+  function siteMessage(t) {
+    const p = document.createElement("p"); p.id = "bookEmpty"; p.textContent = t; $("book").replaceChildren(p);
+    $("chapterLabel").textContent = "No chapter"; $("prevCh").disabled = $("nextCh").disabled = true;
+  }
+  async function showChapter(n, focus, flash) {
+    if (!state.bookName) return;
+    try {
+      const { paragraphs } = await api(`/books/${encodeURIComponent(state.bookName)}/chapters/${n}`);
+      state.chapter = n;
+      const i = state.chapters.indexOf(n);
+      $("chapterLabel").textContent = `Chapter ${n} of ${state.chapters.length || n}`;
+      $("prevCh").disabled = i <= 0; $("nextCh").disabled = i < 0 || i >= state.chapters.length - 1;
+      const box = $("book"); box.replaceChildren();
+      for (const p of paragraphs) {
+        const el = document.createElement("p");
+        el.className = "para" + (p.id === focus ? " mark" : ""); el.id = "p_" + p.id; el.tabIndex = 0; el.textContent = p.text;
+        const hear = () => speak(p.text, [{ speaker: "narrator", text: p.text }]);  // tap a paragraph to hear it
+        el.onclick = hear; el.onkeydown = (e) => { if (e.key === "Enter") hear(); };
+        box.append(el);
+      }
+      const f = focus && document.getElementById("p_" + focus);
+      if (f) f.scrollIntoView({ block: "center", behavior: flash ? "smooth" : "auto" }); else box.scrollTop = 0;
+    } catch (_) { siteMessage("I could not open that chapter."); }
+  }
+  function stepChapter(d) { const i = state.chapters.indexOf(state.chapter); const n = state.chapters[i + d]; if (n) showChapter(n); }
+
+  // ================================================================ wiring =========================================
+  document.querySelectorAll("button[data-layout]").forEach((b) => (b.onclick = () => setLayout(b.dataset.layout)));
+  $("bookWider").onclick = () => nudge(10); $("chatWider").onclick = () => nudge(-10); $("evenSplit").onclick = () => { ui.split = 50; applyUI(); };
+  document.querySelectorAll(".detach").forEach((b) => (b.onclick = () => toggleFloat(b.dataset.pane)));
+  $("attachAll").onclick = $("attachAll2").onclick = attachAll;
+  $("bigger").onclick = () => { state.size = Math.min(SIZES.length - 1, state.size + 1); applySize(); };
+  $("smaller").onclick = () => { state.size = Math.max(0, state.size - 1); applySize(); };
+  $("form").addEventListener("submit", (e) => { e.preventDefault(); send($("msg").value); });
+  $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send($("msg").value); } });
+  $("talk").onclick = toggleTalk; $("stop").onclick = stopSpeaking;
+  $("read").onclick = () => { state.read = !state.read; if (!state.read) stopSpeaking(); applyRead(); };
+  $("fresh").onclick = () => { stopSpeaking(); state.history = []; state.sid = state.sid.slice(0, 20) + Date.now().toString(36); welcome(); setStatus("Ready"); };
+  $("prevCh").onclick = () => stepChapter(-1); $("nextCh").onclick = () => stepChapter(1);
+  $("copyBook").onclick = copyBook; $("saveBook").onclick = saveBook; $("clearBook").onclick = clearBook;
+  narrowQ.addEventListener("change", applyUI);
+  window.addEventListener("resize", () => { for (const p of ["book", "chat"]) if (ui.floats[p]) placeFloat(p); });
+
+  Object.assign(window.BS, {
+    state, store, bubble, note, welcome, applySize, applyRead, siteFetch, loadSiteBook, setBook, setStatus,
+    afterLogin: async () => { await loadSiteBook(); setStatus("Ready"); },
+  });
+  applySize(); applyRead(); applyUI(); welcome();
+  ready = detect();
+})();
+</script>
+
+<style>
+/* Site-only parts: the writer login and the Settings page. Same tokens and the same big-button rules as the workspace. */
+.overlay { position: fixed; inset: 0; z-index: 200; overflow-y: auto; background: var(--bg); padding: 16px max(16px, env(safe-area-inset-left, 0px)); }
+.overlay[hidden] { display: none; }
+.card, .panel { max-width: 720px; margin: 4vh auto; background: var(--surface); border: 2px solid var(--line); border-radius: 20px; padding: 24px; display: flex; flex-direction: column; gap: 12px; }
+.panel { max-width: 960px; margin: 0 auto; }
+.card h2, .panel h2 { margin: 0; font-size: 32px; }
+.overlay label { font-size: 22px; font-weight: 700; margin-top: 6px; }
+.overlay .hint { margin: 0; font-size: 19px; color: var(--muted); }
+.overlay input[type=text], .overlay input[type=password], .overlay input[type=number], .overlay select, .overlay textarea {
+  width: 100%; min-height: 60px; padding: 10px 14px; font: inherit; font-size: 24px; color: var(--fg); background: var(--bg); border: 3px solid var(--line); border-radius: 14px;
+}
+.overlay textarea { min-height: 140px; resize: vertical; }
+.overlay button, .overlay a.btn { min-height: 60px; padding: 8px 22px; font: inherit; font-size: 22px; font-weight: 700; color: var(--fg); background: var(--surface); border: 3px solid var(--line); border-radius: 14px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+.overlay button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.overlay button.danger { border-color: var(--live); color: var(--live); }
+.overlay button[aria-pressed="true"], .overlay button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.overlay a.link { font-size: 20px; color: var(--fg); }
+.err { color: var(--live); font-size: 22px; font-weight: 700; min-height: 1.3em; margin: 0; }
+.ok { color: var(--muted); font-size: 22px; font-weight: 700; margin: 0; min-height: 1.3em; }
+.sbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.entry { border: 2px solid var(--line); border-radius: 14px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.entry .name { font-size: 24px; font-weight: 700; flex: 1 1 200px; }
+.entry .meta { font-size: 18px; color: var(--muted); flex: 1 1 100%; }
+.sect { margin: 16px 0 4px; font-size: 26px; font-weight: 700; }
+.form { border: 3px dashed var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+@media (max-width: 600px) { .card, .panel { padding: 14px; border-radius: 14px; } .overlay button { font-size: 19px; min-height: 54px; padding: 6px 14px; } .card h2, .panel h2 { font-size: 26px; } }
+</style>
+
+<div id="loginView" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+  <form id="loginForm" class="card">
+    <h2 id="loginTitle">Book Scribe</h2>
+    <p id="loginNote" class="hint">Log in to write.</p>
+    <label for="loginUser">Username</label>
+    <input id="loginUser" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    <label for="loginPass">Password</label>
+    <input id="loginPass" type="password" autocomplete="current-password" required>
+    <button type="button" id="showPass">Show password</button>
+    <p id="loginErr" class="err" role="alert"></p>
+    <button type="submit" class="primary" id="loginGo">Log in</button>
+    <a class="link" href="/admin.html">Admin login</a>
+  </form>
+</div>
+
+<div id="settingsView" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="setTitle">
+  <div class="panel">
+    <div class="sbar"><h2 id="setTitle">Settings</h2><button type="button" id="setClose" class="primary">Close</button></div>
+    <div class="tabs" role="tablist" aria-label="Settings sections">
+      <button type="button" role="tab" data-tab="words">My words</button>
+      <button type="button" role="tab" data-tab="bible">Story bible</button>
+      <button type="button" role="tab" data-tab="voices">Voices</button>
+      <button type="button" role="tab" data-tab="books">Books</button>
+      <button type="button" role="tab" data-tab="account">Account</button>
+    </div>
+    <div id="setBody" role="tabpanel" style="display:flex;flex-direction:column;gap:10px"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const BS = window.BS, $ = (id) => document.getElementById(id);
+  let status = { writer_account: false, auth_required: true }, tab = "words", settingsOpen = false;
+
+  // ---- small helpers ---------------------------------------------------------------------------------------------
+  function h(tag, props = {}, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) k.startsWith("aria-") || k === "for" || k === "role" ? el.setAttribute(k, v) : (el[k] = v);
+    el.append(...kids.filter((x) => x != null && x !== false));
+    return el;
+  }
+  async function call(method, path, body) {
+    const r = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) { showLogin("Please log in again."); throw new Error("Please log in again."); }
+    if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : "That did not work. Please check what you typed.");
+    return j;
+  }
+  const book = () => BS.state.bookName;
+  const enc = encodeURIComponent;
+  const msg = (box, text, bad) => { box.className = bad ? "err" : "ok"; box.textContent = text || ""; };
+
+  // ---- login -------------------------------------------------------------------------------------------------------
+  function showLogin(note) {
+    $("settingsView").hidden = true; settingsOpen = false;
+    $("loginView").hidden = false;
+    $("loginNote").textContent = note || (status.writer_account ? "Log in to write." : "There is no account yet. The admin creates it on the admin page.");
+    $("loginErr").textContent = "";
+    $("loginPass").value = "";
+    setTimeout(() => $("loginUser").focus(), 50);
+  }
+  function hideLogin() { $("loginView").hidden = true; }
+  $("showPass").onclick = () => {
+    const p = $("loginPass"), show = p.type === "password";
+    p.type = show ? "text" : "password"; $("showPass").textContent = show ? "Hide password" : "Show password";
+  };
+  $("loginForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("loginGo").disabled = true; $("loginErr").textContent = "";
+    try {
+      const r = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: $("loginUser").value, password: $("loginPass").value }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { $("loginErr").textContent = typeof j.detail === "string" ? j.detail : "I could not log you in."; return; }
+      $("loginPass").value = ""; hideLogin(); BS.authNeeded = false; mountTools(); await BS.afterLogin();
+    } catch (_) { $("loginErr").textContent = "I could not reach the server."; }
+    finally { $("loginGo").disabled = false; }
+  });
+  BS.needLogin = () => showLogin();
+
+  function mountTools() {
+    const box = $("siteTools"); box.hidden = false; box.replaceChildren();
+    const s = h("button", { type: "button", textContent: "Settings" }); s.onclick = () => openSettings();
+    box.append(s);
+    if (status.auth_required) {
+      const o = h("button", { type: "button", textContent: "Log out" });
+      o.onclick = async () => { try { await fetch("/api/auth/logout", { method: "POST" }); } catch (_) {} location.reload(); };
+      box.append(o);
+    }
+  }
+
+  // ---- settings shell -------------------------------------------------------------------------------------------------
+  function openSettings(t) {
+    settingsOpen = true; $("settingsView").hidden = false; render(t || tab);
+    setTimeout(() => document.querySelector("#settingsView .tabs button").focus(), 50);
+  }
+  function closeSettings() { settingsOpen = false; $("settingsView").hidden = true; }
+  $("setClose").onclick = closeSettings;
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && settingsOpen) closeSettings(); });
+  document.querySelectorAll("#settingsView .tabs button").forEach((b) => (b.onclick = () => render(b.dataset.tab)));
+  let seq = 0;
+  async function render(t) {
+    const mine = ++seq;  // ignore a slow tab that finishes after the writer moved on
+    tab = t;
+    document.querySelectorAll("#settingsView .tabs button").forEach((b) => { b.setAttribute("aria-selected", String(b.dataset.tab === t)); });
+    const body = $("setBody"); body.replaceChildren(h("p", { className: "hint", textContent: "Loading…" }));
+    try { const dom = await ({ words: tabWords, bible: tabBible, voices: tabVoices, books: tabBooks, account: tabAccount }[t])(); if (mine === seq) body.replaceChildren(...dom); }
+    catch (e) { if (mine === seq) body.replaceChildren(h("p", { className: "err", textContent: e.message })); }
+  }
+
+  // ---- My words -----------------------------------------------------------------------------------------------------------
+  async function tabWords() {
+    const prefs = await call("GET", "/api/settings");
+    const out = h("p", { className: "ok" });
+    const size = h("span", { className: "hint" });
+    const upd = () => { size.textContent = `Words are ${[18, 22, 26, 32, 40][BS.state.size]} pixels tall.`; };
+    upd();
+    const bigger = h("button", { type: "button", textContent: "Bigger A +" }), smaller = h("button", { type: "button", textContent: "Smaller A −" });
+    bigger.onclick = () => { BS.state.size = Math.min(4, BS.state.size + 1); BS.applySize(); upd(); };
+    smaller.onclick = () => { BS.state.size = Math.max(0, BS.state.size - 1); BS.applySize(); upd(); };
+    const read = h("button", { type: "button" }); const paintRead = () => { read.textContent = "Read aloud: " + (BS.state.read ? "On" : "Off"); read.setAttribute("aria-pressed", String(BS.state.read)); };
+    read.onclick = () => { BS.state.read = !BS.state.read; BS.applyRead(); paintRead(); }; paintRead();
+    const age = h("input", { id: "prefAge", type: "text", value: prefs.writer_age, maxLength: 20, inputMode: "numeric" });
+    const name = h("input", { id: "prefName", type: "text", value: prefs.display_name, maxLength: 60 });
+    const save = h("button", { type: "button", className: "primary", textContent: "Save" });
+    save.onclick = async () => { try { await call("PUT", "/api/settings", { writer_age: age.value, display_name: name.value }); msg(out, "Saved."); } catch (e) { msg(out, e.message, true); } };
+    return [
+      h("div", { className: "sect", textContent: "Words on the screen" }), size, h("div", { className: "row" }, smaller, bigger),
+      h("div", { className: "sect", textContent: "Reading to me" }), read,
+      h("div", { className: "sect", textContent: "About me" }),
+      h("p", { className: "hint", textContent: "Optional. Your age helps me match the style of the words I suggest. I never mention it." }),
+      h("label", { for: "prefAge", textContent: "Your age" }), age,
+      h("label", { for: "prefName", textContent: "What should I call you?" }), name,
+      h("div", { className: "row" }, save), out,
+    ];
+  }
+
+  // ---- Story bible -------------------------------------------------------------------------------------------------------------
+  const KINDS = {
+    characters: { title: "Characters", one: "character", add: "Add a character" },
+    threads: { title: "Story threads", one: "thread", add: "Add a thread" },
+    world: { title: "World and places", one: "place or rule", add: "Add a place or rule" },
+  };
+  async function tabBible() {
+    if (!book()) return [h("p", { className: "hint", textContent: "Open a book first." })];
+    const b = await call("GET", `/api/books/${enc(book())}/bible`);
+    const out = [h("p", { className: "hint", textContent: `Book: ${book()}. The story bible is what I treat as true about your story. I never go against it.` })];
+    // premise
+    const prem = h("textarea", { id: "premise", value: b.premise.replace(/^# Premise\s*/, "") }), pmsg = h("p", { className: "ok" });
+    const psave = h("button", { type: "button", className: "primary", textContent: "Save premise" });
+    psave.onclick = async () => { try { await call("PUT", `/api/books/${enc(book())}/bible/doc/premise`, { text: "# Premise\n\n" + prem.value.trim() }); msg(pmsg, "Saved."); } catch (e) { msg(pmsg, e.message, true); } };
+    out.push(h("div", { className: "sect", textContent: "The idea of the story" }), h("label", { for: "premise", className: "sr", textContent: "Premise" }), prem, h("div", { className: "row" }, psave), pmsg);
+    for (const kind of Object.keys(KINDS)) {
+      const host = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+      const list = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+      for (const e of b[kind]) list.append(entryRow(kind, e, host));
+      const add = h("button", { type: "button", textContent: KINDS[kind].add }); add.onclick = () => host.replaceChildren(entryForm(kind, null, host));
+      out.push(h("div", { className: "sect", textContent: KINDS[kind].title }), list, h("div", { className: "row" }, add), host);
+    }
+    return out;
+  }
+  function summary(kind, e) {
+    const s = e.state || {};
+    return [kind === "characters" && (s.role || s.gender), kind === "threads" && (s.status || "open"), s.temperament, Array.isArray(s.aliases) && s.aliases.length ? "also called " + s.aliases.join(", ") : null].filter(Boolean).join(" · ");
+  }
+  function entryRow(kind, e, host) {
+    const del = h("button", { type: "button", className: "danger", textContent: "Delete" });
+    let armed = 0;
+    del.onclick = async () => {
+      if (!armed) { armed = setTimeout(() => { armed = 0; del.textContent = "Delete"; }, 4000); del.textContent = "Really delete? Tap again"; return; }
+      clearTimeout(armed);
+      try { await call("DELETE", `/api/books/${enc(book())}/bible/${kind}/${enc(e.slug)}`); render("bible"); } catch (err) { del.textContent = err.message; }
+    };
+    const edit = h("button", { type: "button", textContent: "Edit" }); edit.onclick = () => host.replaceChildren(entryForm(kind, e, host));
+    return h("div", { className: "entry" }, h("span", { className: "name", textContent: e.name }), edit, del, summary(kind, e) ? h("span", { className: "meta", textContent: summary(kind, e) }) : null);
+  }
+  function entryForm(kind, e, host) {
+    const st = (e && e.state) || {};
+    const f = h("form", { className: "form" });
+    const text = (id, label, val, extra = {}) => [h("label", { for: id, textContent: label }), h("input", { id, type: "text", value: val || "", maxLength: 300, ...extra })];
+    const name = text("bfName", `Name of the ${KINDS[kind].one}`, e && e.name, { required: true, maxLength: 80 });
+    const fields = [...name];
+    let gender, role, aliases, temper, status;
+    if (kind === "characters") {
+      gender = h("select", { id: "bfGender" }, ...[["", "Not set"], ["male", "Male"], ["female", "Female"], ["neutral", "Neither / not said"]].map(([v, l]) => h("option", { value: v, textContent: l })));
+      gender.value = st.gender || "";
+      role = text("bfRole", "Role in the story (mother, friend, villain…)", st.role);
+      aliases = text("bfAlias", "Also called (separate with commas, e.g. Lizzy, Eliza, his wife)", Array.isArray(st.aliases) ? st.aliases.join(", ") : st.aliases || "");
+      temper = text("bfTemper", "How they come across (dry, nervous, warm…)", st.temperament);
+      fields.push(h("label", { for: "bfGender", textContent: "Gender (picks their voice)" }), gender, ...role, ...aliases, ...temper);
+    }
+    if (kind === "threads") {
+      status = h("select", { id: "bfStatus" }, h("option", { value: "open", textContent: "Still open" }), h("option", { value: "resolved", textContent: "Resolved" }));
+      status.value = st.status || "open";
+      fields.push(h("label", { for: "bfStatus", textContent: "Where it stands" }), status);
+    }
+    const body = h("textarea", { id: "bfBody", value: (e && e.body) || "" });
+    const msgBox = h("p", { className: "err", role: "alert" });
+    const save = h("button", { type: "submit", className: "primary", textContent: "Save" });
+    const cancel = h("button", { type: "button", textContent: "Cancel" }); cancel.onclick = () => host.replaceChildren();
+    f.append(...fields, h("label", { for: "bfBody", textContent: "About it, in your own words" }), body, h("div", { className: "row" }, save, cancel), msgBox);
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const state = { ...st };  // keep any fields this form does not show
+      const set = (k, v) => { if (v) state[k] = v; else delete state[k]; };
+      if (kind === "characters") {
+        set("gender", gender.value); set("role", role[1].value.trim()); set("temperament", temper[1].value.trim());
+        const list = aliases[1].value.split(",").map((x) => x.trim()).filter(Boolean); if (list.length) state.aliases = list; else delete state.aliases;
+      }
+      if (kind === "threads") state.status = status.value;
+      try { await call("PUT", `/api/books/${enc(book())}/bible/${kind}`, { slug: e ? e.slug : null, name: name[1].value.trim(), state, body: body.value }); render("bible"); }
+      catch (err) { msg(msgBox, err.message, true); }
+    };
+    setTimeout(() => name[1].focus(), 30);
+    return f;
+  }
+
+  // ---- Voices ----------------------------------------------------------------------------------------------------------------------
+  let playing = null;
+  async function hear(speaker, say) {
+    if (playing) { try { playing.pause(); } catch (_) {} }
+    const r = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: say, speaker, book: book() }) });
+    if (r.status === 401) { showLogin("Please log in again."); return; }
+    if (!r.ok) { if ("speechSynthesis" in window) { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(say)); } return; }
+    playing = new Audio(URL.createObjectURL(await r.blob())); playing.play().catch(() => {});
+  }
+  async function tabVoices() {
+    if (!book()) return [h("p", { className: "hint", textContent: "Open a book first." })];
+    const [v, bible] = await Promise.all([call("GET", `/api/books/${enc(book())}/voices`), call("GET", `/api/books/${enc(book())}/bible`)]);
+    const out = [h("p", { className: "hint", textContent: "Each character has their own voice. To change one, tell the chat: “let me hear Mr. Bennet”, then say deeper, slower, or try another." })];
+    if (!v.pool.length) out.push(h("p", { className: "ok", textContent: "No list of voices has been set up yet, so everyone sounds the same. The admin adds the voices on the admin page, under Text-to-speech." }));
+    const names = ["narrator", "assistant", ...bible.characters.map((c) => c.name)];
+    const label = { narrator: "The narrator (the story's own voice)", assistant: "Me (Book Scribe)" };
+    for (const sp of names) {
+      const p = v.profiles[sp];
+      const voiceNames = p ? [...new Set([...Object.values(p.pinned || {}), ...Object.values(p.assigned || {})])].join(" / ") : "";
+      const meta = p ? [voiceNames ? "voice " + voiceNames : "", p.speed && p.speed !== 1 ? "speed " + p.speed : "", p.style, p.auto ? "chosen automatically" : "approved by you"].filter(Boolean).join(" · ") : "No voice yet. One is picked the first time they speak.";
+      const hearBtn = h("button", { type: "button", textContent: "Hear" }); hearBtn.onclick = () => hear(sp, sp === "assistant" ? "Hello. This is how I sound when we talk." : sp === "narrator" ? "The evening was quiet, and the road ahead was long." : "I had not expected to see you here tonight.");
+      const row = h("div", { className: "entry" }, h("span", { className: "name", textContent: label[sp] || sp }), hearBtn);
+      if (p) { const f = h("button", { type: "button", className: "danger", textContent: "Forget" }); f.onclick = async () => { try { await call("DELETE", `/api/books/${enc(book())}/voices/${enc(sp)}`); render("voices"); } catch (_) {} }; row.append(f); }
+      row.append(h("span", { className: "meta", textContent: meta }));
+      out.push(row);
+    }
+    return out;
+  }
+
+  // ---- Books --------------------------------------------------------------------------------------------------------------------------
+  async function tabBooks() {
+    const info = await call("GET", "/api/books");
+    const out = [h("p", { className: "hint", textContent: "Pick the book you are working on, start a new one, or bring in a draft you already wrote." })];
+    out.push(h("div", { className: "sect", textContent: "Your books" }));
+    for (const n of info.books) {
+      const cur = n === book();
+      const b = h("button", { type: "button", textContent: cur ? "Open now" : "Open this book", disabled: cur, className: cur ? "" : "primary" });
+      b.onclick = async () => { await BS.setBook(n); render("books"); };
+      out.push(h("div", { className: "entry" }, h("span", { className: "name", textContent: n }), b));
+    }
+    const nm = h("input", { id: "newBook", type: "text", maxLength: 60, placeholder: "A name for the new book" }), m1 = h("p", { className: "ok" });
+    const mk = h("button", { type: "button", className: "primary", textContent: "Start a new book" });
+    mk.onclick = async () => { try { const r = await call("POST", "/api/books", { name: nm.value }); await BS.setBook(r.name); render("books"); } catch (e) { msg(m1, e.message, true); } };
+    out.push(h("div", { className: "sect", textContent: "A new book" }), h("label", { for: "newBook", className: "sr", textContent: "Name of the new book" }), nm, h("div", { className: "row" }, mk), m1);
+    // import
+    const target = h("select", { id: "impBook" }, ...info.books.map((n) => h("option", { value: n, textContent: n })));
+    target.value = book() || info.books[0];
+    const file = h("input", { id: "impFile", type: "file", accept: ".txt,.md,text/plain" });
+    const paste = h("textarea", { id: "impText", placeholder: "…or paste your draft here. Start each chapter with a line like: Chapter 1" });
+    const m2 = h("p", { className: "ok" });
+    file.onchange = async () => { const f = file.files[0]; if (f) paste.value = await f.text(); };
+    const go = h("button", { type: "button", className: "primary", textContent: "Bring it in" });
+    go.onclick = async () => {
+      try {
+        const r = await call("POST", `/api/books/${enc(target.value)}/import`, { text: paste.value });
+        msg(m2, `Done. ${r.chapters} chapters and ${r.paragraphs} paragraphs.`);
+        if (target.value === book()) await BS.loadSiteBook();
+      } catch (e) { msg(m2, e.message, true); }
+    };
+    out.push(h("div", { className: "sect", textContent: "Bring in a draft" }), h("p", { className: "hint", textContent: "Only into a book that has no chapters yet, so nothing you wrote can be overwritten." }),
+      h("label", { for: "impBook", textContent: "Into which book" }), target, h("label", { for: "impFile", textContent: "A text file" }), file, paste, h("div", { className: "row" }, go), m2);
+    return out;
+  }
+
+  // ---- Account ---------------------------------------------------------------------------------------------------------------------------
+  async function tabAccount() {
+    const me = await call("GET", "/api/auth/me");
+    const cur = h("input", { id: "accCur", type: "password", autocomplete: "current-password" });
+    const user = h("input", { id: "accUser", type: "text", value: me.username, autocomplete: "username", autocapitalize: "none" });
+    const pw = h("input", { id: "accNew", type: "password", autocomplete: "new-password" });
+    const pw2 = h("input", { id: "accNew2", type: "password", autocomplete: "new-password" });
+    const m = h("p", { className: "ok", role: "status" });
+    const save = h("button", { type: "button", className: "primary", textContent: "Change my login" });
+    save.onclick = async () => {
+      if (pw.value !== pw2.value) return msg(m, "The two new passwords are not the same.", true);
+      try { const r = await call("POST", "/api/account/password", { current: cur.value, new_password: pw.value, new_username: user.value }); cur.value = pw.value = pw2.value = ""; msg(m, `Done. You are now ${r.username}. Other devices have been logged out.`); }
+      catch (e) { msg(m, e.message, true); }
+    };
+    return [
+      h("p", { className: "hint", textContent: `You are logged in as ${me.username}. There is one account for this whole Book Scribe.` }),
+      h("label", { for: "accUser", textContent: "Username" }), user,
+      h("label", { for: "accCur", textContent: "Your password now" }), cur,
+      h("label", { for: "accNew", textContent: "New password (8 or more characters)" }), pw,
+      h("label", { for: "accNew2", textContent: "New password again" }), pw2,
+      h("div", { className: "row" }, save), m,
+    ];
+  }
+
+  // ---- start ----------------------------------------------------------------------------------------------------------------------------
+  (async () => {
+    try { status = await (await fetch("/api/auth/status")).json(); } catch (_) {}
+    if (!status.auth_required) { mountTools(); return; }
+    try {
+      const r = await fetch("/api/auth/me");
+      if (r.ok && (await r.json()).role === "writer") { mountTools(); return; }
+    } catch (_) {}
+    showLogin();
+  })();
+  if (BS.authNeeded) showLogin();
+})();
+</script>
+
 </body>
 </html>

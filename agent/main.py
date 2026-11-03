@@ -34,6 +34,8 @@ from voices import VoiceBook
 from settings import load_settings
 
 
+CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; "
+       "img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 WEAK_TOKENS = {"change-me", "changeme", "admin", "password", "token", "secret"}
 
 
@@ -215,6 +217,8 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("X-Frame-Options", "DENY")
         resp.headers.setdefault("Referrer-Policy", "no-referrer")
+        if not request.url.path.startswith("/api/"):
+            resp.headers.setdefault("Content-Security-Policy", CSP)
         if request.url.path.startswith("/api/"):
             resp.headers.setdefault("Cache-Control", "no-store")
         return resp
@@ -424,6 +428,10 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     async def admin_embeddings_rebuild(book: str, body: RebuildIn):
         index.start(book_or_400(book), body.full)
         return index.status(book)
+
+    @app.get("/api/admin/graph/{book}", dependencies=[Depends(admin)])
+    async def admin_graph(book: str):
+        return graph.info(book_or_400(book))
 
     @app.post("/api/admin/books/{book}/graph/rebuild", dependencies=[Depends(admin)])
     async def graph_rebuild(book: str):
