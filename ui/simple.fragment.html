@@ -1,0 +1,370 @@
+<title>Book Scribe</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+/* Layout: one column. Words on top, the newest reply largest; the big Talk button and the typing box always sit at the bottom.
+   Type: Atkinson Hyperlegible throughout. It was drawn for low vision, so every letter shape is distinct; that matters more here than a display face.
+   Color: ink-blue on cool paper, one blue for every action, red only while listening. */
+:root {
+  --bg: #F1F4F8; --surface: #FFFFFF; --fg: #0F1B2A; --muted: #43546A; --line: #BCC8D6;
+  --accent: #1B4FD6; --accent-fg: #FFFFFF; --live: #B3261E; --live-fg: #FFFFFF;
+  --mine: #DDE7FF; --note: #FFF1C2; --note-fg: #3A2C00; --focus: #0F1B2A;
+  --font: "Atkinson Hyperlegible", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --fs: 28px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0B1521; --surface: #14212F; --fg: #EEF3F8; --muted: #AFBED0; --line: #33475C;
+    --accent: #8DB0FF; --accent-fg: #07122A; --live: #FF9A90; --live-fg: #2A0805;
+    --mine: #1E3358; --note: #3B3213; --note-fg: #FFEFB8; --focus: #EEF3F8; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0B1521; --surface: #14212F; --fg: #EEF3F8; --muted: #AFBED0; --line: #33475C;
+  --accent: #8DB0FF; --accent-fg: #07122A; --live: #FF9A90; --live-fg: #2A0805;
+  --mine: #1E3358; --note: #3B3213; --note-fg: #FFEFB8; --focus: #EEF3F8; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 20px; line-height: 1.45;
+  padding-block: 12px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.app { height: 100%; max-width: 920px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { margin: 0; font-size: 34px; letter-spacing: -0.01em; }
+#status { margin: 0; font-size: 20px; color: var(--muted); font-weight: 700; }
+
+#chat { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 4px 2px; }
+.msg { max-width: 94%; padding: 14px 18px; border-radius: 18px; background: var(--surface); border: 2px solid var(--line); font-size: var(--fs); line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg .who { display: block; font-size: 16px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 4px; }
+.msg.me { align-self: flex-end; background: var(--mine); border-color: transparent; }
+.msg.note { align-self: center; background: var(--note); color: var(--note-fg); border-color: transparent; font-size: 22px; text-align: center; }
+.msg.note .who { display: none; }
+
+#ideas { display: flex; flex-wrap: wrap; gap: 12px; }
+button { font: inherit; cursor: pointer; }
+.chip { min-height: 64px; padding: 12px 20px; font-size: 24px; font-weight: 700; color: var(--fg); background: var(--surface); border: 3px solid var(--accent); border-radius: 16px; }
+
+#talk {
+  width: 100%; min-height: 104px; display: flex; align-items: center; justify-content: center; gap: 16px;
+  font-size: 40px; font-weight: 700; color: var(--accent-fg); background: var(--accent); border: 0; border-radius: 24px;
+}
+#talk svg { width: 48px; height: 48px; flex: none; }
+#talk.live { background: var(--live); color: var(--live-fg); }
+
+#form { display: flex; gap: 12px; align-items: stretch; }
+#msg { flex: 1; min-width: 0; min-height: 84px; resize: none; padding: 14px 16px; font: inherit; font-size: 26px; color: var(--fg); background: var(--surface); border: 3px solid var(--line); border-radius: 16px; }
+#send { min-width: 140px; font-size: 32px; font-weight: 700; color: var(--accent-fg); background: var(--accent); border: 0; border-radius: 16px; padding: 0 22px; }
+
+.tools { display: flex; flex-wrap: wrap; gap: 10px; }
+.tools button { min-height: 56px; padding: 8px 18px; font-size: 20px; font-weight: 700; color: var(--fg); background: var(--surface); border: 2px solid var(--line); border-radius: 14px; }
+.tools button[aria-pressed="true"] { border-color: var(--accent); }
+button:disabled { opacity: .55; cursor: default; }
+button:focus-visible, textarea:focus-visible { outline: 4px solid var(--focus); outline-offset: 3px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#chat { min-height: 150px; }
+@media (max-width: 520px) {
+  h1 { font-size: 28px; } #status { font-size: 18px; }
+  .app { gap: 10px; }
+  #talk { min-height: 84px; font-size: 32px; border-radius: 20px; } #talk svg { width: 40px; height: 40px; }
+  #msg { min-height: 64px; font-size: 22px; } #send { min-width: 100px; font-size: 26px; padding: 0 12px; }
+  .chip { min-height: 52px; font-size: 20px; padding: 8px 14px; }
+  .tools { gap: 8px; } .tools button { min-height: 46px; font-size: 17px; padding: 4px 12px; }
+}
+@media (max-height: 720px) {  /* short screens: let the page scroll rather than crush the conversation */
+  html, body { height: auto; } .app { height: auto; min-height: 100vh; } #chat { min-height: 220px; }
+}
+@media (prefers-reduced-motion: no-preference) { #talk.live { animation: pulse 1.4s ease-in-out infinite; } }
+@keyframes pulse { 50% { opacity: .78; } }
+</style>
+
+<main class="app">
+  <header>
+    <h1>Book Scribe</h1>
+    <p id="status" role="status">Getting ready…</p>
+  </header>
+
+  <section id="chat" aria-live="polite" aria-label="Conversation"></section>
+
+  <div id="ideas" aria-label="Ideas to start with"></div>
+
+  <button id="talk" type="button" aria-label="Talk to Book Scribe">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 11.5a7 7 0 0 0 14 0M12 18.5v3M8.5 21.5h7"/></svg>
+    <span id="talkLabel">Talk</span>
+  </button>
+
+  <form id="form">
+    <label class="sr" for="msg">Type your message</label>
+    <textarea id="msg" rows="2" placeholder="Or type here"></textarea>
+    <button id="send" type="submit">Send</button>
+  </form>
+
+  <div class="tools">
+    <button id="read" type="button" aria-pressed="true">Read aloud: On</button>
+    <button id="stop" type="button">Stop talking</button>
+    <button id="bigger" type="button" aria-label="Bigger words">Bigger A</button>
+    <button id="smaller" type="button" aria-label="Smaller words">Smaller A</button>
+    <button id="fresh" type="button">New chat</button>
+  </div>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (_) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} },
+  };
+
+  // One page, two backends. Inside Claude it asks Claude directly. On your own website it talks to your Book Scribe server
+  // (/api/chat, /api/voice for the microphone, /api/tts for character voices).
+  const INSTRUCTIONS =
+    "You are Book Scribe, a friendly writing partner for someone who finds typing and reading hard. Answer in plain, warm, " +
+    "short sentences, usually one to three. No lists, no markdown, no emoji. If they ask for writing, give one short paragraph. " +
+    "Ask at most one question at a time, and wait for the answer.";
+  const IDEAS = ["Help me start a story", "Describe a character for me", "Give me a writing idea"];
+  const SIZES = [20, 24, 28, 34, 42];
+
+  const state = {
+    mode: null, sample: null, history: [], busy: false, listening: false, rec: null, recog: null, chunks: [],
+    read: store.get("bs_read", "1") === "1", size: Math.min(4, Math.max(0, parseInt(store.get("bs_size", "2"), 10) || 2)),
+    speakToken: 0, audio: null, sid: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, ""),
+  };
+  let ready;
+
+  // --- what the writer sees ----------------------------------------------------------------------------
+  function setStatus(t) { $("status").textContent = t; }
+  function scrollDown() { const c = $("chat"); c.scrollTop = c.scrollHeight; }
+  function bubble(kind, text) {
+    const d = document.createElement("div");
+    d.className = "msg " + kind;
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = kind === "me" ? "You" : "Book Scribe";
+    const body = document.createElement("span");
+    body.className = "body";
+    body.textContent = text;
+    d.append(who, body);
+    $("chat").append(d);
+    scrollDown();
+    return body;
+  }
+  function note(text) { bubble("note", text); setStatus(text); }
+  function applySize() {
+    document.documentElement.style.setProperty("--fs", SIZES[state.size] + "px");
+    $("bigger").disabled = state.size === SIZES.length - 1;
+    $("smaller").disabled = state.size === 0;
+    store.set("bs_size", String(state.size));
+  }
+  function applyRead() {
+    $("read").textContent = "Read aloud: " + (state.read ? "On" : "Off");
+    $("read").setAttribute("aria-pressed", String(state.read));
+    store.set("bs_read", state.read ? "1" : "0");
+  }
+  function showIdeas(show) {
+    const box = $("ideas");
+    box.replaceChildren();
+    if (!show) return;
+    for (const t of IDEAS) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "chip"; b.textContent = t;
+      b.onclick = () => send(t);
+      box.append(b);
+    }
+  }
+  function welcome() {
+    $("chat").replaceChildren();
+    bubble("assistant", "Hello. I am Book Scribe. Tell me about your story, or ask me to help you write. Press Talk, or type below.");
+    showIdeas(true);
+  }
+  function busy(on) {
+    state.busy = on;
+    $("send").disabled = on;
+    setStatus(on ? "Thinking…" : "Ready");
+  }
+
+  // --- talking back ----------------------------------------------------------------------------------------
+  function stopSpeaking() {
+    state.speakToken++;
+    if (state.audio) { try { state.audio.pause(); } catch (_) {} }
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+  }
+  function browserSpeak(text) {
+    return new Promise((done) => {
+      if (!("speechSynthesis" in window) || !text) return done();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 0.95; u.onend = u.onerror = () => done();
+      speechSynthesis.speak(u);
+    });
+  }
+  async function fetchVoice(seg) {
+    try {
+      const r = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: seg.text, speaker: seg.speaker || "assistant", draft: seg.draft || null }) });
+      return r.ok ? await r.blob() : null;  // 501 = no server voice: fall back to the browser's
+    } catch (_) { return null; }
+  }
+  function playBlob(blob) {
+    return new Promise((done) => {
+      const a = new Audio(URL.createObjectURL(blob));
+      state.audio = a; a.onended = a.onerror = () => done(); a.play().catch(() => done());
+    });
+  }
+  async function speak(text, segments) {
+    if (!state.read || !text) return;
+    stopSpeaking();
+    const token = state.speakToken;
+    const segs = state.mode === "scribe" && segments && segments.length ? segments.filter((s) => s.text && s.text.trim()) : [{ speaker: "assistant", text }];
+    let next = state.mode === "scribe" ? fetchVoice(segs[0]) : null;
+    for (let i = 0; i < segs.length; i++) {
+      const blob = await next;
+      if (token !== state.speakToken) return;
+      next = state.mode === "scribe" && i + 1 < segs.length ? fetchVoice(segs[i + 1]) : null;
+      if (blob) await playBlob(blob); else await browserSpeak(segs[i].text);
+      if (token !== state.speakToken) return;
+    }
+  }
+
+  // --- asking a model -----------------------------------------------------------------------------------------
+  async function detect() {
+    try { if (window.claude && window.claude.use) state.sample = await window.claude.use("sample"); } catch (_) { state.sample = null; }
+    state.mode = state.sample ? "claude" : "scribe";
+    setStatus("Ready");
+  }
+  async function askClaude() {
+    const msgs = state.history.slice(-20).map((m) => ({ role: m.role, content: m.text }));
+    while (msgs.length && msgs[0].role !== "user") msgs.shift();  // the model needs a conversation that starts with the writer
+    msgs[0] = { role: "user", content: INSTRUCTIONS + "\n\nThe conversation so far:\n\n" + msgs[0].content };
+    const out = bubble("assistant", "…");
+    try {
+      const r = await state.sample(msgs, { cache: false, onText: ({ text }) => { out.textContent = text; scrollDown(); } });
+      out.textContent = r.text;
+      return { text: r.text };
+    } catch (e) {
+      out.parentElement.remove();
+      throw e;
+    }
+  }
+  async function askServer(text) {
+    const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, session_id: state.sid }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(j.detail || "server"), { code: "server", detail: j.detail });
+    bubble("assistant", j.text || "…");
+    return j;
+  }
+  function explain(e) {
+    if (e && e.code === "not_granted") return "Please allow Claude to answer on this page, then press Send again.";
+    if (e && e.code === "rate_limited") return "That was too fast. Wait a moment, then press Send again.";
+    if (e && e.detail) return e.detail;
+    return "I could not get an answer. Please try again.";
+  }
+
+  async function send(raw) {
+    const text = (raw || "").trim();
+    if (!text || state.busy) return;
+    stopSpeaking();
+    await ready;
+    showIdeas(false);
+    $("msg").value = "";
+    bubble("me", text);
+    state.history.push({ role: "user", text });
+    busy(true);
+    try {
+      const res = state.mode === "claude" ? await askClaude() : await askServer(text);
+      state.history.push({ role: "assistant", text: res.text || "" });
+      busy(false);
+      speak(res.text, res.speech);
+    } catch (e) {
+      state.history.pop();
+      $("msg").value = text;
+      busy(false);
+      note(explain(e));
+    }
+  }
+
+  // --- the microphone -------------------------------------------------------------------------------------------
+  function noMic(why) {
+    setTalk(false);
+    note(why || "The microphone is not available here. Tap the box below and use the microphone key on your keyboard to talk, then press Send.");
+    $("msg").focus();
+  }
+  function setTalk(on) {
+    state.listening = on;
+    $("talk").classList.toggle("live", on);
+    $("talkLabel").textContent = on ? "Listening. Tap to send" : "Talk";
+    setStatus(on ? "Listening…" : "Ready");
+  }
+  async function uploadVoice(blob) {
+    busy(true);
+    try {
+      const fd = new FormData();
+      fd.append("audio", blob, "speech.webm"); fd.append("session_id", state.sid);
+      const r = await fetch("/api/voice", { method: "POST", body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw Object.assign(new Error("voice"), { code: "server", detail: j.detail });
+      showIdeas(false);
+      if (!j.text) { busy(false); note("I did not hear anything. Tap Talk and try again."); return; }
+      bubble("me", j.user_text); bubble("assistant", j.text);
+      state.history.push({ role: "user", text: j.user_text }, { role: "assistant", text: j.text });
+      busy(false);
+      speak(j.text, j.speech);
+    } catch (e) { busy(false); note(explain(e)); }
+  }
+  async function startRecording() {
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (_) { return noMic("The microphone is blocked. Allow it in your browser, or type below."); }
+    state.chunks = [];
+    const rec = new MediaRecorder(stream);
+    state.rec = rec;
+    rec.ondataavailable = (e) => state.chunks.push(e.data);
+    rec.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(state.chunks, { type: rec.mimeType || "audio/webm" });
+      state.rec = null;
+      if (blob.size < 1500) { note("That was too short. Tap Talk and try again."); return; }
+      uploadVoice(blob);
+    };
+    rec.start();
+    setTalk(true);
+  }
+  function startRecognition(SR) {
+    const r = new SR();
+    r.lang = navigator.language || "en-US"; r.interimResults = false; r.maxAlternatives = 1;
+    let heard = "";
+    r.onresult = (e) => { heard = Array.from(e.results).map((x) => x[0].transcript).join(" "); };
+    r.onerror = () => noMic();
+    r.onend = () => { state.recog = null; if (state.listening) setTalk(false); if (heard.trim()) send(heard); };
+    state.recog = r;
+    try { r.start(); setTalk(true); } catch (_) { noMic(); }
+  }
+  async function toggleTalk() {
+    if (state.listening) {
+      setTalk(false);
+      if (state.rec && state.rec.state === "recording") state.rec.stop();
+      if (state.recog) try { state.recog.stop(); } catch (_) {}
+      return;
+    }
+    if (state.busy) return;
+    stopSpeaking();
+    await ready;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (state.mode === "scribe" && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder) return startRecording();
+    if (SR) return startRecognition(SR);
+    noMic();
+  }
+
+  // --- wiring ---------------------------------------------------------------------------------------------------
+  $("form").addEventListener("submit", (e) => { e.preventDefault(); send($("msg").value); });
+  $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send($("msg").value); } });
+  $("talk").onclick = toggleTalk;
+  $("stop").onclick = stopSpeaking;
+  $("read").onclick = () => { state.read = !state.read; if (!state.read) stopSpeaking(); applyRead(); };
+  $("bigger").onclick = () => { state.size = Math.min(SIZES.length - 1, state.size + 1); applySize(); };
+  $("smaller").onclick = () => { state.size = Math.max(0, state.size - 1); applySize(); };
+  $("fresh").onclick = () => { stopSpeaking(); state.history = []; state.sid = state.sid.slice(0, 20) + Date.now().toString(36); welcome(); setStatus("Ready"); };
+
+  applySize(); applyRead(); welcome();
+  ready = detect();
+})();
+</script>
