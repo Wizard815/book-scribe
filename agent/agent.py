@@ -65,9 +65,9 @@ class Reply:
 
 
 class Agent:
-    def __init__(self, s: Settings, store: BookStore, llm: LLM, memory, kg: StoryKG, graph=None, check_drift: bool = False, voices=None):
+    def __init__(self, s: Settings, store: BookStore, llm: LLM, memory, kg: StoryKG, graph=None, check_drift: bool = False, voices=None, prefs=None, index=None):
         self.s, self.store, self.llm, self.memory, self.kg = s, store, llm, memory, kg
-        self.graph, self.check_drift, self.voices = graph, check_drift, voices
+        self.graph, self.check_drift, self.voices, self.prefs, self.index = graph, check_drift, voices, prefs, index
         self._speaker_cache: dict[str, list[str | None]] = {}
         self.sessions: dict[str, Session] = {}
         self._bg: set[asyncio.Task] = set()
@@ -108,7 +108,7 @@ class Agent:
                 return await self._revise(sess, rest)  # "yes but make it shorter" / "no, make it longer": never save or drop blindly
             if kind == "no" and rest:  # "no, I mean chapter 3 paragraph 2": the guess was wrong; keep the instruction, change the target
                 original, sess.pending = sess.pending.text, None
-                target, sure = self._resolve(sess, rest)
+                target, sure = await self._resolve(sess, rest)
                 if target:
                     return await self._propose_edit(sess, original, target=target, sure=sure)
                 text = rest
@@ -174,18 +174,37 @@ class Agent:
             return None
         return self.store.nth_paragraph(sess.book, ref.chapter or sess.chapter, ref.para, ref.scene)
 
-    def _resolve(self, sess: Session, text: str) -> tuple[Paragraph | None, bool]:
-        """-> (paragraph, sure). sure=False means "this is my best guess; read it back before touching it"."""
+    async def _resolve(self, sess: Session, text: str) -> tuple[Paragraph | None, bool]:
+        """-> (paragraph, sure). sure=False means "this is my best guess; read it back before touching it".
+
+        Order: an explicit reference ("chapter 3 paragraph 2"), then the focused paragraph, then word matching. When word matching is
+        not confident, meaning-based search (the embedding index) is consulted; it can improve the *guess*, but the agent only acts
+        without asking when both methods agree on the same paragraph."""
         ref = intent.parse_ref(text)
         if ref.explicit:
             return self._by_ref(sess, ref), True
         if sess.focus and re.search(r"\b(this|that|the current|it)\b", intent.norm(text)) and not self.kg.named_in(text):
             return self.store.find(sess.book, sess.focus), True
         query = intent.locator_query(text)  # describe-where words only; the instruction ("more sarcastic") must not steer the search
-        hits = self.kg.search(query, limit=3, chapter=ref.chapter)
+        hits = self.kg.search(query, limit=5, chapter=ref.chapter)
+        if hits and self.kg.confident(hits, len(tokens(query))):
+            return hits[0].para, True
+        if self.index and self.index.status(sess.book)["ready"]:
+            by_id = {p.id: p for p in self.store.all_paragraphs(sess.book)}
+            only = (lambda pid: pid in by_id and by_id[pid].chapter == ref.chapter) if ref.chapter else None
+            sem = await self.index.search(sess.book, query, k=5, chapter_of=only)
+            if sem:
+                score: dict[str, float] = {}
+                for rank, h in enumerate(hits):
+                    score[h.para.id] = score.get(h.para.id, 0) + 1 / (60 + rank)  # reciprocal rank fusion
+                for rank, (pid, _) in enumerate(sem):
+                    score[pid] = score.get(pid, 0) + 1 / (60 + rank)
+                best = max(score, key=score.get)
+                agree = bool(hits) and hits[0].para.id == sem[0][0]
+                return by_id.get(best), agree
         if not hits:
             return None, False
-        return hits[0].para, self.kg.confident(hits, len(tokens(query)))
+        return hits[0].para, False
 
     def _where(self, sess: Session, para: Paragraph) -> str:
         """How the writer counts: the paragraph's position in the chapter, not its within-scene id suffix."""
@@ -213,8 +232,9 @@ class Agent:
     def _context(self, sess: Session, text: str, extra: str = "", target: Paragraph | None = None) -> list[dict]:
         prefs = self.memory.search(text, limit=6)
         sys = [SYSTEM, MODES[sess.mode]]
-        if self.s.writer_age:
-            sys.append(f"The writer is {self.s.writer_age}; let that subtly shape idiom and description density. Never mention it.")
+        age = (self.prefs.get("writer_age") if self.prefs else "") or self.s.writer_age
+        if age:
+            sys.append(f"The writer is {age}; let that subtly shape idiom and description density. Never mention it.")
         if prefs:
             sys.append("WRITER PREFERENCES / MEMORY:\n- " + "\n- ".join(prefs))
         bible = self.store.bible(sess.book).context_for(text + " " + extra)
@@ -254,7 +274,7 @@ class Agent:
 
     async def _propose_edit(self, sess: Session, text: str, target: Paragraph | None = None, sure: bool = True) -> Reply:
         if target is None:
-            target, sure = self._resolve(sess, text)
+            target, sure = await self._resolve(sess, text)
         if not target:
             return self._reply(sess, "Which part? Say the chapter and paragraph, or describe the scene.")
         where = self._where(sess, target)
@@ -514,6 +534,8 @@ class Agent:
     def _after_save(self, sess: Session, para: Paragraph) -> None:
         if self.graph:
             self.graph.schedule(sess.book)
+        if self.index:
+            self.index.schedule(sess.book)
         if self.check_drift:
             task = asyncio.create_task(self._drift(sess, para))
             self._bg.add(task)

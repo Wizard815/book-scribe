@@ -144,6 +144,33 @@ class Bible:
         p.write_text(e.render())
         return e
 
+    def save_entry(self, kind: str, name: str, state: dict | None = None, body: str = "", slug: str | None = None) -> Entry:
+        """Write an entry exactly as given (the editor's Save), renaming the file if the name changed. `upsert` merges instead."""
+        self.ensure()
+        new = slugify(name)
+        e = Entry(new, name.strip(), dict(state or {}), body)
+        if slug and slug != new:
+            old = self._path(kind, slug)
+            if old.exists():
+                if self._path(kind, new).exists():
+                    raise BibleError(f"There is already an entry called {name!r}.")
+                old.unlink()
+        self._path(kind, new).write_text(e.render())
+        return e
+
+    def delete(self, kind: str, slug: str) -> bool:
+        p = self._path(kind, slug)
+        if not p.exists():
+            return False
+        p.unlink()
+        return True
+
+    def write_doc(self, name: str, text: str) -> None:
+        if name not in ("premise", "timeline"):
+            raise BibleError("unknown document")
+        self.ensure()
+        (self.root / f"{name}.md").write_text(text.rstrip() + "\n")
+
     def append_arc(self, name: str, note: str) -> Entry:
         slug = slugify(name)
         p = self._path("characters", slug)

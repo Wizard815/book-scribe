@@ -11,3 +11,4 @@ posthog>=7.14.0
 pytz>=2024.1
 sqlalchemy>=2.0.31
 protobuf>=5.29.6,<7.0.0
+numpy>=1.21        # embedding index search (also installed by the vendored graphify)

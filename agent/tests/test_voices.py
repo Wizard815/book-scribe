@@ -328,7 +328,7 @@ def test_api_tts_takes_a_speaker_and_voices_endpoint_lists_profiles(books):
     reg = Registry(s)
     reg.upsert("tts", {"label": "L", "base_url": "http://tts.test", "voices": T1_POOL, "voice": "af_heart", "tier": 1})
     seen = []
-    app = create_app(s, llm=FakeLLM(), stt=FakeLLM(), memory=FileMemory(books / "m.json"))
+    app = create_app(s, llm=FakeLLM(), stt=FakeLLM(), memory=FileMemory(books / "m.json"), require_auth=False)
     # swap in a transport-backed TTS so the real route + VoiceBook + router are exercised
     tts = [r for r in app.routes if getattr(r, "path", "") == "/api/tts"]
     assert tts

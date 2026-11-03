@@ -246,7 +246,8 @@ def test_locator_query_drops_the_instruction(said, locator):
     assert intent.locator_query(said) == locator
 
 
-def test_instruction_words_do_not_steer_the_paragraph_search(tmp_path):
+@pytest.mark.asyncio
+async def test_instruction_words_do_not_steer_the_paragraph_search(tmp_path):
     store = BookStore(tmp_path)
     store.create_chapter("b", 1)
     store.append_paragraph("b", 1, "He was sarcastic about everything, even the weather and the soup.")
@@ -257,7 +258,7 @@ def test_instruction_words_do_not_steer_the_paragraph_search(tmp_path):
     s = Settings(project_dir=tmp_path, default_book="b")
     agent = Agent(s, store, FakeLLM([]), FileMemory(tmp_path / "m.json"), kg)
     sess = agent.session("s", "b")
-    para, _ = agent._resolve(sess, "make it more sarcastic where he teases his wife about the soup")
+    para, _ = await agent._resolve(sess, "make it more sarcastic where he teases his wife about the soup")
     assert para.id == "ch1_s1_p2"  # the scene described, not the paragraph that merely contains the word "sarcastic"
 
 

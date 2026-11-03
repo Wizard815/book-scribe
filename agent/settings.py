@@ -25,7 +25,11 @@ class Settings:
     default_book: str = "demo"
     mem_backend: str = "mem0"  # mem0 | file
     user_id: str = "writer"
-    admin_token: str = ""  # required for /api/admin/*; empty disables the admin API
+    admin_token: str = ""  # the admin's password (16+ random characters); empty disables the admin login and API
+    admin_user: str = "admin"
+    writer_username: str = ""  # optional first-run seed for the single writer account (the admin can also create it)
+    writer_password: str = ""
+    trust_proxy: bool = False  # take the client address from CF-Connecting-IP / X-Forwarded-For (only behind your tunnel/proxy)
     # config.yaml → writer_profile
     writer_age: str | None = None
     tts_mode: str = "single"  # single | multi
@@ -61,6 +65,10 @@ def load_settings(config_path: str | None = None) -> Settings:
         mem_backend=os.getenv("MEM_BACKEND", "mem0"),
         user_id=os.getenv("WRITER_ID", "writer"),
         admin_token=os.getenv("ADMIN_TOKEN", ""),
+        admin_user=os.getenv("ADMIN_USER", "admin"),
+        writer_username=os.getenv("WRITER_USERNAME", ""),
+        writer_password=os.getenv("WRITER_PASSWORD", ""),
+        trust_proxy=os.getenv("TRUST_PROXY", "").lower() in ("1", "true", "yes"),
     )
     path = Path(config_path or os.getenv("CONFIG_PATH", "/app/config.yaml"))
     if path.is_file():
