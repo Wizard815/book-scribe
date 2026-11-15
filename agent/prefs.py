@@ -5,7 +5,8 @@ import json
 import threading
 from pathlib import Path
 
-FIELDS = {"writer_age": 20, "display_name": 60}  # name -> max length
+FIELDS = {"writer_age": 20, "display_name": 60, "surprise": 8, "strictness": 8, "look": 400}  # name -> max length
+CHOICES = {"surprise": ("off", "low", "high"), "strictness": ("off", "gentle", "strict")}
 
 
 class Prefs:
@@ -29,7 +30,10 @@ class Prefs:
             cur = self.all()
             for k, v in changes.items():
                 if k in FIELDS and v is not None:
-                    cur[k] = str(v).strip()[: FIELDS[k]]
+                    v = str(v).strip()[: FIELDS[k]]
+                    if k in CHOICES and v not in CHOICES[k]:
+                        continue  # only the listed settings are accepted
+                    cur[k] = v
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(cur))
             tmp.replace(self.path)

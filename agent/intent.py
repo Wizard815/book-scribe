@@ -254,3 +254,72 @@ def voice_command(text: str) -> dict | None:
     if has_voice:
         return {"action": "adjust", "feedback": text}
     return None
+
+
+# --- random idea requests ("give me a name for the porter") ----------------------------------------------------------------------------
+_IDEA_KINDS = [
+    (r"\bnames?\b|\bcall (?:him|her|them|it|the \w+)\b", "name"),
+    (r"\bplaces?\b|\blocations?\b|\bsettings?\b|\btowns?\b|\bvillages?\b|\binns?\b|\btaverns?\b|\bpubs?\b|\bstreets?\b", "place"),
+    (r"\bcharacters?\b|\bsomeone interesting\b", "character"),
+    (r"\bproblems?\b|\bcomplications?\b|\bconflicts?\b|\bobstacles?\b", "problem"),
+    (r"\btwists?\b", "twist"), (r"\btitles?\b", "title"), (r"\bobjects?\b|\bprops?\b", "object"),
+    (r"\bsensory\b|\bsmells?\b|\bsounds?\b|\bdetails?\b", "sense"), (r"\bweather\b", "weather"),
+    (r"\bjobs?\b|\boccupations?\b|\bprofessions?\b", "occupation"), (r"\bquirks?\b|\bhabits?\b", "quirk"),
+    (r"\bchallenges?\b|\bprompts?\b|\bexercises?\b|\bconstraints?\b|\bwriting ideas?\b", "constraint"),
+]
+_IDEA_VERB = re.compile(r"\b(?:give me|gimme|suggest|generate|i need|i want|need|want|think of|come up with|got any|have any|any|show me|pick|roll|random|surprise me|describe|what should i call|what should we call)\b")
+_CULTURES = [
+    ("irish", "irish"), ("scottish", "scottish"), ("scots", "scottish"), ("french", "french"), ("german", "german"), ("italian", "italian"), ("spanish", "spanish"),
+    ("russian", "russian"), ("polish", "polish"), ("greek", "greek"), ("japanese", "japanese"), ("chinese", "chinese"), ("korean", "korean"), ("indian", "indian"),
+    ("arabic", "arabic"), ("nigerian", "west_african"), ("ghanaian", "west_african"), ("african", "west_african"), ("norse", "norse"), ("viking", "norse"),
+    ("welsh", "welsh"), ("english", "english"), ("british", "english"), ("elvish", "fantasy_elvish"), ("elf", "fantasy_elvish"), ("dwarf", "fantasy_dwarvish"),
+    ("dwarvish", "fantasy_dwarvish"), ("orc", "fantasy_harsh"), ("goblin", "fantasy_harsh"),
+]
+
+
+def ideas_request(text: str) -> dict | None:
+    """{"kind", "n", "opts"} when the writer asks for random ideas (names, places, twists…), else None. Questions about names that
+    already exist ("what is the name of the inn in chapter 2") are not requests for new ones."""
+    n = norm(text)
+    if re.match(r"^(?:give me |show me |can i have |let me have )?(?:more|another(?: (?:one|1))?|again|different ones|some more|(?:one|1) more|another please)(?: please)?$", n):
+        return {"repeat": True}
+    if re.match(r"^(?:what|who|which|where|when|why|how) (?!should (?:i|we) call)", n) or re.search(r"\bchapter \d+", n):
+        return None
+    short_form = len(n.split()) <= 5 and bool(re.match(r"^(?:some|a few|a couple of|\d+|an?|another|new|more)\b", n))  # "some names", "ten names"
+    if not _IDEA_VERB.search(n) and not short_form:
+        return None
+    if re.search(r"\b(?:write|wrote|writing|put|type|paint|carve|sign|spell|read)\b", n):  # "write a name on the wall": about the story's text, not a request for ideas
+        return None
+    kind = next((k for rx, k in _IDEA_KINDS if re.search(rx, n)), None)
+    if kind is None or is_edit(text):
+        return None
+    opts: dict = {}
+    if kind in ("name", "character"):
+        if re.search(r"\b(?:girl|woman|female|lady|she|her|mother|daughter|sister|queen|wife|aunt|heroine)\b", n):
+            opts["gender"] = "female"
+        elif re.search(r"\b(?:boy|man|male|gentleman|he|him|father|son|brother|king|husband|uncle|hero)\b", n):
+            opts["gender"] = "male"
+        for word, culture in _CULTURES:
+            if re.search(rf"\b{word}\b", n):
+                opts["culture"] = culture
+                break
+        else:
+            if re.search(r"\bfantasy\b", n):
+                opts["culture"] = "fantasy_elvish"
+    if kind == "place":
+        for rx, typ in ((r"\binns?\b|\btaverns?\b|\bpubs?\b", "inn"), (r"\bship\b|\bboat\b", "ship"), (r"\bstreets?\b|\blane\b", "street"),
+                        (r"\bforest\b|\bwoods?\b|\bmoor\b|\bmarsh\b|\bwild\b|\bswamp\b", "wild"), (r"\btowns?\b|\bcity\b|\bport\b", "town")):
+            if re.search(rx, n):
+                opts["type"] = typ
+                break
+    m = re.search(r"\b(\d{1,2}) (?:\w+ ){0,3}(?:names?|places?|characters?|problems?|twists?|titles?|objects?|ideas?|details?|jobs?|quirks?|challenges?)\b", n)
+    count = int(m.group(1)) if m else 3 if re.search(r"\b(?:a few|couple|some)\b", n) else 1 if kind in ("character", "title") and re.search(r"\b(?:a|one)\b", n) else 5
+    return {"kind": kind, "n": max(1, min(count, 12)), "opts": opts}
+
+
+_CREATIVE = re.compile(r"\b(?:ideas?|suggest|suggestions?|what if|stuck|brainstorm|surprise me|something (?:new|different|fresh)|twist|come up with|think of (?:a|an|some|something|another|new|any)|options|alternatives|boring|stale|predictable|cliche|inspire|inspiration)\b")
+
+
+def is_creative_ask(text: str) -> bool:
+    """The writer wants *new material*, not an edit: worth giving the model random sparks."""
+    return bool(_CREATIVE.search(norm(text)))

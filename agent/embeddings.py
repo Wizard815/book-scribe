@@ -1,10 +1,12 @@
-"""Paragraph embedding index: meaning-based search over the manuscript.
+"""Embedding index: meaning-based search over the manuscript *and the story bible*.
 
 The locator (kg.py) matches *words*, so "the part where the father is dismissive" finds nothing when the text never says
 "dismissive". This index stores one vector per paragraph, made by the **embedding provider** from the admin menu, and
 answers "which paragraphs mean something like this?".
 
-* Only paragraphs that are new or changed are embedded (a hash of the text is stored with each vector).
+* Documents are paragraphs (key = paragraph id) and bible entries (key = "bible:<section>:<slug>", plus "bible:premise"). The bible is
+  looked up by meaning so "the old man who carries the luggage" can find the porter's entry without his name being said.
+* Only documents that are new or changed are embedded (a hash of the text is stored with each vector).
 * The index remembers which provider/model made it. Vectors from different models are not comparable, so after a change
   the index counts as empty until it is rebuilt (admin panel, "Rebuild").
 * Searching costs one embedding call (the query) and a dot product; if the provider is down the agent simply falls back
@@ -19,6 +21,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import time
 from array import array
 from pathlib import Path
@@ -79,6 +82,23 @@ class ParagraphIndex:
 
         return await self.router.call("embed", go)
 
+    # --- what gets indexed -------------------------------------------------------------------------------------------
+    def bible_docs(self, book: str) -> dict[str, str]:
+        b = self.store.bible(book)
+        docs: dict[str, str] = {}
+        premise = re.sub(r"^#.*$", "", b.read("premise"), flags=re.M).strip()
+        if premise:
+            docs["bible:premise"] = "Premise of the story. " + premise
+        for kind in ("characters", "threads", "world"):
+            for e in b.entries(kind).values():
+                docs[f"bible:{kind}:{e.slug}"] = f"{kind[:-1] if kind != 'world' else 'place or rule'}: {e.name}. {e.summary()}"
+        return docs
+
+    def _docs(self, book: str) -> dict[str, str]:
+        docs = {p.id: p.text for p in self.store.all_paragraphs(book)}
+        docs.update(self.bible_docs(book))
+        return docs
+
     # --- storage ----------------------------------------------------------------------------------------------
     def _path(self, book: str) -> Path:
         self.store.book_dir(book)  # validates the name
@@ -105,17 +125,21 @@ class ParagraphIndex:
     # --- status ------------------------------------------------------------------------------------------------
     def status(self, book: str) -> dict:
         data = self._load(book)
-        paras = self.store.all_paragraphs(book)
+        docs = self._docs(book)
         items = data.get("items", {})
         same = self._matches_provider(data)
-        fresh = sum(1 for p in paras if items.get(p.id, {}).get("h") == _h(p.text)) if same else 0
+        fresh = {k for k, text in docs.items() if same and items.get(k, {}).get("h") == _h(text)}
+        paras = [k for k in docs if not k.startswith("bible:")]
+        bible = [k for k in docs if k.startswith("bible:")]
         prog = self.progress.get(book, {})
         ident = self._identity()
+        idx_paras = sum(1 for k in paras if k in fresh)
         return {
-            "configured": ident is not None, "provider": ident, "same_provider": same, "paragraphs": len(paras), "indexed": fresh,
-            "stale": len(paras) - fresh, "dims": data.get("dims"), "built": data.get("built"),
+            "configured": ident is not None, "provider": ident, "same_provider": same, "paragraphs": len(paras), "indexed": idx_paras,
+            "stale": len(paras) - idx_paras, "bible_entries": len(bible), "bible_indexed": sum(1 for k in bible if k in fresh),
+            "dims": data.get("dims"), "built": data.get("built"),
             "state": prog.get("state", "idle"), "done": prog.get("done", 0), "total": prog.get("total", 0), "error": prog.get("error", ""),
-            "ready": bool(ident and same and fresh > 0),
+            "ready": bool(ident and same and idx_paras > 0),
         }
 
     # --- building ----------------------------------------------------------------------------------------------
@@ -153,21 +177,20 @@ class ParagraphIndex:
             if full or not self._matches_provider(data):
                 data = {"identity": ident, "items": {}, "dims": None}
             items = data["items"]
-            paras = self.store.all_paragraphs(book)
-            todo = [p for p in paras if items.get(p.id, {}).get("h") != _h(p.text)]
+            docs = self._docs(book)
+            todo = [(k, text) for k, text in docs.items() if items.get(k, {}).get("h") != _h(text)]
             self.progress[book] = {"state": "running", "done": 0, "total": len(todo)}
             try:
                 for i in range(0, len(todo), BATCH):
                     chunk = todo[i : i + BATCH]
-                    vecs = await self.embed([p.text for p in chunk])
-                    for p, v in zip(chunk, vecs):
+                    vecs = await self.embed([text for _, text in chunk])
+                    for (k, text), v in zip(chunk, vecs):
                         if data["dims"] and len(v) != data["dims"]:
                             raise ValueError("the embedding model changed size mid-build; rebuild from scratch")
                         data["dims"] = len(v)
-                        items[p.id] = {"h": _h(p.text), "v": _pack(v)}
+                        items[k] = {"h": _h(text), "v": _pack(v)}
                     self.progress[book]["done"] = i + len(chunk)
-                keep = {p.id for p in paras}
-                data["items"] = {k: v for k, v in items.items() if k in keep}
+                data["items"] = {k: v for k, v in items.items() if k in docs}
                 data["built"] = int(time.time())
                 self._save(book, data)
                 self.progress[book].update(state="ok", error="")
@@ -197,8 +220,9 @@ class ParagraphIndex:
         self._cache[book] = (mt, ids, m)
         return ids, m
 
-    async def search(self, book: str, query: str, k: int = 5, chapter_of=None) -> list[tuple[str, float]]:
-        """Paragraph ids most similar in meaning to `query`, best first. [] when there is no usable index or the provider fails."""
+    async def search(self, book: str, query: str, k: int = 5, chapter_of=None, bible: bool = False) -> list[tuple[str, float]]:
+        """Keys most similar in meaning to `query`, best first: paragraph ids, or (bible=True) "bible:..." keys.
+        [] when there is no usable index or the provider fails."""
         mat = self._matrix(book)
         if not mat or not query.strip():
             return []
@@ -214,9 +238,9 @@ class ParagraphIndex:
             qv /= max(float(np.linalg.norm(qv)), 1e-9)
             scores = m @ qv
             order = np.argsort(-scores)
-            out = [(ids[i], float(scores[i])) for i in order if chapter_of is None or chapter_of(ids[i])]
+            out = [(ids[i], float(scores[i])) for i in order if ids[i].startswith("bible:") == bible and (bible or chapter_of is None or chapter_of(ids[i]))]
         else:  # pragma: no cover
             n = sum(x * x for x in q) ** 0.5 or 1
             sc = [sum(a * b / n for a, b in zip(row, q)) for row in m]
-            out = sorted(((ids[i], sc[i]) for i in range(len(ids)) if chapter_of is None or chapter_of(ids[i])), key=lambda t: -t[1])
+            out = sorted(((ids[i], sc[i]) for i in range(len(ids)) if ids[i].startswith("bible:") == bible and (bible or chapter_of is None or chapter_of(ids[i]))), key=lambda t: -t[1])
         return out[:k]

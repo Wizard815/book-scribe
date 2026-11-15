@@ -1,7 +1,10 @@
 """Conversation orchestrator: intent routing, targeted edits with confirmation, memory, quality gate."""
 from __future__ import annotations
 
+import json
 import re
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -10,12 +13,17 @@ import asyncio
 
 from clients import LLM
 from drift import review as drift_review
+import harness
 import intent
 import speech
+import tools as tools_mod
+import uisettings
 import voices as vx
 from kg import StoryKG, tokens
 from modes import MODES
-from quality import check, clean_output
+from ideas import KINDS, Ideas
+from quality import baseline_max_sentence, check, clean_output
+from references import RefFinder
 from settings import Settings
 
 SYSTEM = (Path(__file__).parent / "system_prompt.md").read_text()
@@ -50,6 +58,7 @@ class Session:
     notices: list[str] = field(default_factory=list)  # background findings, delivered on the next reply
     voice_focus: str | None = None  # whose voice "make it deeper" / "his voice" refers to
     recent_speakers: list[str] = field(default_factory=list)
+    last_ideas: dict | None = None  # the last random-idea request, so "more" can repeat it
 
 
 @dataclass
@@ -62,6 +71,9 @@ class Reply:
     pending: dict | None = None
     notes: list[str] = field(default_factory=list)
     speech: list[dict] = field(default_factory=list)  # what to say aloud, in order: [{"speaker", "text", "draft"?}]
+    highlights: list[dict] = field(default_factory=list)  # passages the reply is about: [{"id", "chapter", "label"}]; the page lights them up
+    ui: dict | None = None  # a new look for the screen (size, contrast…), when the writer asked for one
+    ideas: list[str] = field(default_factory=list)  # random options the page shows as tap-to-use buttons
 
 
 class Agent:
@@ -71,6 +83,41 @@ class Agent:
         self._speaker_cache: dict[str, list[str | None]] = {}
         self.sessions: dict[str, Session] = {}
         self._bg: set[asyncio.Task] = set()
+        self.ideas = Ideas()  # real randomness for names, places and twists (see ideas.py)
+        self.refs = RefFinder(store, kg)  # which passages a piece of text is about
+        self.toolbox = tools_mod.build(self)  # what the model may use (harness.py)
+        self.traces: deque = deque(maxlen=60)  # recent turns that used tools, for the admin page
+        self._baseline: tuple = (None, 55)
+
+    # --- preferences the agent reads live ---------------------------------------------------------
+    def _pref(self, key: str, default: str = "") -> str:
+        return (self.prefs.get(key) if self.prefs else "") or default
+
+    def _look(self) -> dict:
+        try:
+            return uisettings.clean(json.loads(self._pref("look", "{}")))
+        except ValueError:
+            return uisettings.clean(None)
+
+    def _save_look(self, look: dict) -> None:
+        if self.prefs:
+            self.prefs.update({"look": json.dumps(look)})
+
+    def _max_sentence(self) -> int:
+        sig = self.kg._sig
+        if self._baseline[0] != sig:
+            self._baseline = (sig, baseline_max_sentence(self.kg._paras))
+        return self._baseline[1]
+
+    def _hl(self, sess: "Session", ids: list[str]) -> list[dict]:
+        out = []
+        for i in ids:
+            try:
+                p = self.store.find(sess.book, i)
+            except BookError:
+                continue
+            out.append({"id": p.id, "chapter": p.chapter, "label": self._where(sess, p)})
+        return out
 
     def session(self, sid: str, book: str | None = None) -> Session:
         book = book or self.s.default_book
@@ -106,6 +153,8 @@ class Agent:
                 return self._reply(sess, "Okay, dropped it. What would you like instead?")
             if kind and rest and sess.pending.kind != "confirm_target":
                 return await self._revise(sess, rest)  # "yes but make it shorter" / "no, make it longer": never save or drop blindly
+            if not kind and (r := self._ui_reply(sess, text)):  # "bigger" while reviewing a proposal: change the screen, keep the proposal
+                return r
             if kind == "no" and rest:  # "no, I mean chapter 3 paragraph 2": the guess was wrong; keep the instruction, change the target
                 original, sess.pending = sess.pending.text, None
                 target, sure = await self._resolve(sess, rest)
@@ -125,6 +174,11 @@ class Agent:
             sess.mode = mode
             return self._reply(sess, "Switching to feedback mode. Tell me what you're working on." if mode == "therapist" else "Back to narrator mode.")
 
+        if r := self._ui_reply(sess, text):  # "I can't see it": instant, no model call
+            return r
+        if (req := intent.ideas_request(text)) is not None:
+            return self._ideas_reply(sess, req)
+
         if self.voices and (cmd := intent.voice_command(text)):
             if (r := await self._voice_command(sess, text, cmd)) is not None:
                 return r
@@ -140,7 +194,9 @@ class Agent:
             target = self._by_ref(sess, intent.parse_ref(text))
             if target:
                 sess.chapter, sess.focus = target.chapter, target.id
-                return self._reply(sess, target.text, await self._speech_for(sess, target))
+                r = self._reply(sess, target.text, await self._speech_for(sess, target))
+                r.highlights = self._hl(sess, [target.id])
+                return r
             return self._reply(sess, "I couldn't find that paragraph.")
 
         if sess.mode == "narrator" and intent.is_edit(text):
@@ -148,6 +204,33 @@ class Agent:
         if sess.mode == "narrator" and intent.is_draft(text):
             return await self._propose_draft(sess, text)
         return await self._converse(sess, text)
+
+    # --- the screen, and random ideas -----------------------------------------------------------------
+    def _ui_reply(self, sess: Session, text: str) -> Reply | None:
+        res = uisettings.parse(text, self._look())
+        if not res:
+            return None
+        look, say = res
+        self._save_look(look)
+        r = self._reply(sess, say)
+        r.ui = look
+        return r
+
+    def _ideas_reply(self, sess: Session, req: dict) -> Reply:
+        if req.get("repeat"):
+            req = sess.last_ideas or {"kind": "name", "n": 5, "opts": {}}
+        sess.last_ideas = req
+        items = self.ideas.generate(req["kind"], req["n"], **req["opts"])
+        label = KINDS[req["kind"]]["label"].lower()
+        if len(items) == 1:
+            say = items[0]
+        else:
+            say = f"Here are {len(items)} {label}: " + "; ".join(items) + "."
+        spoken = say + (" Tap one to use it, or say more." if len(items) > 1 else " Say more for another.")
+        self._remember(sess, "[asked for random " + label + "]", say)
+        r = self._reply(sess, spoken)
+        r.ideas = items
+        return r
 
     # --- navigation ----------------------------------------------------
     async def _step(self, sess: Session, d: int) -> Reply:
@@ -166,7 +249,10 @@ class Agent:
         else:
             i = 0 if d > 0 else len(ids) - 1
         sess.focus = ids[i]
-        return self._reply(sess, paras[i].text, await self._speech_for(sess, paras[i]))
+        r = self._reply(sess, paras[i].text, await self._speech_for(sess, paras[i]))
+        r.highlights = self._hl(sess, [ids[i]])
+        self._prefetch(sess, paras[i + 1 : i + 3])  # work out who speaks the next lines while this one is being read
+        return r
 
     # --- target resolution -----------------------------------------------
     def _by_ref(self, sess: Session, ref: intent.Ref) -> Paragraph | None:
@@ -229,7 +315,43 @@ class Agent:
             parts = [("RECENT", p.text) for p in paras[-3:]]
         return "\n\n".join(f"[{k}] {v}" for k, v in parts)[:3000]
 
-    def _context(self, sess: Session, text: str, extra: str = "", target: Paragraph | None = None) -> list[dict]:
+    async def _canon_by_meaning(self, sess: Session, text: str) -> str:
+        """Bible entries that match the *meaning* of the request but are not named in it ("the old man with the luggage" -> the porter)."""
+        if not (self.index and text.strip()):
+            return ""
+        try:
+            if not self.index.status(sess.book)["ready"]:
+                return ""
+            hits = await self.index.search(sess.book, text, k=3, bible=True)
+        except Exception:
+            return ""
+        b = self.store.bible(sess.book)
+        have = {e.slug for k in ("characters", "threads", "world") for e in b.mentioned(k, text)}
+        lines = []
+        floor = max(0.2, hits[0][1] * 0.85) if hits else 1.0  # only entries nearly as close as the best match: unrelated text still scores ~0.3
+        for key, score in hits:
+            _, kind, slug = (key.split(":", 2) + [""])[:3] if key != "bible:premise" else ("", "", "")
+            if not kind or slug in have or score < floor:
+                continue
+            e = b.entries(kind).get(next((n for n, x in b.entries(kind).items() if x.slug == slug), ""))
+            if e:
+                lines.append(f"{kind[:-1].upper() if kind != 'world' else 'PLACE'} {e.name}:\n{e.summary()}")
+        return ("ALSO RELEVANT (matched by meaning):\n" + "\n\n".join(lines[:3])) if lines else ""
+
+    def _sparks(self, sess: Session, text: str, drafting: bool = False) -> list[str]:
+        """Random seeds that keep drafts out of the model's usual groove. How many depends on the writer's Surprise setting."""
+        level = self._pref("surprise", "low")
+        if level == "off" or sess.mode != "narrator":
+            return []
+        if level == "high" or drafting or intent.is_creative_ask(text):
+            return self.ideas.sparks(3 if level == "high" else 2)
+        return []
+
+    def _temperature(self) -> float:
+        return {"off": 0.7, "low": 0.8, "high": 1.0}.get(self._pref("surprise", "low"), 0.8)
+
+    def _context(self, sess: Session, text: str, extra: str = "", target: Paragraph | None = None, canon: str = "",
+                 sparks: list[str] | None = None, tools: bool = False) -> list[dict]:
         prefs = self.memory.search(text, limit=6)
         sys = [SYSTEM, MODES[sess.mode]]
         age = (self.prefs.get("writer_age") if self.prefs else "") or self.s.writer_age
@@ -240,6 +362,12 @@ class Agent:
         bible = self.store.bible(sess.book).context_for(text + " " + extra)
         if bible:
             sys.append("STORY BIBLE (canon; never contradict):\n" + bible)
+        if canon:
+            sys.append(canon)
+        if sparks:
+            sys.append("OPTIONAL SPARKS (random seeds; use at most one, only if it makes the writing better, and ignore the rest):\n- " + "\n- ".join(sparks))
+        if tools:
+            sys.append(harness.TOOLS_PROMPT.replace("{tools}", self.toolbox.describe()))  # replace, not format: the prompt has literal braces
         rel = self.graph.context_for(sess.book, text + " " + extra) if self.graph else ""
         if rel:
             sys.append("STORY GRAPH (EXTRACTED = stated in the text, INFERRED = a guess):\n" + rel)
@@ -248,9 +376,14 @@ class Agent:
             sys.append("MANUSCRIPT AROUND THE WORK (for continuity; do not repeat it):\n" + ms)
         return [{"role": "system", "content": "\n\n".join(sys)}] + sess.history[-10:]
 
-    async def _gated(self, messages: list[dict]) -> tuple[str, list[str]]:
-        out = clean_output(await self.llm.chat(messages))
-        issues = check(out)
+    async def _gated(self, messages: list[dict], ctx: "harness.Ctx | None" = None, tools: bool = False) -> tuple[str, list[str]]:
+        strict, limit = self._pref("strictness", "gentle"), self._max_sentence()
+        if tools and ctx is not None:
+            raw, _ = await harness.run(self.llm, messages, self.toolbox, ctx, max_steps=2, temperature=self._temperature())
+        else:
+            raw = await self.llm.chat(messages)
+        out = clean_output(raw)
+        issues = check(out, strict, limit)
         for _ in range(self.s.max_rewrite_attempts):
             if not issues:
                 break
@@ -258,8 +391,21 @@ class Agent:
                 messages + [{"role": "assistant", "content": out},
                             {"role": "user", "content": "Rewrite it fixing these problems, output only the text:\n- " + "\n- ".join(issues)}]
             ))
-            issues = check(out)
+            issues = check(out, strict, limit)
         return out, issues
+
+    def _attach(self, sess: Session, reply: Reply, ctx: "harness.Ctx", text: str, heard: str = "") -> Reply:
+        """Whatever a turn's tools and the reply's own words point at: passages to highlight, a new look, tap-to-use ideas."""
+        ids = list(dict.fromkeys(ctx.highlights + self.refs.find(sess.book, text)))[:5]
+        reply.highlights = self._hl(sess, ids)
+        if ctx.ui:
+            self._save_look(ctx.ui)
+            reply.ui = ctx.ui
+        if ctx.ideas:
+            reply.ideas = ctx.ideas
+        if ctx.calls:
+            self.traces.append({"at": int(time.time()), "tools": ctx.calls, "highlighted": len(reply.highlights)})
+        return reply
 
     def _remember(self, sess: Session, user: str, assistant: str) -> None:
         sess.history += [{"role": "user", "content": user}, {"role": "assistant", "content": assistant}]
@@ -268,9 +414,13 @@ class Agent:
     # --- flows -----------------------------------------------------------
     async def _converse(self, sess: Session, text: str) -> Reply:
         sess.history.append({"role": "user", "content": text})
-        out = await self.llm.chat(self._context(sess, text))
+        ctx = harness.Ctx(sess=sess)
+        canon = await self._canon_by_meaning(sess, text)
+        msgs = self._context(sess, text, canon=canon, sparks=self._sparks(sess, text), tools=True)
+        out, _ = await harness.run(self.llm, msgs, self.toolbox, ctx, max_steps=3, temperature=self._temperature())
+        out = out or "I'm not sure what to say to that. Could you tell me a little more?"
         sess.history.append({"role": "assistant", "content": out})
-        return self._reply(sess, out)
+        return self._attach(sess, self._reply(sess, out), ctx, out, text)
 
     async def _propose_edit(self, sess: Session, text: str, target: Paragraph | None = None, sure: bool = True) -> Reply:
         if target is None:
@@ -281,7 +431,9 @@ class Agent:
         if not sure:  # a guess: read it back and wait, rather than rewriting something the writer didn't mean
             sess.chapter, sess.focus = target.chapter, target.id
             sess.pending = Pending("confirm_target", text, target.chapter, paragraph_id=target.id)
-            return self._reply(sess, f"Do you mean {where}, starting: {excerpt(target.text)} Say yes to go ahead, or tell me which part.")
+            r = self._reply(sess, f"Do you mean {where}, starting: {excerpt(target.text)} Say yes to go ahead, or tell me which part.")
+            r.highlights = self._hl(sess, [target.id])
+            return r
         msgs = self._context(sess, text, target.text, target) + [
             {"role": "user", "content": f"Rewrite ONLY this paragraph.\nInstruction: {text}\n\nORIGINAL:\n{target.text}\n\nOutput only the new paragraph."}
         ]
@@ -292,22 +444,25 @@ class Agent:
         lead = f"Changing {where}, which starts: {excerpt(target.text, 6)} Here is the new version:"
         reply = self._reply(sess, f"{lead} {new} Should I save it?", await self._speech_text(sess, new, lead, "Should I save it?", target))
         reply.notes += [f"Style note: {i}" for i in issues]
+        reply.highlights = self._hl(sess, [target.id])
         return reply
 
     async def _propose_draft(self, sess: Session, text: str) -> Reply:
         if sess.chapter not in self.store.chapter_numbers(sess.book):
             self.store.create_chapter(sess.book, sess.chapter)
         recent = "\n\n".join(p.text for p in self.store.paragraphs(sess.book, sess.chapter)[-4:])
-        msgs = self._context(sess, text, recent) + [
+        ctx = harness.Ctx(sess=sess)
+        canon = await self._canon_by_meaning(sess, text)
+        msgs = self._context(sess, text, recent, canon=canon, sparks=self._sparks(sess, text, drafting=True), tools=True) + [
             {"role": "user", "content": f"{text}\n\nStory so far in this chapter (most recent):\n{recent or '(nothing yet)'}\n\nWrite ONE new paragraph of prose. Output only the paragraph."}
         ]
-        new, issues = await self._gated(msgs)
+        new, issues = await self._gated(msgs, ctx, tools=True)
         sess.pending = Pending("append", new, sess.chapter)
         self._remember(sess, text, "[proposed a new paragraph]")
         tail = f"Should I add it to chapter {sess.chapter}?"
         reply = self._reply(sess, f"Here's a draft: {new} {tail}", await self._speech_text(sess, new, "Here's a draft:", tail))
         reply.notes += [f"Style note: {i}" for i in issues]
-        return reply
+        return self._attach(sess, reply, ctx, "", text)
 
     async def _revise(self, sess: Session, instruction: str) -> Reply:
         """The writer answered a proposal with changes ("yes but shorter", "no, make it longer"): redo it, don't save or drop."""
@@ -363,7 +518,7 @@ class Agent:
             key = speech.cache_key(before[-1].text if before else "", text)
             if key not in self._speaker_cache:
                 try:
-                    self._speaker_cache[key] = await asyncio.wait_for(speech.llm_attribute(self.llm, list(chars), before[-1].text if before else "", segs, text), 8)
+                    self._speaker_cache[key] = await asyncio.wait_for(speech.llm_attribute(self.llm, list(chars), before[-1].text if before else "", segs, text), 3)
                 except Exception:
                     self._speaker_cache[key] = None
             names = self._speaker_cache[key]
@@ -375,6 +530,19 @@ class Agent:
                         if not s.resolved and who:
                             s.speaker, s.resolved = who, True
         return [{"speaker": s.speaker, "text": s.text} for s in segs]
+
+    def _prefetch(self, sess: Session, paras: list[Paragraph]) -> None:
+        """Warm the speaker cache for upcoming paragraphs so "next paragraph" never waits on a model."""
+        async def go():
+            for p in paras:
+                try:
+                    await self._speech_for(sess, p)
+                except Exception:
+                    return
+        if paras and self.llm and self.s.speech_llm:
+            task = asyncio.create_task(go())
+            self._bg.add(task)
+            task.add_done_callback(self._bg.discard)
 
     async def _speech_for(self, sess: Session, para: Paragraph) -> list[dict]:
         paras = self.store.paragraphs(sess.book, para.chapter)

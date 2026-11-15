@@ -73,7 +73,9 @@ def test_premise_and_timeline_documents(client):
 
 
 def test_preferences_are_saved_and_reach_the_prompt(client, books):
-    assert client.get("/api/settings").json() == {"writer_age": "", "display_name": "", "default_book": "demo"}
+    got = client.get("/api/settings").json()
+    assert got["writer_age"] == "" and got["display_name"] == "" and got["default_book"] == "demo" and got["surprise"] == "low" and got["strictness"] == "gentle"
+    assert got["look"]["size"] == 2
     client.put("/api/settings", json={"writer_age": "71", "display_name": "Ann"})
     assert client.get("/api/settings").json()["writer_age"] == "71"
     assert client.put("/api/settings", json={"writer_age": "x" * 50}).status_code == 422
