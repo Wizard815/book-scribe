@@ -7,6 +7,7 @@ from dataclasses import asdict
 
 import hashlib
 import hmac
+import json
 
 import httpx
 import os
@@ -28,7 +29,9 @@ from providers import ProviderError, Registry
 from bible import BibleError
 from import_text import import_text
 from prefs import FIELDS as PREF_FIELDS, Prefs
+import uisettings
 from embeddings import ParagraphIndex
+from ideas import describe_kinds
 from story_graph import StoryGraph
 from voices import VoiceBook
 from settings import load_settings
@@ -72,6 +75,15 @@ class ImportIn(BaseModel):
 class PrefsIn(BaseModel):
     writer_age: str | None = Field(default=None, max_length=20)
     display_name: str | None = Field(default=None, max_length=60)
+    surprise: str | None = Field(default=None, max_length=8)      # off | low | high: how much random inspiration the model gets
+    strictness: str | None = Field(default=None, max_length=8)    # off | gentle | strict: how hard the style check pushes back
+    look: dict | None = None                                      # how the screen looks (validated by uisettings.clean)
+
+
+class IdeasIn(BaseModel):
+    kind: str = Field(max_length=20)
+    n: int = Field(default=5, ge=1, le=12)
+    opts: dict = {}
 
 
 def clean_state(raw: dict) -> dict:
@@ -156,7 +168,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     admin_fp = hashlib.sha256(s.admin_token.encode()).hexdigest()[:12]  # an ADMIN_TOKEN change ends admin sessions
     prefs = Prefs(s.state_dir)
     emb_http = embed_http or httpx.AsyncClient()
-    index = ParagraphIndex(store, reg, router, emb_http, s.state_dir)
+    index = ParagraphIndex(store, reg, router, emb_http, s.state_dir, debounce=s.index_debounce)
     agent = Agent(s, store, llm, mem, StoryKG(store), graph, check_drift, voices, prefs, index)
 
     @asynccontextmanager
@@ -429,6 +441,11 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         index.start(book_or_400(book), body.full)
         return index.status(book)
 
+    @app.get("/api/admin/traces", dependencies=[Depends(admin)])
+    async def admin_traces():
+        """Recent turns in which the model used tools: what it called, and how many passages it pointed at."""
+        return {"traces": list(agent.traces)[::-1]}
+
     @app.get("/api/admin/graph/{book}", dependencies=[Depends(admin)])
     async def admin_graph(book: str):
         return graph.info(book_or_400(book))
@@ -465,13 +482,34 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         return book
 
     # --- writer settings ------------------------------------------------------------------------------------------
+    def settings_view() -> dict:
+        d = prefs.all()
+        d.update(look=agent._look(), surprise=d["surprise"] or "low", strictness=d["strictness"] or "gentle", default_book=s.default_book)
+        return d
+
     @app.get("/api/settings", dependencies=[Depends(writer)])
     async def get_settings():
-        return {**prefs.all(), "default_book": s.default_book}
+        return settings_view()
 
     @app.put("/api/settings", dependencies=[Depends(writer)])
     async def put_settings(body: PrefsIn):
-        return prefs.update(body.model_dump())
+        changes = body.model_dump(exclude={"look"})
+        if body.look is not None:
+            changes["look"] = json.dumps(uisettings.clean(body.look))
+        prefs.update(changes)
+        return settings_view()
+
+    # --- random ideas (names, places, twists...) for the writer's Ideas panel -------------------------------------
+    @app.get("/api/ideas/kinds", dependencies=[Depends(writer)])
+    async def ideas_kinds():
+        return {"kinds": describe_kinds()}
+
+    @app.post("/api/ideas", dependencies=[Depends(writer)])
+    async def ideas_generate(body: IdeasIn):
+        try:
+            return {"items": agent.ideas.generate(body.kind, body.n, **body.opts)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     # --- books -------------------------------------------------------------------------------------------------
     @app.post("/api/books", dependencies=[Depends(writer)])
@@ -509,6 +547,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
             store.bible(book_or_400(book)).write_doc(name, body.text)
         except BibleError as e:
             raise HTTPException(400, str(e))
+        index.schedule(book)
         return {"ok": True}
 
     @app.put("/api/books/{book}/bible/{kind}", dependencies=[Depends(writer)])
@@ -517,6 +556,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
             e = store.bible(book_or_400(book)).save_entry(kind, body.name, clean_state(body.state), body.body, body.slug)
         except BibleError as err:
             raise HTTPException(400, str(err))
+        index.schedule(book)  # the bible is searched by meaning too
         return {"slug": e.slug, "name": e.name}
 
     @app.delete("/api/books/{book}/bible/{kind}/{slug}", dependencies=[Depends(writer)])
@@ -527,6 +567,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
             raise HTTPException(400, str(err))
         if not gone:
             raise HTTPException(404, "No such entry.")
+        index.schedule(book)
         return {"ok": True}
 
     @app.delete("/api/books/{book}/voices/{speaker}", dependencies=[Depends(writer)])

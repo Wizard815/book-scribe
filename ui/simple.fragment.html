@@ -11,7 +11,7 @@
   --accent: #1B4FD6; --accent-fg: #FFFFFF; --live: #B3261E; --live-fg: #FFFFFF;
   --mine: #DDE7FF; --note: #FFF1C2; --note-fg: #3A2C00; --focus: #0F1B2A; --mark: #FFF3B8; --shadow: rgba(15, 27, 42, .28);
   --font: "Atkinson Hyperlegible", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --fs: 26px; --split: 55;
+  --fs: 26px; --split: 55; --k: 1;  /* --k scales buttons as the words get bigger */
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -44,28 +44,29 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 #status { margin: 0 0 0 auto; font-size: 18px; color: var(--muted); font-weight: 700; }
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; flex: 1 1 100%; order: 3; }
 .group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.glabel { font-size: 15px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
-.bar button { min-height: 52px; padding: 6px 16px; font-size: 19px; font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 14px; }
+.glabel { font-size: 18px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+.bar button { min-height: calc(52px * var(--k)); padding: 6px 16px; font-size: calc(19px * var(--k)); font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 14px; }
 .bar button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 
 /* dock + panes */
 .dock { flex: 1; min-height: 0; display: grid; position: relative; }
-.dock[data-layout="side"] { grid-template-columns: calc(var(--split) * 1%) 16px minmax(0, 1fr); }
-.dock[data-layout="stack"] { grid-template-rows: calc(var(--split) * 1%) 16px minmax(0, 1fr); }
+.dock[data-layout="side"] { grid-template-columns: calc(var(--split) * 1%) 28px minmax(0, 1fr); }
+.dock[data-layout="stack"] { grid-template-rows: calc(var(--split) * 1%) 28px minmax(0, 1fr); }
 .dock[data-layout="one"] { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
 .dock[data-layout="one"] > .pane:not(.floating) { grid-area: 1 / 1; }
-#divider { background: var(--line); border-radius: 8px; margin: 6px; touch-action: none; position: relative; }
-#divider::after { content: ""; position: absolute; inset: 0; margin: auto; width: 4px; height: 44px; border-radius: 4px; background: var(--muted); }
+#divider { background: var(--line); border-radius: 10px; margin: 0; touch-action: none; position: relative; }  /* a 28px-wide target: easy to grab with a shaky hand */
+#divider::after { content: ""; position: absolute; inset: 0; margin: auto; width: 6px; height: 56px; border-radius: 4px; background: var(--muted); }
 .dock[data-layout="side"] #divider { cursor: col-resize; }
 .dock[data-layout="stack"] #divider { cursor: row-resize; }
-.dock[data-layout="stack"] #divider::after { width: 44px; height: 4px; }
+.dock[data-layout="stack"] #divider { margin: 0; }
+.dock[data-layout="stack"] #divider::after { width: 56px; height: 6px; }
 
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); border: 2px solid var(--line); border-radius: 18px; overflow: hidden; }
 .pane.floating { position: fixed; z-index: 30; box-shadow: 0 14px 40px var(--shadow); border-color: var(--accent); }
 .phead { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 16px; border-bottom: 2px solid var(--line); background: var(--bg); touch-action: none; }
 .pane.floating .phead { cursor: grab; }
 .phead h2 { margin: 0; font-size: 24px; flex: 1; }
-.phead button { min-height: 48px; padding: 4px 16px; font-size: 18px; font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; }
+.phead button { min-height: calc(48px * var(--k)); padding: 4px 16px; font-size: calc(18px * var(--k)); font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; }
 .grip { position: absolute; right: 0; bottom: 0; width: 32px; height: 32px; cursor: nwse-resize; touch-action: none; display: none; }
 .pane.floating .grip { display: block; }
 .grip::after { content: ""; position: absolute; right: 6px; bottom: 6px; width: 16px; height: 16px; border-right: 4px solid var(--muted); border-bottom: 4px solid var(--muted); border-radius: 0 0 6px 0; }
@@ -77,29 +78,29 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 /* chat */
 #chat { flex: 1; min-height: 100px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 2px; }
 .msg { max-width: 96%; padding: 12px 16px; border-radius: 18px; background: var(--bg); border: 2px solid var(--line); font-size: var(--fs); line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
-.msg .who { display: block; font-size: 15px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 4px; }
+.msg .who { display: block; font-size: 18px; font-weight: 700; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 4px; }
 .msg.me { align-self: flex-end; background: var(--mine); border-color: transparent; }
 .msg.note { align-self: center; background: var(--note); color: var(--note-fg); border-color: transparent; font-size: 22px; text-align: center; }
 .msg.note .who { display: none; }
-.addbtn { display: block; margin-top: 10px; min-height: 52px; padding: 6px 18px; font-size: 20px; font-weight: 700; background: var(--surface); border: 3px solid var(--accent); border-radius: 14px; }
+.addbtn { display: block; margin-top: 10px; min-height: calc(52px * var(--k)); padding: 6px 18px; font-size: calc(20px * var(--k)); font-weight: 700; background: var(--surface); border: 3px solid var(--accent); border-radius: 14px; }
 .addbtn:disabled { border-color: var(--line); }
 .ideas, #pending { display: flex; flex-wrap: wrap; gap: 10px; }
-.chip { min-height: 58px; padding: 8px 18px; font-size: 22px; font-weight: 700; background: var(--surface); border: 3px solid var(--accent); border-radius: 16px; }
-#pending button { flex: 1; min-height: 64px; font-size: 24px; font-weight: 700; background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 16px; padding: 6px 16px; }
+.chip { min-height: calc(58px * var(--k)); padding: 8px 18px; font-size: calc(22px * var(--k)); font-weight: 700; background: var(--surface); border: 3px solid var(--accent); border-radius: 16px; }
+#pending button { flex: 1; min-height: calc(64px * var(--k)); font-size: calc(24px * var(--k)); font-weight: 700; background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 16px; padding: 6px 16px; }
 #pending button.no { background: var(--surface); color: var(--fg); border: 3px solid var(--line); }
-#talk { width: 100%; min-height: 90px; display: flex; align-items: center; justify-content: center; gap: 14px; font-size: 36px; font-weight: 700; color: var(--accent-fg); background: var(--accent); border: 0; border-radius: 22px; }
+#talk { width: 100%; min-height: calc(90px * var(--k)); display: flex; align-items: center; justify-content: center; gap: 14px; font-size: calc(36px * var(--k)); font-weight: 700; color: var(--accent-fg); background: var(--accent); border: 0; border-radius: 22px; }
 #talk svg { width: 44px; height: 44px; flex: none; }
 #talk.live { background: var(--live); color: var(--live-fg); }
 #form { display: flex; gap: 10px; align-items: stretch; }
-#msg { flex: 1; min-width: 0; min-height: 72px; resize: none; padding: 12px 14px; font: inherit; font-size: 24px; color: var(--fg); background: var(--surface); border: 3px solid var(--line); border-radius: 16px; }
-#send { min-width: 120px; font-size: 28px; font-weight: 700; color: var(--accent-fg); background: var(--accent); border: 0; border-radius: 16px; padding: 0 18px; }
+#msg { flex: 1; min-width: 0; min-height: calc(72px * var(--k)); resize: none; padding: 12px 14px; font: inherit; font-size: calc(24px * var(--k)); color: var(--fg); background: var(--surface); border: 3px solid var(--line); border-radius: 16px; }
+#send { min-width: calc(120px * var(--k)); font-size: calc(28px * var(--k)); font-weight: 700; color: var(--accent-fg); background: var(--accent); border: 0; border-radius: 16px; padding: 0 18px; }
 .tools { display: flex; flex-wrap: wrap; gap: 8px; }
-.tools button { min-height: 50px; padding: 4px 16px; font-size: 18px; font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; }
+.tools button { min-height: calc(50px * var(--k)); padding: 4px 16px; font-size: calc(18px * var(--k)); font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; }
 .tools button[aria-pressed="true"] { border-color: var(--accent); }
 
 /* book */
 .bookbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.bookbar button { min-height: 52px; padding: 4px 16px; font-size: 19px; font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; }
+.bookbar button { min-height: calc(52px * var(--k)); padding: 4px 16px; font-size: calc(19px * var(--k)); font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; }
 #chapterLabel { font-size: 20px; font-weight: 700; color: var(--muted); padding: 0 6px; }
 #book { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px 40px; }
 .para { margin: 0 0 1em; padding: 8px 12px; border-left: 6px solid transparent; border-radius: 8px; font-size: var(--fs); line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; }
@@ -111,14 +112,34 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 
 @media (max-width: 760px) {
   h1 { font-size: 24px; } .top { gap: 4px 12px; } .bar { gap: 6px 10px; } .glabel { display: none; }
-  .bar button { min-height: 46px; font-size: 17px; padding: 4px 12px; } .bar button[data-layout="side"] { display: none; }
-  .phead { padding: 4px 8px 4px 14px; } .phead h2 { font-size: 20px; } .phead button { min-height: 42px; font-size: 16px; }
+  .bar button { min-height: calc(46px * var(--k)); font-size: calc(18px * var(--k)); padding: 4px 12px; } .bar button[data-layout="side"] { display: none; }
+  .phead { padding: 4px 8px 4px 14px; } .phead h2 { font-size: 20px; } .phead button { min-height: calc(48px * var(--k)); font-size: calc(18px * var(--k)); }
   #chat { min-height: 90px; }
-  #talk { min-height: 76px; font-size: 30px; } #talk svg { width: 36px; height: 36px; }
-  #msg { min-height: 60px; font-size: 21px; } #send { min-width: 92px; font-size: 24px; padding: 0 10px; }
-  .chip { min-height: 50px; font-size: 19px; } .tools button { min-height: 46px; font-size: 16px; padding: 4px 10px; }
-  .pbody { padding: 8px; } #pending button { min-height: 56px; font-size: 20px; }
+  #talk { min-height: calc(76px * var(--k)); font-size: calc(30px * var(--k)); } #talk svg { width: 36px; height: 36px; }
+  #msg { min-height: calc(60px * var(--k)); font-size: calc(22px * var(--k)); } #send { min-width: calc(92px * var(--k)); font-size: calc(24px * var(--k)); padding: 0 10px; }
+  .chip { min-height: calc(50px * var(--k)); font-size: calc(20px * var(--k)); } .tools button { min-height: calc(46px * var(--k)); font-size: calc(18px * var(--k)); padding: 4px 10px; }
+  .pbody { padding: 8px; } #pending button { min-height: calc(56px * var(--k)); font-size: calc(20px * var(--k)); }
 }
+/* Looks chosen by the writer (or by the agent when they say they can't see). They come AFTER the dark-mode blocks so they win. */
+:root[data-contrast="high"] {  /* black on white, heavy lines */
+  --bg: #FFFFFF; --surface: #FFFFFF; --fg: #000000; --muted: #1A1A1A; --line: #000000; --accent: #0A2BA8; --accent-fg: #FFFFFF;
+  --live: #9B0000; --live-fg: #FFFFFF; --mine: #E4EBFF; --note: #FFE680; --note-fg: #000000; --focus: #000000; --mark: #FFE14D; --shadow: rgba(0, 0, 0, .5); color-scheme: light;
+}
+:root[data-contrast="dark"] {  /* yellow and white on black, the combination many people with low vision find easiest */
+  --bg: #000000; --surface: #000000; --fg: #FFFFFF; --muted: #F2F2F2; --line: #FFFFFF; --accent: #FFE600; --accent-fg: #000000;
+  --live: #FF7A70; --live-fg: #000000; --mine: #2A2300; --note: #FFE600; --note-fg: #000000; --focus: #FFE600; --mark: #4D4400; --shadow: rgba(255, 255, 255, .25); color-scheme: dark;
+}
+:root[data-contrast="high"] .msg, :root[data-contrast="high"] .pane, :root[data-contrast="dark"] .msg, :root[data-contrast="dark"] .pane,
+:root[data-contrast="high"] button, :root[data-contrast="dark"] button { border-width: 3px; }
+:root[data-bold="1"] body { font-weight: 700; }
+:root[data-spacing="1"] .msg, :root[data-spacing="1"] .para { line-height: 1.7; letter-spacing: .02em; word-spacing: .08em; }
+:root[data-spacing="2"] .msg, :root[data-spacing="2"] .para { line-height: 2; letter-spacing: .05em; word-spacing: .16em; }
+:root[data-simple="1"] #layoutGroup, :root[data-simple="1"] #sizeGroup, :root[data-simple="1"] #attachAll { display: none !important; }  /* a simpler screen: fewer buttons */
+.para.mark { outline: 3px solid var(--accent); outline-offset: -3px; }
+.para[data-n]::before { content: attr(data-n); display: inline-flex; align-items: center; justify-content: center; min-width: 1.5em; height: 1.5em; margin-right: .5em; border-radius: 50%; background: var(--accent); color: var(--accent-fg); font-weight: 700; font-size: .7em; vertical-align: middle; }
+.refs, .ideas-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.refs button, .ideas-row button { min-height: calc(52px * var(--k)); padding: 6px 16px; font-size: calc(20px * var(--k)); font-weight: 700; background: var(--surface); border: 3px solid var(--accent); border-radius: 14px; text-align: left; }
+.ideas-row button.use { flex: 1 1 100%; }
 @media (prefers-reduced-motion: no-preference) { #talk.live { animation: pulse 1.4s ease-in-out infinite; } }
 @keyframes pulse { 50% { opacity: .78; } }
 </style>
@@ -128,7 +149,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     <h1>Book Scribe</h1>
     <p id="status" role="status">Getting ready…</p>
     <div class="bar" role="toolbar" aria-label="Page controls">
-      <div class="group" role="group" aria-label="Layout">
+      <div class="group" id="layoutGroup" role="group" aria-label="Layout">
         <span class="glabel">Layout</span>
         <button type="button" data-layout="side" aria-pressed="true">Side by side</button>
         <button type="button" data-layout="stack" aria-pressed="false">Top and bottom</button>
@@ -145,6 +166,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
         <span class="glabel">Words</span>
         <button type="button" id="smaller" aria-label="Smaller words">A −</button>
         <button type="button" id="bigger" aria-label="Bigger words">A +</button>
+        <button type="button" id="simpleBtn" aria-pressed="false">Simple screen</button>
       </div>
       <div class="group" id="siteTools" role="group" aria-label="Account and settings" hidden></div>
       <button type="button" id="attachAll" hidden>Attach all</button>
@@ -226,11 +248,13 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     "short sentences, usually one to three. No lists, no markdown, no emoji. If they ask for writing, give one short paragraph " +
     "that could go straight into their book. Ask at most one question at a time, and wait for the answer.";
   const IDEAS = ["Help me start a story", "Describe a character for me", "Give me a writing idea"];
-  const SIZES = [18, 22, 26, 32, 40];
+  const SIZES = [18, 22, 26, 32, 40, 52, 64, 80];  // 8 steps: the top ones are for people who need very large print
+  const SCALE = [1, 1, 1, 1.1, 1.25, 1.45, 1.65, 1.85];  // how much the buttons grow with the words
 
   const state = {
     mode: null, sample: null, downloads: null, history: [], busy: false, listening: false, rec: null, recog: null, chunks: [],
-    read: store.get("bs_read", "1") === "1", size: clamp(parseInt(store.get("bs_size", "2"), 10) || 2, 0, 4),
+    read: store.get("bs_read", "1") === "1", size: clamp(parseInt(store.get("bs_size", "2"), 10) || 2, 0, 7),
+    look: { contrast: "normal", bold: false, spacing: 0, simple: false, rate: 1, theme: "auto", layout: "" }, rate: 1,
     speakToken: 0, audio: null, sid: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, ""),
     book: [], bookName: null, chapters: [], chapter: null,
   };
@@ -372,9 +396,31 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     b.el.append(btn);
   }
   function applySize() {
-    document.documentElement.style.setProperty("--fs", SIZES[state.size] + "px");
+    const root = document.documentElement;
+    root.style.setProperty("--fs", SIZES[state.size] + "px");
+    root.style.setProperty("--k", String(SCALE[state.size]));
     $("bigger").disabled = state.size === SIZES.length - 1; $("smaller").disabled = state.size === 0;
     store.set("bs_size", String(state.size));
+  }
+  // The whole look (size, colours, bold, spacing, simple screen, speech speed). Set from the buttons, from Settings, or by the agent when
+  // the writer says they cannot see; the server keeps it so it follows the writer to any device.
+  function currentLook() { return { size: state.size, ...state.look }; }
+  function applyLook(l, remember = true) {
+    if (!l) return;
+    if (typeof l.size === "number") state.size = clamp(Math.round(l.size), 0, SIZES.length - 1);
+    const prev = state.look.layout;
+    Object.assign(state.look, { contrast: l.contrast || "normal", bold: !!l.bold, spacing: l.spacing || 0, simple: !!l.simple, rate: l.rate || 1, theme: l.theme || "auto", layout: l.layout || "" });
+    state.rate = state.look.rate;
+    const root = document.documentElement;
+    state.look.contrast === "normal" ? root.removeAttribute("data-contrast") : root.setAttribute("data-contrast", state.look.contrast);
+    state.look.bold ? root.setAttribute("data-bold", "1") : root.removeAttribute("data-bold");
+    state.look.spacing ? root.setAttribute("data-spacing", String(state.look.spacing)) : root.removeAttribute("data-spacing");
+    state.look.simple ? root.setAttribute("data-simple", "1") : root.removeAttribute("data-simple");
+    state.look.theme === "auto" ? root.removeAttribute("data-theme") : root.setAttribute("data-theme", state.look.theme);
+    $("simpleBtn").setAttribute("aria-pressed", String(state.look.simple));
+    applySize();
+    if (state.look.layout && state.look.layout !== prev) setLayout(state.look.layout);
+    if (remember) { store.set("bs_look", JSON.stringify(currentLook())); if (window.BS && window.BS.onLookChange) window.BS.onLookChange(currentLook()); }
   }
   function applyRead() {
     $("read").textContent = "Read aloud: " + (state.read ? "On" : "Off");
@@ -417,7 +463,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   function browserSpeak(text) {
     return new Promise((done) => {
       if (!("speechSynthesis" in window) || !text) return done();
-      const u = new SpeechSynthesisUtterance(text); u.rate = 0.95; u.onend = u.onerror = () => done();
+      const u = new SpeechSynthesisUtterance(text); u.rate = 0.95 * (state.rate || 1); u.onend = u.onerror = () => done();
       speechSynthesis.speak(u);
     });
   }
@@ -488,11 +534,38 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     if (e && e.detail) return e.detail;
     return "I could not get an answer. Please try again.";
   }
+  function addRefButtons(b, hl) {  // under the answer: tap a passage to see it again, even in another chapter
+    const row = document.createElement("div"); row.className = "refs"; row.setAttribute("aria-label", "Passages I am talking about");
+    hl.forEach((h, i) => {
+      const btn = document.createElement("button"); btn.type = "button"; btn.textContent = (hl.length > 1 ? `${i + 1}. ` : "Show ") + h.label;
+      btn.onclick = () => applyHighlights(hl, h.id); row.append(btn);
+    });
+    b.el.append(row);
+  }
+  function addIdeaButtons(b, items) {  // random names, places, twists: tap one to use it
+    const row = document.createElement("div"); row.className = "ideas-row"; row.setAttribute("aria-label", "Ideas");
+    items.forEach((x) => {
+      const btn = document.createElement("button"); btn.type = "button"; btn.className = "use"; btn.textContent = items.length > 1 && x.length < 60 ? "Use " + x : "Use this one";
+      btn.onclick = () => send("Let's use: " + x); row.append(btn);
+    });
+    const more = document.createElement("button"); more.type = "button"; more.textContent = "More"; more.onclick = () => send("more"); row.append(more);
+    b.el.append(row);
+  }
+  async function applyHighlights(hl, firstId) {  // light up what the agent is talking about, in the book
+    if (!hl || !hl.length) return;
+    const first = hl.find((h) => h.id === firstId) || hl[0];
+    const marks = hl.filter((h) => h.chapter === first.chapter).map((h) => h.id);
+    await showChapter(first.chapter, first.id, true, marks);
+  }
   function showServerReply(j) {  // chat, book and spoken reply for one answer from your server
-    if (j.text) bubble("assistant", j.text);
+    if (j.ui) { applyLook(j.ui, false); store.set("bs_look", JSON.stringify(currentLook())); }  // the server already saved this one
+    const b = j.text ? bubble("assistant", j.text) : null;
     (j.notes || []).forEach((n) => bubble("note", n));
+    if (b && j.highlights && j.highlights.length) addRefButtons(b, j.highlights);
+    if (b && j.ideas && j.ideas.length) addIdeaButtons(b, j.ideas);
     setPending(j.pending || null);
-    if (j.chapter) showChapter(j.chapter, j.focus, j.changed && j.changed.length);
+    if (j.highlights && j.highlights.length) applyHighlights(j.highlights);
+    else if (j.chapter) showChapter(j.chapter, j.focus, j.changed && j.changed.length);
     state.history.push({ role: "assistant", text: j.text || "" });
     speak(j.text, j.speech);
   }
@@ -648,7 +721,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     const p = document.createElement("p"); p.id = "bookEmpty"; p.textContent = t; $("book").replaceChildren(p);
     $("chapterLabel").textContent = "No chapter"; $("prevCh").disabled = $("nextCh").disabled = true;
   }
-  async function showChapter(n, focus, flash) {
+  async function showChapter(n, focus, flash, marks) {
     if (!state.bookName) return;
     try {
       const { paragraphs } = await api(`/books/${encodeURIComponent(state.bookName)}/chapters/${n}`);
@@ -659,7 +732,9 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
       const box = $("book"); box.replaceChildren();
       for (const p of paragraphs) {
         const el = document.createElement("p");
-        el.className = "para" + (p.id === focus ? " mark" : ""); el.id = "p_" + p.id; el.tabIndex = 0; el.textContent = p.text;
+        const mi = marks ? marks.indexOf(p.id) : -1;
+        el.className = "para" + (p.id === focus || mi >= 0 ? " mark" : ""); el.id = "p_" + p.id; el.tabIndex = 0; el.textContent = p.text;
+        if (marks && marks.length > 1 && mi >= 0) el.dataset.n = String(mi + 1);  // numbered when several are lit
         const hear = () => speak(p.text, [{ speaker: "narrator", text: p.text }]);  // tap a paragraph to hear it
         el.onclick = hear; el.onkeydown = (e) => { if (e.key === "Enter") hear(); };
         box.append(el);
@@ -675,8 +750,9 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   $("bookWider").onclick = () => nudge(10); $("chatWider").onclick = () => nudge(-10); $("evenSplit").onclick = () => { ui.split = 50; applyUI(); };
   document.querySelectorAll(".detach").forEach((b) => (b.onclick = () => toggleFloat(b.dataset.pane)));
   $("attachAll").onclick = $("attachAll2").onclick = attachAll;
-  $("bigger").onclick = () => { state.size = Math.min(SIZES.length - 1, state.size + 1); applySize(); };
-  $("smaller").onclick = () => { state.size = Math.max(0, state.size - 1); applySize(); };
+  $("bigger").onclick = () => applyLook({ ...currentLook(), size: Math.min(SIZES.length - 1, state.size + 1) });
+  $("smaller").onclick = () => applyLook({ ...currentLook(), size: Math.max(0, state.size - 1) });
+  $("simpleBtn").onclick = () => applyLook({ ...currentLook(), simple: !state.look.simple, layout: !state.look.simple ? state.look.layout : "" });
   $("form").addEventListener("submit", (e) => { e.preventDefault(); send($("msg").value); });
   $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send($("msg").value); } });
   $("talk").onclick = toggleTalk; $("stop").onclick = stopSpeaking;
@@ -688,9 +764,10 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   window.addEventListener("resize", () => { for (const p of ["book", "chat"]) if (ui.floats[p]) placeFloat(p); });
 
   Object.assign(window.BS, {
-    state, store, bubble, note, welcome, applySize, applyRead, siteFetch, loadSiteBook, setBook, setStatus,
+    state, store, bubble, note, welcome, applySize, applyRead, siteFetch, loadSiteBook, setBook, setStatus, send, applyLook, currentLook,
     afterLogin: async () => { await loadSiteBook(); setStatus("Ready"); },
   });
+  try { applyLook(JSON.parse(store.get("bs_look", "null")), false); } catch (_) { applySize(); }  // the login screen is already in the writer's own look
   applySize(); applyRead(); applyUI(); welcome();
   ready = detect();
 })();

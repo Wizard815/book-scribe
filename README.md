@@ -352,3 +352,18 @@ a paragraph aloud splits it into narration and dialogue and speaks each part in 
   professor" (model-assisted) · "use onyx for the narrator" · "try another voice" · "what voices do you have" · "forget Jane's
   voice". Nothing is saved until you say *keep it*; what you heard is exactly what is saved.
 
+
+## Creativity, tools and big-print help
+
+* **Random ideas.** Names (17 cultures plus fantasy styles), places, character sketches, problems, twists, titles and more come from
+  real randomness, not the model. Open **Ideas** in the app, or say "give me three Japanese names". The model can call the same
+  generator itself so it stops reusing its favourite names. Lists are in `agent/ideas_data.py`.
+* **A toolbox for the model** (`agent/harness.py`, `agent/tools.py`): look up the book and bible, point at passages (they light up
+  on screen), change the screen, brainstorm. Read-only: only the confirm-before-save flows can change the book.
+* **Big-print help.** Say "I can't see this" or "bigger": text size (8 steps), contrast (including yellow on black), bold,
+  spacing and a simplified screen change at once, and are remembered on the server for that writer.
+* **Settings for the writer:** how surprising the ideas are (off / low / high) and how strict the style check is (off / gentle / strict).
+* **Bible embeddings.** Story-bible entries are embedded as well as paragraphs, so "the old man who carries the luggage" finds the
+  porter's entry. The admin page shows both counts.
+
+How the agent and the chat fit together: see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

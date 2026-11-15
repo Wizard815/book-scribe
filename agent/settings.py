@@ -34,6 +34,7 @@ class Settings:
     writer_age: str | None = None
     tts_mode: str = "single"  # single | multi
     voice_profile: dict = field(default_factory=dict)
+    index_debounce: float = 15.0  # seconds to wait after a save before updating the embedding index
     # reading aloud
     speech_llm: bool = True  # let the chat model assign speakers to dialogue the rules can't place (cached)
     # quality gate

@@ -15,7 +15,7 @@
 .overlay button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 .overlay button.danger { border-color: var(--live); color: var(--live); }
 .overlay button[aria-pressed="true"], .overlay button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
-.overlay a.link { font-size: 20px; color: var(--fg); }
+.overlay a.link { font-size: 22px; color: var(--fg); min-height: 56px; display: inline-flex; align-items: center; }
 .err { color: var(--live); font-size: 22px; font-weight: 700; min-height: 1.3em; margin: 0; }
 .ok { color: var(--muted); font-size: 22px; font-weight: 700; margin: 0; min-height: 1.3em; }
 .sbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
@@ -24,6 +24,8 @@
 .entry { border: 2px solid var(--line); border-radius: 14px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
 .entry .name { font-size: 24px; font-weight: 700; flex: 1 1 200px; }
 .entry .meta { font-size: 18px; color: var(--muted); flex: 1 1 100%; }
+.idea { border: 2px solid var(--line); border-radius: 14px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.idea .txt { font-size: 26px; flex: 1 1 260px; overflow-wrap: anywhere; }
 .sect { margin: 16px 0 4px; font-size: 26px; font-weight: 700; }
 .form { border: 3px dashed var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
 @media (max-width: 600px) { .card, .panel { padding: 14px; border-radius: 14px; } .overlay button { font-size: 19px; min-height: 54px; padding: 6px 14px; } .card h2, .panel h2 { font-size: 26px; } }
@@ -42,6 +44,17 @@
     <button type="submit" class="primary" id="loginGo">Log in</button>
     <a class="link" href="/admin.html">Admin login</a>
   </form>
+</div>
+
+<div id="ideasView" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="ideasTitle">
+  <div class="panel">
+    <div class="sbar"><h2 id="ideasTitle">Ideas</h2><button type="button" id="ideasClose" class="primary">Close</button></div>
+    <p class="hint">Real randomness, so you get something you would not have thought of. Pick a kind, then tap Give me ideas.</p>
+    <div id="ideaKinds" class="tabs" role="tablist" aria-label="Kinds of ideas"></div>
+    <div id="ideaOpts" class="row"></div>
+    <div class="row"><button type="button" id="ideaGo" class="primary">Give me ideas</button></div>
+    <div id="ideaList" style="display:flex;flex-direction:column;gap:10px;margin-top:10px"></div>
+  </div>
 </div>
 
 <div id="settingsView" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="setTitle">
@@ -113,6 +126,8 @@
     const box = $("siteTools"); box.hidden = false; box.replaceChildren();
     const s = h("button", { type: "button", textContent: "Settings" }); s.onclick = () => openSettings();
     box.append(s);
+    const tools = document.querySelector(".tools");
+    if (tools && !document.getElementById("ideasBtn")) { const i = h("button", { type: "button", id: "ideasBtn", textContent: "Ideas" }); i.onclick = openIdeas; tools.append(i); }
     if (status.auth_required) {
       const o = h("button", { type: "button", textContent: "Log out" });
       o.onclick = async () => { try { await fetch("/api/auth/logout", { method: "POST" }); } catch (_) {} location.reload(); };
@@ -144,20 +159,42 @@
     const prefs = await call("GET", "/api/settings");
     const out = h("p", { className: "ok" });
     const size = h("span", { className: "hint" });
-    const upd = () => { size.textContent = `Words are ${[18, 22, 26, 32, 40][BS.state.size]} pixels tall.`; };
+    const PX = [18, 22, 26, 32, 40, 52, 64, 80];
+    const upd = () => { size.textContent = `Words are ${PX[BS.state.size]} pixels tall.`; };
     upd();
+    const look = () => BS.currentLook();
     const bigger = h("button", { type: "button", textContent: "Bigger A +" }), smaller = h("button", { type: "button", textContent: "Smaller A −" });
-    bigger.onclick = () => { BS.state.size = Math.min(4, BS.state.size + 1); BS.applySize(); upd(); };
-    smaller.onclick = () => { BS.state.size = Math.max(0, BS.state.size - 1); BS.applySize(); upd(); };
+    bigger.onclick = () => { BS.applyLook({ ...look(), size: Math.min(7, BS.state.size + 1) }); upd(); };
+    smaller.onclick = () => { BS.applyLook({ ...look(), size: Math.max(0, BS.state.size - 1) }); upd(); };
+    const choice = (id, label, opts, cur, apply) => {
+      const sel = h("select", { id }, ...opts.map(([v, l]) => h("option", { value: v, textContent: l }))); sel.value = String(cur);
+      sel.onchange = () => apply(sel.value); return [h("label", { for: id, textContent: label }), sel];
+    };
     const read = h("button", { type: "button" }); const paintRead = () => { read.textContent = "Read aloud: " + (BS.state.read ? "On" : "Off"); read.setAttribute("aria-pressed", String(BS.state.read)); };
     read.onclick = () => { BS.state.read = !BS.state.read; BS.applyRead(); paintRead(); }; paintRead();
+    const bold = h("button", { type: "button" }); const paintBold = () => { bold.textContent = "Bold letters: " + (BS.state.look.bold ? "On" : "Off"); bold.setAttribute("aria-pressed", String(!!BS.state.look.bold)); };
+    bold.onclick = () => { BS.applyLook({ ...look(), bold: !BS.state.look.bold }); paintBold(); }; paintBold();
+    const simple = h("button", { type: "button" }); const paintSimple = () => { simple.textContent = "Simple screen: " + (BS.state.look.simple ? "On" : "Off"); simple.setAttribute("aria-pressed", String(!!BS.state.look.simple)); };
+    simple.onclick = () => { BS.applyLook({ ...look(), simple: !BS.state.look.simple }); paintSimple(); }; paintSimple();
     const age = h("input", { id: "prefAge", type: "text", value: prefs.writer_age, maxLength: 20, inputMode: "numeric" });
     const name = h("input", { id: "prefName", type: "text", value: prefs.display_name, maxLength: 60 });
     const save = h("button", { type: "button", className: "primary", textContent: "Save" });
-    save.onclick = async () => { try { await call("PUT", "/api/settings", { writer_age: age.value, display_name: name.value }); msg(out, "Saved."); } catch (e) { msg(out, e.message, true); } };
+    const putPrefs = async (body, okText = "Saved.") => { try { await call("PUT", "/api/settings", body); msg(out, okText); } catch (e) { msg(out, e.message, true); } };
+    save.onclick = () => putPrefs({ writer_age: age.value, display_name: name.value });
     return [
-      h("div", { className: "sect", textContent: "Words on the screen" }), size, h("div", { className: "row" }, smaller, bigger),
+      h("p", { className: "hint", textContent: "You can also just say it: “I can't see this”, “bigger”, “high contrast”, “too many buttons”, “read slower”, “back to normal”." }),
+      h("div", { className: "sect", textContent: "Seeing the screen" }), size, h("div", { className: "row" }, smaller, bigger),
+      ...choice("lkContrast", "Colours", [["normal", "Normal"], ["high", "Black on white, strong lines"], ["dark", "Yellow on black"]], look().contrast, (v) => BS.applyLook({ ...look(), contrast: v })),
+      ...choice("lkTheme", "Light or dark", [["auto", "Follow my device"], ["light", "Light"], ["dark", "Dark"]], look().theme, (v) => BS.applyLook({ ...look(), theme: v })),
+      ...choice("lkSpace", "Space between lines", [["0", "Normal"], ["1", "More"], ["2", "Most"]], look().spacing, (v) => BS.applyLook({ ...look(), spacing: Number(v) })),
+      h("div", { className: "row", style: "margin-top:8px" }, bold, simple),
       h("div", { className: "sect", textContent: "Reading to me" }), read,
+      ...choice("lkRate", "How fast I read", [["0.7", "Slow"], ["0.85", "A little slow"], ["1", "Normal"], ["1.15", "A little fast"], ["1.3", "Fast"]], look().rate, (v) => BS.applyLook({ ...look(), rate: Number(v) })),
+      h("div", { className: "sect", textContent: "How the writing helper behaves" }),
+      h("p", { className: "hint", textContent: "Inspiration: how many random ideas (an odd name, a sound, a complication) the helper is given to keep its writing from sounding like everyone else's." }),
+      ...choice("prefSurprise", "Random inspiration", [["off", "None"], ["low", "A little"], ["high", "A lot"]], prefs.surprise, (v) => putPrefs({ surprise: v })),
+      h("p", { className: "hint", textContent: "Style checks: how hard the helper is pushed to avoid clichés, long sentences and passive voice. Long sentences are judged against your own book." }),
+      ...choice("prefStrict", "Style checks", [["off", "Off: leave my voice alone"], ["gentle", "Gentle: clichés and markdown only"], ["strict", "Strict: sentences, passive voice, telling"]], prefs.strictness, (v) => putPrefs({ strictness: v })),
       h("div", { className: "sect", textContent: "About me" }),
       h("p", { className: "hint", textContent: "Optional. Your age helps me match the style of the words I suggest. I never mention it." }),
       h("label", { for: "prefAge", textContent: "Your age" }), age,
@@ -334,13 +371,66 @@
     ];
   }
 
+  // ---- the look follows the writer to every device -----------------------------------------------------------------------------------
+  let lookTimer = 0;
+  BS.onLookChange = (look) => {
+    clearTimeout(lookTimer);
+    lookTimer = setTimeout(() => { fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ look }) }).catch(() => {}); }, 600);
+  };
+  async function pullSettings() {
+    try {
+      const r = await fetch("/api/settings"); if (!r.ok) return;
+      const s = await r.json();
+      BS.serverPrefs = s;
+      if (s.look) { BS.applyLook(s.look, false); BS.store.set("bs_look", JSON.stringify(BS.currentLook())); }
+    } catch (_) {}
+  }
+  const afterLogin = BS.afterLogin;
+  BS.afterLogin = async () => { await afterLogin(); await pullSettings(); };
+
+  // ---- Ideas: names, places, twists and more, from real randomness ------------------------------------------------------------------------
+  const OPT_LABEL = { culture: "Where from", gender: "Who for", type: "What kind" };
+  let ideaKinds = [], ideaKind = "name";
+  async function openIdeas() {
+    $("ideasView").hidden = false;
+    if (!ideaKinds.length) { try { ideaKinds = (await call("GET", "/api/ideas/kinds")).kinds; } catch (e) { $("ideaList").textContent = e.message; return; } }
+    drawKinds();
+    setTimeout(() => document.querySelector("#ideaKinds button").focus(), 50);
+  }
+  function drawKinds() {
+    $("ideaKinds").replaceChildren(...ideaKinds.map((k) => {
+      const b = h("button", { type: "button", role: "tab", textContent: k.label }); b.setAttribute("aria-selected", String(k.kind === ideaKind));
+      b.onclick = () => { ideaKind = k.kind; drawKinds(); $("ideaList").replaceChildren(); }; return b;
+    }));
+    const k = ideaKinds.find((x) => x.kind === ideaKind);
+    $("ideaOpts").replaceChildren(...Object.entries(k.options).map(([name, vals]) => {
+      const sel = h("select", { id: "io_" + name, "aria-label": OPT_LABEL[name] || name }, ...vals.map((v) => h("option", { value: v, textContent: v.replace(/_/g, " ") })));
+      return h("label", { for: "io_" + name, textContent: (OPT_LABEL[name] || name) + ": " }, sel);
+    }));
+  }
+  async function giveIdeas() {
+    const opts = {}; document.querySelectorAll("#ideaOpts select").forEach((s) => (opts[s.id.slice(3)] = s.value));
+    const k = ideaKinds.find((x) => x.kind === ideaKind);
+    try {
+      const r = await call("POST", "/api/ideas", { kind: ideaKind, n: ideaKind === "character" ? 3 : 6, opts });
+      $("ideaList").replaceChildren(...r.items.map((x) => {
+        const use = h("button", { type: "button", className: "primary", textContent: "Use this" });
+        use.onclick = () => { $("ideasView").hidden = true; BS.send("Let's use this " + k.one + ": " + x); };
+        return h("div", { className: "idea" }, h("span", { className: "txt", textContent: x }), use);
+      }));
+    } catch (e) { $("ideaList").replaceChildren(h("p", { className: "err", textContent: e.message })); }
+  }
+  $("ideaGo").onclick = giveIdeas;
+  $("ideasClose").onclick = () => ($("ideasView").hidden = true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("ideasView").hidden) $("ideasView").hidden = true; });
+
   // ---- start ----------------------------------------------------------------------------------------------------------------------------
   (async () => {
     try { status = await (await fetch("/api/auth/status")).json(); } catch (_) {}
-    if (!status.auth_required) { mountTools(); return; }
+    if (!status.auth_required) { mountTools(); pullSettings(); return; }
     try {
       const r = await fetch("/api/auth/me");
-      if (r.ok && (await r.json()).role === "writer") { mountTools(); return; }
+      if (r.ok && (await r.json()).role === "writer") { mountTools(); pullSettings(); return; }
     } catch (_) {}
     showLogin();
   })();

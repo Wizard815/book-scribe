@@ -15,7 +15,24 @@ TELLING = re.compile(r"\b(she|he|they|i)\s+(felt|was feeling|realized|knew that|
 PASSIVE = re.compile(r"\b(was|were|been|being|is|are)\s+\w+ed\s+by\b", re.I)
 
 
-def check(text: str) -> list[str]:
+STRICTNESS = ("off", "gentle", "strict")
+BASE_MAX_SENTENCE = 55
+
+
+def baseline_max_sentence(paragraphs) -> int:
+    """How long a sentence this book's own author allows themselves: 25% above their 98th percentile, never below the default.
+    A writer in the long-sentence tradition (Austen, Dickens) must not be told to "split it" by a rule meant for someone else."""
+    lens = sorted(len(s.split()) for p in paragraphs for s in re.split(r"(?<=[.!?])\s+", p.text) if s.strip())
+    if len(lens) < 40:
+        return BASE_MAX_SENTENCE
+    return max(BASE_MAX_SENTENCE, int(lens[int(0.98 * (len(lens) - 1))] * 1.25))
+
+
+def check(text: str, strictness: str = "gentle", max_sentence: int = BASE_MAX_SENTENCE) -> list[str]:
+    """Problems worth a rewrite. gentle (default): AI-sounding clichés, markdown, a word repeated nearby. strict adds sentence length (against
+    the book's own baseline), passive voice and "telling". off: nothing. Advice, not law: a model is never forced to flatten a voice."""
+    if strictness == "off":
+        return []
     issues: list[str] = []
     low = text.lower()
     hits = [p for p in AI_ISMS if p in low]
@@ -28,15 +45,16 @@ def check(text: str) -> list[str]:
             if len(w) > 4 and words[i : i + 8].count(w) >= 3:
                 issues.append(f"The word '{w}' repeats too often nearby.")
                 break
-    if len(PASSIVE.findall(text)) >= 2:
-        issues.append("Too much passive voice; prefer active verbs.")
-    if len(TELLING.findall(text)) >= 2:
-        issues.append("Show the feeling through action or detail instead of naming it.")
-    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-    if sentences and max(len(s.split()) for s in sentences) > 55:
-        issues.append("One sentence is far too long; split it.")
     if re.search(r"[*_#`]{2,}|^\s*[-*]\s", text, re.M):
         issues.append("Plain prose only: no markdown, bullets, or headings.")
+    if strictness == "strict":
+        if len(PASSIVE.findall(text)) >= 2:
+            issues.append("Too much passive voice; prefer active verbs.")
+        if len(TELLING.findall(text)) >= 2:
+            issues.append("Show the feeling through action or detail instead of naming it.")
+        sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+        if sentences and max(len(s.split()) for s in sentences) > max_sentence:
+            issues.append("One sentence is far too long; split it.")
     return issues
 
 
