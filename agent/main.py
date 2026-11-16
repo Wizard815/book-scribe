@@ -27,6 +27,7 @@ from kg import StoryKG
 from memory.store import MemoryManager
 from providers import ProviderError, Registry
 from bible import BibleError
+import bible_import
 from import_text import import_text
 from prefs import FIELDS as PREF_FIELDS, Prefs
 import uisettings
@@ -51,6 +52,19 @@ class ChatIn(BaseModel):
     text: str
     session_id: str | None = None
     book: str | None = None
+
+
+class WikiPlanIn(BaseModel):
+    root_id: str | None = Field(default=None, max_length=60)   # the person the story is about; empty = everyone (oldest first, capped)
+    ancestors: int = Field(default=2, ge=0, le=8)
+    descendants: int = Field(default=2, ge=0, le=8)
+    siblings: bool = True
+    privacy: str = Field(default="alias", max_length=6)       # alias (living people get made-up names) | real
+    max_people: int = Field(default=150, ge=1, le=400)
+
+
+class InboxAddIn(BaseModel):
+    name: str = Field(max_length=200)
 
 
 class PersonIn(BaseModel):
@@ -87,6 +101,12 @@ class PrefsIn(BaseModel):
     surprise: str | None = Field(default=None, max_length=8)      # off | low | high: how much random inspiration the model gets
     strictness: str | None = Field(default=None, max_length=8)    # off | gentle | strict: how hard the style check pushes back
     look: dict | None = None                                      # how the screen looks (validated by uisettings.clean)
+    chat_engine: str | None = Field(default=None, max_length=6)   # auto | local | cloud, for the thinking model
+    listen_engine: str | None = Field(default=None, max_length=6) # ... for speech-to-text
+    voice_engine: str | None = Field(default=None, max_length=6)  # ... for text-to-speech
+    voice_mode: str | None = Field(default=None, max_length=10)   # same | separate: one voice for everything, or agent + female reader + male reader
+    narrator_reader: str | None = Field(default=None, max_length=8)  # female | male: which reader narrates
+    live_interrupt: str | None = Field(default=None, max_length=4)   # on | off: may the writer cut the agent off by speaking (headphones)
 
 
 class IdeasIn(BaseModel):
@@ -131,6 +151,12 @@ class SpeakIn(BaseModel):
     speaker: str = "assistant"  # assistant | narrator | a character's name
     draft: str | None = None  # an unsaved voice being auditioned
     book: str | None = None
+
+
+class RoleVoiceIn(BaseModel):
+    voice: str | None = Field(default=None, max_length=80)
+    speed: float | None = None
+    style: str | None = Field(default=None, max_length=120)
 
 
 class TiersIn(BaseModel):
@@ -178,10 +204,12 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     prefs = Prefs(s.state_dir)
     emb_http = embed_http or httpx.AsyncClient()
     index = ParagraphIndex(store, reg, router, emb_http, s.state_dir, debounce=s.index_debounce)
+    voices.settings = lambda: {"mode": prefs.get("voice_mode", ""), "narrator": prefs.get("narrator_reader", "")}
     journal, library = Journal(store), Library(store)
     index.sources = [journal.chunks, library.chunks]  # the long conversation and the added files are searched by meaning too
     addons = Addons(s, s.addons_dir).load()
     agent = Agent(s, store, llm, mem, StoryKG(store), graph, check_drift, voices, prefs, index, journal, library, addons)
+    agent.stt = stt
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -362,11 +390,11 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         return {"text": await stt.transcribe(await audio.read(), audio.filename or "audio.webm", audio.content_type or "audio/webm")}
 
     @app.post("/api/voice", dependencies=[Depends(writer)])
-    async def voice(audio: UploadFile = File(...), session_id: str = Form(""), book: str = Form("")):
+    async def voice(audio: UploadFile = File(...), session_id: str = Form(""), book: str = Form(""), interrupted: str = Form("")):
         """Mic → whisper → agent in one round trip (fewest taps for the writer)."""
-        text = await stt.transcribe(await audio.read(), audio.filename or "audio.webm", audio.content_type or "audio/webm")
+        text = await stt.transcribe(await audio.read(), audio.filename or "audio.webm", audio.content_type or "audio/webm", hint=agent.stt_hint(book or None))
         sid = session_id or uuid.uuid4().hex
-        reply = await agent.handle(sid, text, book or None, via="voice")
+        reply = await agent.handle(sid, text, book or None, via="voice", interrupted=bool(interrupted))
         return {"session_id": sid, "user_text": text, **asdict(reply), "served_by": router.served("stt", "chat")}
 
     @app.post("/api/tts", dependencies=[Depends(writer)])
@@ -455,7 +483,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
 
     @app.get("/api/admin/addons", dependencies=[Depends(admin)])
     async def admin_addons():
-        return {"directory": s.addons_dir or "", "loaded": addons.status, "readers": [{"addon": n, "extensions": list(e)} for n, e in addons.readers],
+        return {"directory": s.addons_dir or "", "search_dirs": [str(r) for r in agent._finder(s.default_book).roots[1:]], "loaded": addons.status, "readers": [{"addon": n, "extensions": list(e)} for n, e in addons.readers],
                 "tools": [t.name for t in addons.tools]}
 
     @app.get("/api/admin/traces", dependencies=[Depends(admin)])
@@ -501,8 +529,15 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     # --- writer settings ------------------------------------------------------------------------------------------
     def settings_view() -> dict:
         d = prefs.all()
-        d.update(look=agent._look(), surprise=d["surprise"] or "low", strictness=d["strictness"] or "gentle", default_book=s.default_book)
+        d.update(look=agent._look(), surprise=d["surprise"] or "low", strictness=d["strictness"] or "gentle", default_book=s.default_book,
+                 chat_engine=d["chat_engine"] or "auto", listen_engine=d["listen_engine"] or "auto", voice_engine=d["voice_engine"] or "auto",
+                 voice_mode=d["voice_mode"] or "characters", narrator_reader=d["narrator_reader"] or "female", live_interrupt=d["live_interrupt"] or "off")
         return d
+
+    def apply_engines() -> None:
+        router.prefer.update(chat=prefs.get("chat_engine", "auto"), stt=prefs.get("listen_engine", "auto"), tts=prefs.get("voice_engine", "auto"))
+
+    apply_engines()
 
     @app.get("/api/settings", dependencies=[Depends(writer)])
     async def get_settings():
@@ -514,6 +549,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         if body.look is not None:
             changes["look"] = json.dumps(uisettings.clean(body.look))
         prefs.update(changes)
+        apply_engines()
         return settings_view()
 
     # --- random ideas (names, places, twists...) for the writer's Ideas panel -------------------------------------
@@ -591,6 +627,34 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         index.schedule(book)
         return {"items": out}
 
+    # --- the inbox folder (drop files into it from the computer) ---------------------------------------------------------------
+    @app.get("/api/books/{book}/inbox", dependencies=[Depends(writer)])
+    async def inbox_list(book: str):
+        book_or_400(book)
+        folder = (f"{s.host_books_path}/{book}/inbox" if s.host_books_path else f"{book}/inbox")
+        finder = agent._finder(book)
+        return {"folder": folder, "files": agent.inbox.files(book, settled_only=False), "shared_folders": [finder.label(i) for i in range(1, len(finder.roots))]}
+
+    @app.post("/api/books/{book}/inbox/check", dependencies=[Depends(writer)])
+    async def inbox_check(book: str):
+        """The page asks every few seconds whether something new landed in the inbox; if so the agent asks the writer about it."""
+        reply = agent.inbox_check(book_or_400(book))
+        return {"text": "", "pending": None} if reply is None else {"user_text": "", **asdict(reply), "served_by": {}}
+
+    @app.post("/api/books/{book}/inbox/add", dependencies=[Depends(writer)])
+    async def inbox_add(book: str, body: InboxAddIn):
+        book_or_400(book)
+        try:
+            path = agent.inbox.path(book, body.name)
+            meta = await ingest.add_file(book, path.name, path.read_bytes(), library, llm, stt, journal)
+        except FileNotFoundError:
+            raise HTTPException(404, "That file is not in the inbox any more.")
+        except extract_mod.Unreadable as e:
+            raise HTTPException(400, str(e))
+        agent.inbox.done(book, path.name)
+        index.schedule(book)
+        return meta
+
     def lib_item(book: str, slug: str) -> dict:
         try:
             return library.meta(book_or_400(book), slug)
@@ -664,6 +728,26 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         index.schedule(book)
         return {"slug": e.slug, "name": e.name}
 
+    def family_plan(book: str, slug: str, body: WikiPlanIn):
+        lib_item(book, slug)
+        try:
+            return bible_import.prepare(store, library, book, slug, body.root_id, body.ancestors, body.descendants, body.siblings, body.privacy, body.max_people)
+        except KeyError:
+            raise HTTPException(400, "That file is not a family tree I could read the people from. Export a GEDCOM (.ged) from your genealogy program.")
+
+    @app.post("/api/books/{book}/library/{slug}/wiki-plan", dependencies=[Depends(writer)])
+    async def library_wiki_plan(book: str, slug: str, body: WikiPlanIn):
+        """Preview only: who would become characters, which places and timeline entries, which living people get made-up names. Writes nothing."""
+        return family_plan(book_or_400(book), slug, body).summary()
+
+    @app.post("/api/books/{book}/library/{slug}/wiki-import", dependencies=[Depends(writer)])
+    async def library_wiki_import(book: str, slug: str, body: WikiPlanIn):
+        """The writer pressed 'Add to the wiki' after the preview."""
+        pl = family_plan(book_or_400(book), slug, body)
+        res = bible_import.commit(store, library, book, pl)
+        index.schedule(book)
+        return res
+
     @app.get("/api/books/{book}/memory/search", dependencies=[Depends(writer)])
     async def memory_search(book: str, q: str = ""):
         """One search box over everything: the book, the wiki, old conversation and the library, by meaning when the index is ready."""
@@ -720,6 +804,51 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         if not gone:
             raise HTTPException(404, "No such entry.")
         index.schedule(book)
+        return {"ok": True}
+
+    # --- the three voices: the agent, a female reader and a male reader ----------------------------------------------------
+    ROLE_SPEAKER = {"agent": "assistant", "female": "reader:female", "male": "reader:male"}
+
+    def tts_primary():
+        """The TTS provider that will be tried first, after the writer's local/cloud choice."""
+        try:
+            chain = router._ordered("tts", reg.chain("tts"))
+        except NotConfigured:
+            return None
+        return chain[0][1] if chain else None
+
+    @app.get("/api/books/{book}/voice-roles", dependencies=[Depends(writer)])
+    async def voice_roles(book: str):
+        from voices import parse_pool
+        book_or_400(book)
+        prim = tts_primary()
+        out = {}
+        for role, speaker in ROLE_SPEAKER.items():
+            prof = voices.profile(book, speaker, create=False) or voices._initial(book, speaker)
+            out[role] = {"voice": (prof["pinned"].get(prim.id) or prof["assigned"].get(prim.id) or "") if prim else "", "speed": prof.get("speed", 1.0),
+                         "style": prof.get("style", ""), "traits": prof["traits"]}
+        return {"roles": out, "provider": prim.label if prim else "", "tier": next((router.reg.labels[t] for t, p in reg.chain("tts") if prim and p.id == prim.id), ""),
+                "pool": [{"name": v.name, "tags": sorted(v.tags)} for v in parse_pool(prim)] if prim else [], "enabled": tts.enabled}
+
+    @app.put("/api/books/{book}/voice-roles/{role}", dependencies=[Depends(writer)])
+    async def set_voice_role(book: str, role: str, body: RoleVoiceIn):
+        from voices import pin_voice, SPEED_MIN, SPEED_MAX
+        book_or_400(book)
+        if role not in ROLE_SPEAKER:
+            raise HTTPException(404, "The roles are agent, female and male.")
+        speaker = ROLE_SPEAKER[role]
+        prof = voices.profile(book, speaker)
+        prim = tts_primary()
+        if body.voice and prim:
+            prof = pin_voice(prof, prim, body.voice)
+            if not prof:
+                raise HTTPException(400, "That voice is not offered by the voice server.")
+        if body.speed is not None:
+            prof["speed"] = max(SPEED_MIN, min(SPEED_MAX, body.speed))
+        if body.style is not None:
+            prof["style"] = body.style.strip()[:120]
+        prof["auto"] = False
+        voices.save_profile(book, speaker, prof)
         return {"ok": True}
 
     @app.delete("/api/books/{book}/voices/{speaker}", dependencies=[Depends(writer)])

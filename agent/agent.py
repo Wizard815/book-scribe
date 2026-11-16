@@ -12,6 +12,10 @@ from book_store import BookError, BookStore, Paragraph
 import asyncio
 
 from clients import LLM
+import bible_import
+import ingest
+from extract import MAX_BYTES, Unreadable
+from inbox import Finder, Inbox, ago, human_size
 from drift import review as drift_review
 import harness
 import intent
@@ -59,6 +63,10 @@ class Session:
     voice_focus: str | None = None  # whose voice "make it deeper" / "his voice" refers to
     recent_speakers: list[str] = field(default_factory=list)
     last_ideas: dict | None = None  # the last random-idea request, so "more" can repeat it
+    via: str = "typed"  # how the last message arrived: "voice" means the reply will be spoken aloud
+    interrupted: bool = False  # the writer cut my last reply off by speaking over it
+    found: list = field(default_factory=list)  # files the finder offered, best first (inbox.Found)
+    found_i: int = 0  # which of them is being asked about
     summary: str = ""  # rolling summary of everything folded out of working memory (the full record lives in the journal)
     compacting: bool = False
 
@@ -76,6 +84,7 @@ class Reply:
     highlights: list[dict] = field(default_factory=list)  # passages the reply is about: [{"id", "chapter", "label"}]; the page lights them up
     ui: dict | None = None  # a new look for the screen (size, contrast…), when the writer asked for one
     ideas: list[str] = field(default_factory=list)  # random options the page shows as tap-to-use buttons
+    open_item: dict | None = None  # a library file for the page to open: {"slug", "title"}
 
 
 class Agent:
@@ -83,6 +92,7 @@ class Agent:
         self.s, self.store, self.llm, self.memory, self.kg = s, store, llm, memory, kg
         self.graph, self.check_drift, self.voices, self.prefs, self.index = graph, check_drift, voices, prefs, index
         self.journal, self.library, self.addons = journal, library, addons  # long-term record, imported files, administrator addons
+        self.inbox, self.stt = Inbox(store), None  # the drop folder; speech-to-text for audio files (set by main)
         self._speaker_cache: dict[str, list[str | None]] = {}
         self.sessions: dict[str, Session] = {}
         self._bg: set[asyncio.Task] = set()
@@ -138,8 +148,10 @@ class Agent:
         return sess
 
     # ------------------------------------------------------------------
-    async def handle(self, sid: str, user_text: str, book: str | None = None, via: str = "typed") -> Reply:
+    async def handle(self, sid: str, user_text: str, book: str | None = None, via: str = "typed", interrupted: bool = False) -> Reply:
         """One turn. Everything said is written to the journal (so nothing is ever lost when working memory is trimmed)."""
+        sess = self.session(sid, book)
+        sess.via, sess.interrupted = via, interrupted
         reply = await self._handle(sid, user_text, book)
         if self.journal and reply.text and user_text.strip():
             sess = self.session(sid, book)
@@ -149,6 +161,16 @@ class Agent:
                 self.index.schedule(sess.book)
             self._spawn(self._compact(sess))
         return reply
+
+    def stt_hint(self, book: str | None = None) -> str:
+        """Names the writer is likely to say, so the speech model spells them as the book does."""
+        book = book or self.s.default_book
+        try:
+            b = self.store.bible(book)
+            names = [n for kind in ("characters", "world") for n in list(b.entries(kind))[:25]]
+        except Exception:
+            names = []
+        return ("Story about " + ", ".join(names) + ".") if names else ""
 
     def _spawn(self, coro) -> None:
         task = asyncio.create_task(coro)
@@ -163,6 +185,10 @@ class Agent:
             return self._reply(sess, "I didn't catch that. Try again.")
 
         # Answers to a pending proposal come first, so "okay" confirms rather than being discarded as noise.
+        if sess.pending and sess.pending.kind == "file":
+            done = await self._file_pending(sess, text)
+            if done is not None:
+                return done
         if sess.pending and sess.pending.kind == "voice":
             done = await self._voice_pending(sess, text)
             if done is not None:
@@ -204,6 +230,10 @@ class Agent:
             return r
         if (req := intent.ideas_request(text)) is not None:
             return self._ideas_reply(sess, req)
+        if (what := intent.open_request(text)) and (r := self._open_reply(sess, what)):  # "open the harbour notes"
+            return r
+        if intent.file_request(text):  # "I just downloaded a new PDF, can you open it"
+            return self._find_reply(sess, text)
 
         if self.voices and (cmd := intent.voice_command(text)):
             if (r := await self._voice_command(sess, text, cmd)) is not None:
@@ -230,6 +260,117 @@ class Agent:
         if sess.mode == "narrator" and intent.is_draft(text):
             return await self._propose_draft(sess, text)
         return await self._converse(sess, text)
+
+    # --- files: opening what is in the library, finding what was just downloaded, the inbox folder ---------------------------------
+    def _finder(self, book: str) -> Finder:
+        """The inbox folder first, then whatever folders the administrator shared (FILE_SEARCH_DIRS)."""
+        return Finder([str(self.inbox.dir(book))] + list(self.s.search_dirs), MAX_BYTES)
+
+    def _open_reply(self, sess: Session, what: str) -> Reply | None:
+        if not self.library:
+            return None
+        want = set(tokens(what)) - {"file", "pdf", "document", "picture", "photo", "one"}
+        best = None
+        for m in self.library.items(sess.book):
+            title = set(tokens(m["title"]))
+            if want and want <= title or (title and title <= set(tokens(what))):
+                best = best or m
+        if not best:
+            return None
+        r = self._reply(sess, f"Opening {best['title']}.")
+        r.open_item = {"slug": best["slug"], "title": best["title"]}
+        return r
+
+    def _describe_found(self, f) -> str:
+        return f"{f.name}, {human_size(f.size)}, in {f.where}, from {ago(time.time() - f.mtime)}"
+
+    def _set_found_pending(self, sess: Session) -> str:
+        f = sess.found[sess.found_i]
+        sess.pending = Pending(kind="file", text=self._describe_found(f), chapter=sess.chapter, data={"root": f.root, "rel": f.rel, "name": f.name})
+        return self._describe_found(f)
+
+    def _find_reply(self, sess: Session, text: str) -> Reply:
+        finder = self._finder(sess.book)
+        found = finder.search(text, limit=5)
+        if not found:
+            shared = len(finder.roots) > 1
+            return self._reply(sess, "I looked in " + ("your inbox folder and the folders shared with me" if shared else "your inbox folder") + " and could not find a matching file. "
+                               + ("Tell me part of its name and I will look again." if shared else "Drop the file into the inbox folder, or press Import and choose it, and I will read it."))
+        sess.found, sess.found_i = found, 0
+        what = self._set_found_pending(sess)
+        more = f" I have {len(found) - 1} other possible matches if this is not it." if len(found) > 1 else ""
+        return self._reply(sess, f"I found {what}. Is that the one?{more}")
+
+    async def _file_pending(self, sess: Session, text: str) -> Reply | None:
+        """Yes adds the file and opens it; no moves on to the next match."""
+        kind, _rest = intent.confirmation(text)
+        if kind == "yes":
+            return await self._commit_file(sess)
+        if kind == "hold":
+            return self._reply(sess, "Okay, I'll wait. Say yes to add the file, or no to try another.")
+        if kind == "no":
+            was, sess.pending = sess.pending, None
+            if (was.data or {}).get("inbox"):
+                return self._reply(sess, "Okay. I will leave it in the folder. Press Import any time if you want it added.")
+            sess.found_i += 1
+            if sess.found and sess.found_i < len(sess.found):
+                what = self._set_found_pending(sess)
+                return self._reply(sess, f"Okay. How about {what}? Is that the one?")
+            sess.found = []
+            return self._reply(sess, "Okay, I'll leave it. If you are looking for something else, tell me part of its name.")
+        return None
+
+    async def _commit_file(self, sess: Session) -> Reply:
+        p, sess.pending = sess.pending, None
+        d, book = p.data or {}, sess.book
+        if not self.library:
+            return self._reply(sess, "The library is not available.")
+        try:
+            if d.get("inbox"):
+                items = [(self.inbox.path(book, n), n, True) for n in d["inbox"]]
+            else:
+                finder = self._finder(book)
+                items = [(finder.resolve(d["root"], d["rel"]), d["name"], d["root"] == 0)]
+        except (FileNotFoundError, OSError, IndexError):
+            return self._reply(sess, "I cannot find that file any more.")
+        msgs, first = [], None
+        for path, name, from_inbox in items:
+            try:
+                if path.stat().st_size > MAX_BYTES:
+                    raise Unreadable(f"{name} is too big. The limit is {MAX_BYTES // 1048576} MB.")
+                meta = await ingest.add_file(book, name, path.read_bytes(), self.library, self.llm, self.stt, self.journal)
+            except Unreadable as e:
+                msgs.append(str(e))
+                continue
+            except OSError:
+                msgs.append(f"I could not read {name}.")
+                continue
+            msgs.append(meta["message"])
+            first = first or meta
+            if from_inbox:
+                self.inbox.done(book, path.name)
+        if self.index:
+            self.index.schedule(book)
+        r = self._reply(sess, " ".join(msgs) + (" I have opened it for you." if first else ""))
+        if first:
+            r.open_item = {"slug": first["slug"], "title": first["title"]}
+        return r
+
+    def inbox_check(self, book: str | None = None) -> Reply | None:
+        """Called by the page now and then: if new files have appeared in the inbox folder, ask whether to add them (once per file)."""
+        sess = self.session("", book)
+        if sess.pending:  # never interrupt a question that is waiting for an answer
+            return None
+        new = self.inbox.fresh(sess.book)
+        if not new:
+            return None
+        names = [f["name"] for f in new][:5]
+        sess.pending = Pending(kind="file", text=", ".join(names), chapter=sess.chapter, data={"inbox": names})
+        what = names[0] if len(names) == 1 else f"{len(names)} new files, {', '.join(names[:3])}{'…' if len(names) > 3 else ''}"
+        text = f"I see {'a new file' if len(names) == 1 else ''} in your inbox folder: {what}. Shall I add {'it' if len(names) == 1 else 'them'} to the library and open {'it' if len(names) == 1 else 'the first'}?"
+        if self.journal:
+            self.journal.append(sess.book, "assistant", text)
+        return self._reply(sess, text)
 
     # --- the screen, and random ideas -----------------------------------------------------------------
     def _ui_reply(self, sess: Session, text: str) -> Reply | None:
@@ -390,6 +531,10 @@ class Agent:
             sys.append("STORY BIBLE (canon; never contradict):\n" + bible)
         if canon:
             sys.append(canon)
+        if sess.via == "voice":  # the voice and the thinking are one agent: what I write is what will be said aloud
+            sys.append("THE WRITER IS TALKING TO YOU OUT LOUD and your reply will be spoken. Answer in one to three short, natural sentences. No lists, no markdown, "
+                       "no headings. If you must give several options, say two or three in a sentence. Ask at most one question." + (
+                           " They just cut off your last reply by speaking over it: do not repeat it, answer what they said now." if sess.interrupted else ""))
         if sess.summary:
             sys.append("EARLIER IN THIS LONG CONVERSATION (a summary; the full record can be searched with the recall tool):\n" + sess.summary)
         if recall:
@@ -431,6 +576,8 @@ class Agent:
         """Whatever a turn's tools and the reply's own words point at: passages to highlight, a new look, tap-to-use ideas."""
         ids = list(dict.fromkeys(ctx.highlights + self.refs.find(sess.book, text)))[:5]
         reply.highlights = self._hl(sess, ids)
+        if ctx.open_item:
+            reply.open_item = ctx.open_item
         if ctx.ui:
             self._save_look(ctx.ui)
             reply.ui = ctx.ui
@@ -586,6 +733,9 @@ class Agent:
     async def _revise(self, sess: Session, instruction: str) -> Reply:
         """The writer answered a proposal with changes ("yes but shorter", "no, make it longer"): redo it, don't save or drop."""
         p = sess.pending
+        if p.kind == "family":
+            sess.pending = None
+            return self._reply(sess, "Okay, I won't add it yet. Ask me again with the person and how many generations you want.")
         if p.kind == "wiki":
             new = (await self.llm.chat([{"role": "system", "content": "Rewrite the note for a story wiki. Plain facts, at most 80 words. Output only the note."},
                                         {"role": "user", "content": f"NOTE:\n{p.text}\n\nChange requested: {instruction}"}], temperature=0.3, max_tokens=250)).strip()
@@ -609,6 +759,13 @@ class Agent:
     async def _accept(self, sess: Session) -> Reply:
         if sess.pending.kind == "wiki":
             return self._commit_wiki(sess)
+        if sess.pending.kind == "family":
+            p, sess.pending = sess.pending, None
+            res = bible_import.commit(self.store, self.library, sess.book, p.data["plan"])
+            if self.index:
+                self.index.schedule(sess.book)
+            return self._reply(sess, f"Done. I added {res['characters_added']} characters" + (f", extended {res['characters_extended']} existing ones" if res["characters_extended"] else "")
+                               + f", {res['places_added']} places and {res['timeline_entries']} timeline entries to the story wiki." + (f" {res['aliased']} living relatives were given made-up names." if res["aliased"] else ""))
         if sess.pending.kind == "confirm_target":
             p, sess.pending = sess.pending, None
             return await self._propose_edit(sess, p.text, target=self.store.find(sess.book, p.paragraph_id), sure=True)

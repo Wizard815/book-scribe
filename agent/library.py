@@ -133,6 +133,22 @@ class Library:
                     out.append((m["slug"], t))
         return out
 
+    def save_aliases(self, book: str, slug: str, mapping: dict) -> None:
+        """Real name -> made-up name for living relatives. Kept here (private to the writer), never in the story bible."""
+        p = self._item_dir(book, slug) / "aliases.json"
+        try:
+            cur = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cur = {}
+        cur.update(mapping)
+        p.write_text(json.dumps(cur, ensure_ascii=False), encoding="utf-8")
+
+    def aliases(self, book: str, slug: str) -> dict:
+        try:
+            return json.loads((self._item_dir(book, slug) / "aliases.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
     def delete(self, book: str, slug: str) -> None:
         shutil.rmtree(self._item_dir(book, slug))
 

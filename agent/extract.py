@@ -26,7 +26,7 @@ from pathlib import Path
 
 import genealogy
 
-MAX_BYTES = 60 * 1024 * 1024
+MAX_BYTES = 200 * 1024 * 1024
 MAX_TEXT = 2_000_000
 MAX_IMAGES = 10
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
@@ -245,7 +245,7 @@ def _stem_title(filename: str) -> str:
 
 def extract(data: bytes, filename: str, depth: int = 0) -> Extracted:
     if len(data) > MAX_BYTES:
-        raise Unreadable(f"That file is too big ({len(data) // 1_000_000} MB). The limit is {MAX_BYTES // 1_000_000} MB.")
+        raise Unreadable(f"That file is too big ({len(data) // 1048576} MB). The limit is {MAX_BYTES // 1048576} MB.")
     if not data:
         raise Unreadable("That file is empty.")
     name = Path(filename or "file").name
@@ -275,7 +275,10 @@ def _builtin(data: bytes, name: str, ext: str, depth: int) -> Extracted:
         except Exception:
             raise Unreadable("I could not read that family tree. Export it as a GEDCOM (.ged) file from your genealogy program and add that instead.")
         if tree:
-            return Extracted(text=text, kind="family_tree", tree=tree, notes=[f"Family tree: {tree.summary()}."])
+            notes = [f"Family tree: {tree.summary()}."]
+            if "best effort" in tree.source:
+                notes.append("I read this straight from the program's own file, which is not a published format. Please check a few people, or export a GEDCOM (.ged) for a sure result.")
+            return Extracted(text=text, kind="family_tree", tree=tree, notes=notes)
         return Extracted(text=text, kind="database",
                          notes=["I read this as a raw database, so I can show what is in it but not the family links. For the full tree, export a GEDCOM (.ged) file from the program."])
     # pictures and audio

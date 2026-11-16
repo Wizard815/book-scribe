@@ -26,6 +26,9 @@
 .entry .meta { font-size: 18px; color: var(--muted); flex: 1 1 100%; }
 .idea { border: 2px solid var(--line); border-radius: 14px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
 .idea .txt { font-size: 26px; flex: 1 1 260px; overflow-wrap: anywhere; }
+.bigrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 8px 0; }
+.bigrow button { min-height: 110px !important; font-size: 30px !important; text-align: center; }
+.folder { font-size: 24px; font-weight: 700; background: var(--bg); border: 2px dashed var(--line); border-radius: 12px; padding: 12px 16px; margin: 0; overflow-wrap: anywhere; user-select: all; }
 .lib-item { border: 2px solid var(--line); border-radius: 14px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
 .lib-item .name { font-size: 26px; font-weight: 700; flex: 1 1 240px; overflow-wrap: anywhere; }
 .lib-item .meta { font-size: 19px; color: var(--muted); flex: 1 1 100%; }
@@ -63,6 +66,26 @@ body.dragging #dropBanner { display: flex; }
     <div id="ideaOpts" class="row"></div>
     <div class="row"><button type="button" id="ideaGo" class="primary">Give me ideas</button></div>
     <div id="ideaList" style="display:flex;flex-direction:column;gap:10px;margin-top:10px"></div>
+  </div>
+</div>
+
+<div id="importView" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="impTitle">
+  <div class="panel">
+    <div class="sbar"><h2 id="impTitle">Import</h2><button type="button" id="impClose" class="primary">Close</button></div>
+    <p class="hint">Bring something into your book: notes, an old draft, a PDF, a photo, a recording, a family tree. I will read it and remember it.</p>
+    <div class="bigrow">
+      <button type="button" id="impChoose" class="primary">Choose files from this computer</button>
+      <button type="button" id="impPhoto">Take a photo</button>
+      <button type="button" id="impFind">Find a file I just downloaded</button>
+      <button type="button" id="impInbox">Check my inbox folder</button>
+    </div>
+    <div class="sect">Or drop files in your inbox folder</div>
+    <p class="hint">Put files in this folder on your computer and I will notice them and ask if you want them added:</p>
+    <p id="impFolder" class="folder"></p>
+    <p id="impShared" class="hint"></p>
+    <div id="impWaiting" style="display:flex;flex-direction:column;gap:10px"></div>
+    <p id="impMsg" role="status" class="ok"></p>
+    <p class="hint">You can also drag files onto this page from anywhere. Files up to 200 MB.</p>
   </div>
 </div>
 
@@ -156,8 +179,9 @@ body.dragging #dropBanner { display: flex; }
 
   function mountTools() {
     const box = $("siteTools"); box.hidden = false; box.replaceChildren();
+    const imp = h("button", { type: "button", id: "importBtn", className: "primary", textContent: "Import" }); imp.onclick = openImport;
     const s = h("button", { type: "button", textContent: "Settings" }); s.onclick = () => openSettings();
-    box.append(s);
+    box.append(imp, s);
     const tools = document.querySelector(".tools");
     if (tools && !document.getElementById("libBtn")) {
       const f = h("button", { type: "button", id: "addFileBtn", textContent: "Add file" }); f.onclick = () => $("libFile").click();
@@ -330,8 +354,46 @@ body.dragging #dropBanner { display: flex; }
   }
   async function tabVoices() {
     if (!book()) return [h("p", { className: "hint", textContent: "Open a book first." })];
-    const [v, bible] = await Promise.all([call("GET", `/api/books/${enc(book())}/voices`), call("GET", `/api/books/${enc(book())}/bible`)]);
-    const out = [h("p", { className: "hint", textContent: "Each character has their own voice. To change one, tell the chat: “let me hear Mr. Bennet”, then say deeper, slower, or try another." })];
+    const [v, bible, roles, prefs] = await Promise.all([call("GET", `/api/books/${enc(book())}/voices`), call("GET", `/api/books/${enc(book())}/bible`), call("GET", `/api/books/${enc(book())}/voice-roles`), call("GET", "/api/settings")]);
+    const note = h("p", { className: "ok", role: "status" });
+    const save = async (body, again) => { try { await call("PUT", "/api/settings", body); BS.serverPrefs = { ...(BS.serverPrefs || {}), ...body }; if ("live_interrupt" in body) { BS.state.liveInterrupt = body.live_interrupt === "on"; BS.setLiveUI(); } msg(note, "Saved."); if (again) render("voices"); } catch (e) { msg(note, e.message, true); } };
+    const pick = (id, label, opts, cur, apply) => { const sel = h("select", { id }, ...opts.map(([val, l]) => h("option", { value: val, textContent: l }))); sel.value = String(cur); sel.onchange = () => apply(sel.value); return [h("label", { for: id, textContent: label }), sel]; };
+    const SPEEDS = [["0.8", "Slow"], ["0.9", "A little slow"], ["1", "Normal"], ["1.1", "A little fast"], ["1.25", "Fast"]];
+    const closest = (x) => String(SPEEDS.map(([s]) => Number(s)).reduce((a, b) => (Math.abs(b - x) < Math.abs(a - x) ? b : a)));
+    const roleRow = (key, label, speaker, sample) => {
+      const r = roles.roles[key];
+      const vs = h("select", { id: "rv_" + key, "aria-label": label + " voice" }, h("option", { value: "", textContent: r.voice ? r.voice + " (current)" : "Chosen for me" }), ...roles.pool.filter((x) => x.name !== r.voice).map((x) => h("option", { value: x.name, textContent: x.name + (x.tags.length ? " (" + x.tags.join(", ") + ")" : "") })));
+      const sp = h("select", { id: "rs_" + key, "aria-label": label + " speed" }, ...SPEEDS.map(([val, l]) => h("option", { value: val, textContent: l }))); sp.value = closest(r.speed || 1);
+      const upd = async () => { try { await call("PUT", `/api/books/${enc(book())}/voice-roles/${key}`, { voice: vs.value || null, speed: Number(sp.value) }); msg(note, "Saved."); } catch (e) { msg(note, e.message, true); } };
+      vs.onchange = sp.onchange = upd;
+      const hearBtn = h("button", { type: "button", textContent: "Hear it" }); hearBtn.onclick = () => hear(speaker, sample);
+      return h("div", { className: "form" }, h("div", { className: "sect", textContent: label, style: "margin:0" }), h("label", { for: "rv_" + key, textContent: "Voice" }), vs, h("label", { for: "rs_" + key, textContent: "Speed" }), sp, h("div", { className: "row" }, hearBtn));
+    };
+    const mode = prefs.voice_mode;
+    const top = [
+      h("div", { className: "sect", textContent: "How many voices?" }),
+      ...pick("vMode", "Who speaks", [["same", "One voice for everything"], ["separate", "Three voices: me, a woman reader and a man reader"], ["characters", "Me, a narrator, and a different voice for every character"]], mode, (val) => save({ voice_mode: val }, true)),
+      !roles.pool.length ? h("p", { className: "err", textContent: "No list of voices has been set up yet, so I cannot offer a choice. The administrator adds them under Text-to-speech." }) : h("p", { className: "hint", textContent: `Voices come from ${roles.tier || "the voice server"} (${roles.provider}). Pick one, then press Hear it.` }),
+      roleRow("agent", mode === "same" ? "The voice for everything" : "Me, the agent (the voice that talks with you)", "assistant", "Hello. This is how I sound when we talk."),
+    ];
+    if (mode === "separate") {
+      top.push(roleRow("female", "The woman reader", "reader:female", "The evening was quiet, and the road ran white beneath the moon."),
+        roleRow("male", "The man reader", "reader:male", "The evening was quiet, and the road ran white beneath the moon."),
+        ...pick("vNarr", "The story's narration is read by", [["female", "The woman reader"], ["male", "The man reader"]], prefs.narrator_reader, (val) => save({ narrator_reader: val })),
+        h("p", { className: "hint", textContent: "Women in the story are read by the woman reader and men by the man reader. A character you have chosen a special voice for keeps it." }));
+    }
+    top.push(
+      h("div", { className: "sect", textContent: "Where the work is done" }),
+      h("p", { className: "hint", textContent: "Automatic tries your own machines first and only uses the cloud if they do not answer. “On my computers only” never sends anything to the cloud. “Cloud” is usually smarter or faster but sends your words to another company." }),
+      ...["chat_engine|Thinking and writing", "listen_engine|Listening to you", "voice_engine|Making my voice"].flatMap((spec) => { const [k, l] = spec.split("|"); return pick("e_" + k, l, [["auto", "Automatic"], ["local", "On my computers only"], ["cloud", "Cloud"]], prefs[k], (val) => save({ [k]: val })); }),
+      h("div", { className: "sect", textContent: "Live talk" }),
+      h("p", { className: "hint", textContent: "Press Start live talk on the main screen and just talk. I answer when you stop, then listen again." }),
+      ...pick("liveWait", "How long I wait after you stop talking", [["1000", "Short"], ["1500", "Normal"], ["2200", "Long, I pause a lot"]], BS.store.get("bs_live_wait", "1500"), (val) => { BS.store.set("bs_live_wait", val); msg(note, "Saved."); }),
+      ...pick("liveInt", "Talking over me", [["off", "Wait for me to finish (best without headphones)"], ["on", "Let me interrupt (use headphones)"]], prefs.live_interrupt, (val) => save({ live_interrupt: val })),
+      note);
+    const out = [...top];
+    if (mode !== "characters") return out;
+    out.push(h("div", { className: "sect", textContent: "Characters" }), h("p", { className: "hint", textContent: "Each character has their own voice. To change one, tell the chat: “let me hear Mr. Bennet”, then say deeper, slower, or try another." }));
     if (!v.pool.length) out.push(h("p", { className: "ok", textContent: "No list of voices has been set up yet, so everyone sounds the same. The admin adds the voices on the admin page, under Text-to-speech." }));
     const names = ["narrator", "assistant", ...bible.characters.map((c) => c.name)];
     const label = { narrator: "The narrator (the story's own voice)", assistant: "Me (Book Scribe)" };
@@ -418,6 +480,7 @@ body.dragging #dropBanner { display: flex; }
       const r = await fetch("/api/settings"); if (!r.ok) return;
       const s = await r.json();
       BS.serverPrefs = s;
+      BS.state.liveInterrupt = s.live_interrupt === "on"; BS.setLiveUI && BS.setLiveUI();
       if (s.look) { BS.applyLook(s.look, false); BS.store.set("bs_look", JSON.stringify(BS.currentLook())); }
     } catch (_) {}
   }
@@ -460,6 +523,41 @@ body.dragging #dropBanner { display: flex; }
   $("ideasClose").onclick = () => ($("ideasView").hidden = true);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("ideasView").hidden) $("ideasView").hidden = true; });
 
+  // ---- Import: one big button for getting things in ------------------------------------------------------------------------------------------
+  async function openImport() {
+    $("importView").hidden = false; msg($("impMsg"), "");
+    try {
+      const j = await call("GET", `/api/books/${enc(book())}/inbox`);
+      $("impFolder").textContent = j.folder;
+      $("impShared").textContent = j.shared_folders.length ? `I can also look for downloaded files in: ${j.shared_folders.join(", ")}.` : "No other folders are shared with me, so to find a download, choose it or drop it in the folder above.";
+      $("impWaiting").replaceChildren(...j.files.map((f) => {
+        const add = h("button", { type: "button", className: "primary", textContent: "Add" });
+        add.onclick = async () => { try { msg($("impMsg"), `Adding ${f.name}…`); const m = await call("POST", `/api/books/${enc(book())}/inbox/add`, { name: f.name }); BS.bubble("assistant", m.message); closeImport(); BS.openLibraryItem(m.slug); } catch (e) { msg($("impMsg"), e.message, true); } };
+        return h("div", { className: "lib-item" }, h("span", { className: "name", textContent: f.name }), h("span", { className: "meta", textContent: "waiting in the inbox folder" }), add);
+      }));
+    } catch (e) { msg($("impMsg"), e.message, true); }
+    setTimeout(() => $("impChoose").focus(), 50);
+  }
+  const closeImport = () => ($("importView").hidden = true);
+  $("impClose").onclick = closeImport;
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("importView").hidden) closeImport(); });
+  $("impChoose").onclick = () => $("libFile").click();
+  $("impPhoto").onclick = () => $("libCam").click();
+  $("impFind").onclick = () => { closeImport(); BS.send("I just downloaded a new file, can you find it and open it"); };
+  $("impInbox").onclick = async () => {
+    try {
+      const r = await BS.siteFetch(`/api/books/${enc(book())}/inbox/check`, { method: "POST" }); const j = await r.json();
+      closeImport();
+      if (j.text) BS.showServerReply(j); else BS.bubble("assistant", "There is nothing new in your inbox folder.");
+    } catch (_) {}
+  };
+  // every few seconds, ask whether something new landed in the inbox folder (the agent asks about it once, and never during another question)
+  setInterval(async () => {
+    if (document.hidden || !book() || BS.state.busy || !$("pending").hidden || !$("loginView").hidden || BS.state.speaking) return;
+    try { const r = await fetch(`/api/books/${enc(book())}/inbox/check`, { method: "POST" }); if (!r.ok) return; const j = await r.json(); if (j.text) BS.showServerReply(j); } catch (_) {}
+  }, 10000);
+  BS.openLibraryItem = async (slug) => { $("libView").hidden = false; $("libList").hidden = true; closeImport(); await openItem(slug, 1); };
+
   // ---- Library: add any file, find anything by meaning ---------------------------------------------------------------------------------------
   const KIND = { document: "Document", family_tree: "Family tree", database: "Database", image: "Picture", scan: "Scanned pages", audio: "Recording", text: "Text" };
   const setLibMsg = (t, bad) => msg($("libMsg"), t, bad);
@@ -468,7 +566,7 @@ body.dragging #dropBanner { display: flex; }
     if (!list.length || !book()) return;
     if (!BS.state.bookName) return;
     const note = list.length === 1 ? `Adding ${list[0].name}. Pictures and long files can take a minute.` : `Adding ${list.length} files. Pictures and long files can take a minute.`;
-    setLibMsg(note); BS.setStatus("Adding…");
+    setLibMsg(note); msg($("impMsg"), note); BS.setStatus("Adding…");
     const fd = new FormData(); list.forEach((f) => fd.append("files", f, f.name));
     try {
       const r = await BS.siteFetch(`/api/books/${enc(book())}/library`, { method: "POST", body: fd });
@@ -476,7 +574,8 @@ body.dragging #dropBanner { display: flex; }
       if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : "I could not add that. Please try again.");
       for (const it of j.items) BS.bubble("assistant", it.message);  // the one chat is where everything is reported
       setLibMsg(j.items.map((i) => i.message).join(" "), j.items.every((i) => i.error));
-      BS.setStatus("Ready");
+      BS.setStatus("Ready"); closeImport();
+      if (j.items.length === 1 && j.items[0].slug) BS.openLibraryItem(j.items[0].slug);
       if (!$("libView").hidden && $("libDetail").hidden) drawLibrary();
     } catch (e) { setLibMsg(e.message, true); BS.setStatus("Ready"); if (e.code !== "auth") BS.note(e.message); }
   }
@@ -552,6 +651,34 @@ body.dragging #dropBanner { display: flex; }
         nav.append(prev, h("span", { className: "hint", textContent: `Part ${j.part} of ${j.parts}` }), next); kids.push(nav);
       }
       if (j.people) {
+        let rootId = null, rootName = "";
+        const rootLine = h("p", { className: "hint", textContent: "The story is about: everyone in the tree (oldest first)." });
+        const sel = (id, label, def) => { const s = h("select", { id }, ...[0, 1, 2, 3, 4, 5, 6].map((n) => h("option", { value: n, textContent: n === 0 ? "None" : n === 1 ? "1 generation" : n + " generations" }))); s.value = String(def); return [h("label", { for: id, textContent: label }), s]; };
+        const [lb, back] = sel("fiBack", "How far back (parents, grandparents…)", 2), [lf, fwd] = sel("fiFwd", "How far forward (children, grandchildren…)", 2);
+        const priv = h("input", { type: "checkbox", id: "fiPriv", checked: true }); priv.style = "width:32px;height:32px";
+        const result = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+        const body = () => ({ root_id: rootId, ancestors: Number(back.value), descendants: Number(fwd.value), siblings: true, privacy: priv.checked ? "alias" : "real" });
+        const preview = h("button", { type: "button", textContent: "Show me what would be added" });
+        preview.onclick = async () => {
+          result.replaceChildren(h("p", { className: "hint", textContent: "Working it out…" }));
+          try {
+            const s = await call("POST", `/api/books/${enc(book())}/library/${enc(slug)}/wiki-plan`, body());
+            const go = h("button", { type: "button", className: "primary", textContent: "Add to the story wiki" });
+            go.onclick = async () => {
+              go.disabled = true;
+              try { const r = await call("POST", `/api/books/${enc(book())}/library/${enc(slug)}/wiki-import`, body());
+                const m = `Added ${r.characters_added} characters${r.characters_extended ? `, extended ${r.characters_extended} that were already there` : ""}, ${r.places_added} places and ${r.timeline_entries} dates to the story wiki.`;
+                result.replaceChildren(h("p", { className: "ok", textContent: m })); BS.bubble("assistant", m); } catch (e) { go.disabled = false; msg(info, e.message, true); }
+            };
+            result.replaceChildren(
+              h("p", { className: "ok", textContent: `${s.people} people (${s.new} new, ${s.existing} already in the wiki), ${s.places} ${s.places === 1 ? "place" : "places"}, ${s.timeline_entries} dates for a family timeline.` + (s.aliased ? ` ${s.aliased} living relatives get made-up names, so no real name or birthday goes into your book.` : "") + (s.truncated ? " The list was cut to keep the wiki quick; narrow the generations to choose who is included." : "") }),
+              h("p", { className: "hint", textContent: "Includes: " + s.names.slice(0, 25).map((n) => n.name).join(", ") + (s.names.length > 25 ? "…" : "") }),
+              s.sample ? h("div", { className: "lib-text", textContent: "A sample page:\n\n" + s.sample.replace(/\n\n\*\(.*\)\*$/s, "") }) : null, go);
+          } catch (e) { result.replaceChildren(h("p", { className: "err", textContent: e.message })); }
+        };
+        kids.push(h("div", { className: "sect", textContent: "Bring this family into your story wiki" }),
+          h("p", { className: "hint", textContent: "Choose the person your story is about (tap Start from here below), then how many generations. People become characters, places become world pages, and dates become a family timeline. Nothing is added until you press the blue button after the preview." }),
+          h("div", { className: "form" }, rootLine, lb, back, lf, fwd, h("label", { for: "fiPriv", style: "display:flex;gap:12px;align-items:center" }, priv, "Give living relatives made-up names (recommended)"), preview, result));
         kids.push(h("div", { className: "sect", textContent: "People in this tree" }), h("p", { className: "hint", textContent: "Tap Use as character to bring someone into your story wiki. You can ask me about anyone here." }));
         const filter = h("input", { type: "text", "aria-label": "Find a person", placeholder: "Type a name to find someone" });
         const list = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
@@ -559,9 +686,11 @@ body.dragging #dropBanner { display: flex; }
           const q = filter.value.trim().toLowerCase();
           const shown = j.people.filter((x) => !q || x.name.toLowerCase().includes(q)).slice(0, 40);
           list.replaceChildren(...shown.map((x) => {
+            const start = h("button", { type: "button", textContent: "Start from here" });
+            start.onclick = () => { rootId = x.id; rootName = x.name; document.querySelector("#libDetail .form .hint").textContent = `The story is about: ${x.name}.`; window.scrollTo(0, 0); document.getElementById("libDetail").scrollIntoView(); };
             const b = h("button", { type: "button", textContent: "Use as character" });
             b.onclick = async () => { try { const r = await call("POST", `/api/books/${enc(book())}/library/${enc(slug)}/character`, { person_id: x.id }); msg(info, `Added ${r.name} to the story wiki.`); BS.bubble("assistant", `I added ${r.name} to the story wiki as a character, with what the family tree says about them.`); } catch (e) { msg(info, e.message, true); } };
-            return h("div", { className: "lib-item" }, h("span", { className: "name", textContent: x.label }), b);
+            return h("div", { className: "lib-item" }, h("span", { className: "name", textContent: x.label }), start, b);
           }));
         };
         filter.oninput = draw; draw(); kids.push(filter, list);

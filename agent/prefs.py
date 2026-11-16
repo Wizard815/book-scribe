@@ -5,8 +5,11 @@ import json
 import threading
 from pathlib import Path
 
-FIELDS = {"writer_age": 20, "display_name": 60, "surprise": 8, "strictness": 8, "look": 400}  # name -> max length
-CHOICES = {"surprise": ("off", "low", "high"), "strictness": ("off", "gentle", "strict")}
+FIELDS = {"writer_age": 20, "display_name": 60, "surprise": 8, "strictness": 8, "look": 400, "chat_engine": 6, "listen_engine": 6, "voice_engine": 6,
+          "voice_mode": 10, "narrator_reader": 8, "live_interrupt": 4}  # name -> max length
+ENGINE = ("auto", "local", "cloud")
+CHOICES = {"surprise": ("off", "low", "high"), "strictness": ("off", "gentle", "strict"), "chat_engine": ENGINE, "listen_engine": ENGINE, "voice_engine": ENGINE,
+           "voice_mode": ("same", "separate", "characters"), "narrator_reader": ("female", "male"), "live_interrupt": ("on", "off")}
 
 
 class Prefs:

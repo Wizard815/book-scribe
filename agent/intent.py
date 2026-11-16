@@ -277,6 +277,29 @@ _CULTURES = [
 ]
 
 
+_FILE_NOUN = r"(?:file|files|pdf|pdfs|document|documents|doc|docx|spreadsheet|picture|pictures|photo|photos|image|screenshot|scan|recording|zip|gedcom|ged|family tree|tree|ftm|download|downloads)"
+_FILE_REQ = [
+    re.compile(rf"\b(?:just|recently|newly|now)\s+(?:downloaded|saved|got|received|scanned|exported|copied)\b"),
+    re.compile(rf"\b(?:find|look for|search for|locate|pull up|fetch|import|get|open|add)\b.*\b(?:my |the |a |that |this |new |latest |last )*(?:{_FILE_NOUN})\b.*\b(?:download|downloads|downloaded|computer|desktop|documents folder|folder)\b"),
+    re.compile(rf"\b(?:find|look for|search for|locate|pull up|fetch|import)\b\s+(?:me\s+)?(?:my |the |a |that |this |new |newest |latest |last )+(?:{_FILE_NOUN})\b"),
+    re.compile(rf"\bdownloaded\b.*\b{_FILE_NOUN}\b|\b{_FILE_NOUN}\b.*\bdownloaded\b"),
+]
+
+
+def file_request(text: str) -> bool:
+    """"I just downloaded a new PDF, can you open it": the writer wants a file found on the computer."""
+    n = norm(text)
+    return len(n.split()) <= 40 and any(r.search(n) for r in _FILE_REQ)
+
+
+def open_request(text: str) -> str | None:
+    """"open the harbour notes" / "show me my family tree file" -> what to open (to match against the library), else None."""
+    m = re.match(r"^\s*(?:please\s+)?(?:can you\s+|could you\s+)?(?:open|show me|show|pull up|bring up|go to)\s+(?:up\s+)?(?:the\s+|my\s+)?(.{3,60}?)\s*(?:please)?[.?!]?\s*$", norm(text))
+    if not m or re.search(r"\b(chapter|paragraph|scene|page|settings|ideas|library)\b", m.group(1)):
+        return None
+    return m.group(1)
+
+
 def ideas_request(text: str) -> dict | None:
     """{"kind", "n", "opts"} when the writer asks for random ideas (names, places, twists…), else None. Questions about names that
     already exist ("what is the name of the inn in chapter 2") are not requests for new ones."""

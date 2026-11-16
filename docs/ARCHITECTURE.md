@@ -25,6 +25,40 @@ files added to the library are transcribed the same way. The original recording 
 chat model if it can see pictures) and recordings. If a model that is needed is missing, the file is kept and marked "not read yet" with a
 Try again button, never silently dropped.
 
+## Voice and thinking are one agent
+
+* **Live talk.** One button keeps the microphone open. A small voice detector (in the page) learns how noisy the room is, records when the
+  writer speaks (with half a second of lead-in so no first word is lost), and sends the audio when they have been quiet for a moment
+  (1 to 2 seconds, their choice). The reply is spoken, then listening resumes. Optionally the writer can talk over the agent to
+  interrupt (best with headphones); the next turn is then marked "interrupted" so the agent does not repeat itself.
+* **The two halves know about each other.** A message that arrived by voice tells the model its reply will be spoken (short, no lists or
+  markdown). The speech-to-text server is given the names in the book so it spells them right. The voice side knows who is speaking:
+  the agent, a narrator, or a character, and the same agent can change its own voices when asked.
+* **Three voices.** The writer chooses: one voice for everything; or three (the agent, a woman reader, a man reader: women in the story are
+  read by the woman reader, men by the man reader, narration by whichever the writer picks); or the original "each character has their own voice".
+* **Local or cloud, per job.** Thinking, listening and speaking each have Automatic (own machines first, cloud only if they fail), On my
+  computers only (nothing is ever sent to the cloud tier) or Cloud (cloud first, local as the fallback).
+
+## Getting files in
+
+1. **Import button** (main screen), the Add file / camera buttons, or drag files onto the page. Up to 200 MB each.
+2. **Inbox folder.** `data/books/<book>/inbox/`: drop files in from the computer. The page asks the server every 10 seconds; a new file
+   (once it has stopped changing, so a half-copied file is left alone) is offered once with a big Yes / No, then moved to `inbox/added/`.
+3. **Find a file.** "I just downloaded a new PDF, can you open it": the agent searches the inbox and the folders the administrator shared
+   (`FILE_SEARCH_DIRS`, for example Downloads mounted read-only). It lists only names, sizes and dates, asks "Is that the one?", moves on to
+   the next match when told no, and only after yes copies the file into the library and opens it. The model sees short ids, never paths.
+
+A Cloudflare tunnel on a free plan limits one upload to 100 MB. For bigger files use the inbox folder, which does not go through the tunnel.
+
+## Family trees into the story bible
+
+`bible_import.py`. Pick the person the story is about, how many generations back and forward, and whether living relatives get made-up
+names. A preview shows how many characters, places and timeline dates would be added, and nothing is written until the writer confirms
+(button, or yes to the agent's proposal). Characters get facts and a life story; places become world pages; dates become a family timeline
+section that is replaced, never duplicated, on re-import. Existing pages keep everything they had. Living people (no death recorded and
+probably born in the last 105 years) get a made-up name, a decade instead of a birthdate, and none of their notes; the real name is kept
+only in the library (`aliases.json`).
+
 ## One turn, step by step
 
 1. **Hear.** Voice goes to the speech-to-text backend; typed text arrives as-is.

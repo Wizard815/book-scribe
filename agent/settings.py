@@ -35,6 +35,8 @@ class Settings:
     tts_mode: str = "single"  # single | multi
     voice_profile: dict = field(default_factory=dict)
     context_chars: int = 9000  # recent conversation kept word for word; older turns are folded into a summary
+    search_dirs: list[str] = field(default_factory=list)  # folders shared with the file finder (FILE_SEARCH_DIRS), read-only
+    host_books_path: str = ""  # where the books folder is on the writer's computer, shown beside the inbox folder (HOST_BOOKS_PATH)
     addons_dir: str | None = None  # folder of the administrator's addon .py files (see addons.py)
     index_debounce: float = 15.0  # seconds to wait after a save before updating the embedding index
     # reading aloud
@@ -73,6 +75,8 @@ def load_settings(config_path: str | None = None) -> Settings:
         writer_password=os.getenv("WRITER_PASSWORD", ""),
         trust_proxy=os.getenv("TRUST_PROXY", "").lower() in ("1", "true", "yes"),
         addons_dir=os.getenv("ADDONS_DIR") or None,
+        host_books_path=os.getenv("HOST_BOOKS_PATH", "").rstrip("/\\"),
+        search_dirs=[d for d in os.getenv("FILE_SEARCH_DIRS", "").split(os.pathsep) if d.strip()],
     )
     if os.getenv("CONTEXT_CHARS", "").isdigit():
         s.context_chars = max(2000, int(os.environ["CONTEXT_CHARS"]))

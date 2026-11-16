@@ -377,4 +377,11 @@ How the agent and the chat fit together: see [docs/ARCHITECTURE.md](docs/ARCHITE
 * **Family trees.** GEDCOM (`.ged`, from Family Tree Maker 2017-2026, Ancestry, MyHeritage, FamilySearch, RootsMagic, Legacy...), Gramps, and FTM
   backups. Ask about anyone, or turn a person into a story character. Raw `.ftm` files are only read as plain tables: export GEDCOM for the
   full tree, or write an addon. See [docs/ADDONS.md](docs/ADDONS.md).
+* **Import button, inbox folder, find-a-file.** Add files from the main screen, drop them in `data/books/<book>/inbox` (the agent notices
+  and asks), or say "I just downloaded a PDF, can you open it" (needs `FILE_SEARCH_DIRS`; see docker-compose.yml). Files up to 200 MB.
+* **Family tree to story bible.** Choose the person, the generations and privacy, preview, then add: characters, places and a timeline.
+  Family Tree Maker: export GEDCOM for a sure result; `.ftm` / `.ftmb` are also read directly on a best-effort basis (unverified against
+  every version).
+* **Live talk and three voices.** One button for a hands-free conversation; choose one voice, or the agent plus a woman reader and a man
+  reader; choose local, cloud or automatic for thinking, listening and speaking. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 * **Addons.** Your own Python files (`ADDONS_DIR`) can add file readers and read-only tools for the model.

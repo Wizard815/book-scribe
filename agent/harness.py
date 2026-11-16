@@ -30,6 +30,7 @@ class Ctx:
     highlights: list[str] = field(default_factory=list)  # paragraph ids to light up in the book
     ui: dict | None = None  # the new look, if the model changed the screen
     ideas: list[str] = field(default_factory=list)  # generated options the UI can show as tap-to-use buttons
+    open_item: dict | None = None  # a library file to open on the writer's screen: {"slug", "title"}
     calls: list[str] = field(default_factory=list)  # tool names used, for the admin trace
     llm_calls: int = 0  # extra model calls spent by tools such as brainstorm
     llm_budget: int = 4

@@ -25,7 +25,8 @@ PROTECTED = [("GET", "/api/books"), ("GET", "/api/books/demo/chapters"), ("GET",
              ("GET", "/api/books/demo/graph"), ("POST", "/api/chat"), ("POST", "/api/tts"), ("POST", "/api/transcribe"), ("POST", "/api/voice"),
              ("PUT", "/api/books/demo/paragraphs/ch1_s1_p1"), ("POST", "/api/account/password"),
              ("GET", "/api/books/demo/library"), ("POST", "/api/books/demo/library"), ("GET", "/api/books/demo/library/x"), ("GET", "/api/books/demo/library/x/file"),
-             ("DELETE", "/api/books/demo/library/x"), ("GET", "/api/books/demo/memory/search"), ("GET", "/api/books/demo/chat"), ("POST", "/api/books/demo/chat/clear")]
+             ("DELETE", "/api/books/demo/library/x"), ("GET", "/api/books/demo/inbox"), ("POST", "/api/books/demo/inbox/check"), ("POST", "/api/books/demo/inbox/add"),
+             ("GET", "/api/books/demo/voice-roles"), ("PUT", "/api/books/demo/voice-roles/male"), ("POST", "/api/books/demo/library/x/wiki-plan"), ("POST", "/api/books/demo/library/x/wiki-import"), ("GET", "/api/books/demo/memory/search"), ("GET", "/api/books/demo/chat"), ("POST", "/api/books/demo/chat/clear")]
 
 
 @pytest.mark.parametrize("method,path", PROTECTED)

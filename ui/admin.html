@@ -286,6 +286,7 @@ label { display: block; margin: 8px 0; color: var(--muted); font-weight: 700; }
         mem.error ? h("dt", { textContent: "Why not mem0" }) : null, mem.error ? h("dd", { className: "err", textContent: mem.error }) : null),
       h("p", { className: "hint", textContent: "mem0 remembers what the writer likes and where new writing drifted from the story bible. It needs a working chat model and embedding server." }),
       h("h2", { textContent: "Addons", style: "margin-top:22px" }),
+      h("p", { className: "hint", textContent: (addon.search_dirs && addon.search_dirs.length ? "Folders shared with the file finder (read-only): " + addon.search_dirs.join(", ") : "No folders are shared with the file finder, so it can only look in each book's inbox folder. To let it find downloads, mount your Downloads folder read-only into the container and set FILE_SEARCH_DIRS in .env.") }),
       addon.directory ? h("dl", { className: "kv" }, h("dt", { textContent: "Folder" }), h("dd", { textContent: addon.directory }),
         h("dt", { textContent: "Loaded" }), h("dd", { textContent: addon.loaded.length ? addon.loaded.map((a) => a.ok ? `${a.name} (ok)` : `${a.name}: ${a.error}`).join("; ") : "none" }),
         h("dt", { textContent: "File types added" }), h("dd", { textContent: addon.readers.map((r) => `${r.extensions.join(" ")} by ${r.addon}`).join("; ") || "none" }),
