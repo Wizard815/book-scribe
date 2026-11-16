@@ -401,3 +401,84 @@ async def test_the_speech_model_gets_the_names_as_a_hint_and_a_spoken_turn_asks_
     assert "cut off your last reply" in llm.calls[-1][0]["content"]
     await ag.handle("s", "and what about the morning platform and the early train", via="typed")
     assert "TALKING TO YOU OUT LOUD" not in llm.calls[-1][0]["content"]
+
+
+# ------------------------------------------------------------------------------------------------------------------ undo
+def test_every_saved_change_can_be_undone_in_order(books):
+    store = BookStore(books)
+    first = store.read_chapter_raw("demo", 1)
+    store.replace_paragraph("demo", "ch1_s1_p2", "Changed once.")
+    store.append_paragraph("demo", 1, "Added later.", scene=2)
+    assert "Added later." in store.read_chapter_raw("demo", 1)
+    assert store.undo_last("demo") == {"chapter": 1, "what": "append", "paragraph": "ch1_s2_p2"} and "Added later." not in store.read_chapter_raw("demo", 1)
+    assert "Changed once." in store.read_chapter_raw("demo", 1)
+    assert store.undo_last("demo")["what"] == "edit" and store.read_chapter_raw("demo", 1) == first  # byte for byte as it was
+    assert store.undo_last("demo") is None
+
+
+def test_undo_refuses_to_throw_away_work_done_outside_the_app(books):
+    from book_store import BookError
+    store = BookStore(books)
+    store.replace_paragraph("demo", "ch1_s1_p1", "Edited in the app.")
+    p = store.chapter_path("demo", 1); p.write_text(p.read_text() + "\nA line the writer typed in Notepad.\n")
+    with pytest.raises(BookError) as e:
+        store.undo_last("demo")
+    assert "outside Book Scribe" in str(e.value) and "Notepad" in p.read_text()  # nothing was lost
+
+
+def test_undo_survives_damaged_history_files(books):
+    store = BookStore(books)
+    store.replace_paragraph("demo", "ch1_s1_p1", "X.")
+    h = store.book_dir("demo") / "history"
+    (h / "log.jsonl").write_text("{broken\n" + (h / "log.jsonl").read_text())
+    assert store.undo_last("demo")["what"] == "edit"  # a damaged line is skipped; undo still works
+    store.replace_paragraph("demo", "ch1_s1_p1", "Y.")
+    for f in h.glob("*.md"):
+        f.unlink()
+    assert store.undo_last("demo") is None
+
+
+@pytest.mark.asyncio
+async def test_undo_that_by_voice(books):
+    ag, store, _ = make(books)
+    before = store.read_chapter_raw("demo", 1)
+    r = await ag.handle("s", "undo that"); assert r.text == "There is nothing to undo."
+    store.replace_paragraph("demo", "ch1_s1_p2", "Rewritten by the agent.")
+    r = await ag.handle("s", "oh, put it back")
+    assert "took back" in r.text and store.read_chapter_raw("demo", 1) == before and r.chapter == 1
+    store.append_paragraph("demo", 1, "New paragraph.")
+    r = await ag.handle("s", "can you undo the last change please"); assert "paragraph I just added" in r.text and "New paragraph." not in store.read_chapter_raw("demo", 1)
+    # a proposal that is still waiting is simply dropped, and nothing saved is touched
+    store.replace_paragraph("demo", "ch1_s1_p1", "Saved edit.")
+    await ag.handle("s", "rewrite chapter 1 paragraph 2 to be more tense"); assert ag.session("s").pending
+    r = await ag.handle("s", "undo that")
+    assert "dropped" in r.text and ag.session("s").pending is None and "Saved edit." in store.read_chapter_raw("demo", 1)
+    for not_undo in ["undo the damage to the kingdom in chapter two", "I want to undo the knot in the story", "tell me about the undone sword"]:
+        assert not __import__("intent").undo_request(not_undo), not_undo
+
+
+# ------------------------------------------------------------------------------------------------- names that fit the book
+def test_names_fit_the_setting_of_the_book(books):
+    from ideas import Ideas, cultures_for
+    assert cultures_for("A tale of King Arthur and Excalibur") == ["welsh", "english"] and cultures_for("Viking raiders") == ["norse"] and cultures_for("nothing special") == []
+    import ideas_data as D
+    welsh_english = {w for c in ("welsh", "english") for k in ("female", "male") for w in D.NAMES[c][k]}
+    welsh_english_family = {w for c in ("welsh", "english") for w in D.NAMES[c]["family"]}
+    names = Ideas(seed=3).generate("name", 12, fits=["welsh", "english"], gender="male")
+    assert all(n.split()[0] in welsh_english and n.split()[-1] in welsh_english_family for n in names)
+    assert any(n.split()[0] not in welsh_english for n in Ideas(seed=3).generate("name", 12))  # without a setting it is a mix of cultures
+    assert Ideas(seed=1).generate("name", 3, fits=["welsh"], culture="japanese")  # an explicit culture still wins
+    import intent
+    assert intent.ideas_request("give me a name for a young knight")["opts"]["gender"] == "male" and intent.ideas_request("give me a name for the abbess, a nun")["opts"]["gender"] == "female"
+
+
+@pytest.mark.asyncio
+async def test_asking_for_names_in_an_arthurian_book_gives_arthurian_names(books):
+    import ideas_data as D
+    ag, store, _ = make(books)
+    store.bible("demo").write_doc("premise", "# Premise\n\nOld Sir Bedivere carries Excalibur to the lake after Camlann.")
+    fit = {w for c in ("welsh", "english") for k in ("female", "male") for w in D.NAMES[c][k]}
+    r = await ag.handle("s", "give me a name idea for a young knight")
+    assert r.ideas and all(i.split()[0] in fit for i in r.ideas), r.ideas
+    r = await ag.handle("s", "give me three japanese names")
+    assert all(i.split()[0] not in fit for i in r.ideas)

@@ -186,6 +186,9 @@ class Agent:
         if not text:
             return self._reply(sess, "I didn't catch that. Try again.")
 
+        if sess.pending and intent.undo_request(text) and sess.pending.kind not in ("voice",):  # "undo that" while a proposal waits: drop the proposal
+            sess.pending = None
+            return self._reply(sess, "Okay, I dropped that. Nothing in your book was changed.")
         # Answers to a pending proposal come first, so "okay" confirms rather than being discarded as noise.
         if sess.pending and sess.pending.kind == "file":
             done = await self._file_pending(sess, text)
@@ -232,6 +235,8 @@ class Agent:
             return r
         if (req := intent.ideas_request(text)) is not None:
             return self._ideas_reply(sess, req)
+        if intent.undo_request(text):
+            return self._undo_reply(sess)
         if (what := intent.open_request(text)) and (r := self._open_reply(sess, what)):  # "open the harbour notes"
             return r
         if intent.file_request(text):  # "I just downloaded a new PDF, can you open it"
@@ -281,6 +286,23 @@ class Agent:
             return None
         r = self._reply(sess, f"Opening {best['title']}.")
         r.open_item = {"slug": best["slug"], "title": best["title"]}
+        return r
+
+    def _undo_reply(self, sess: Session) -> Reply:
+        """Put the book back as it was before the last saved change."""
+        try:
+            done = self.store.undo_last(sess.book)
+        except BookError as e:
+            return self._reply(sess, str(e))
+        if not done:
+            return self._reply(sess, "There is nothing to undo.")
+        sess.chapter, sess.focus = done["chapter"], done["paragraph"] if done["what"] == "edit" else None
+        self.kg.refresh(sess.book)
+        if self.index:
+            self.index.schedule(sess.book)
+        what = "the change I just saved" if done["what"] == "edit" else "the paragraph I just added"
+        r = self._reply(sess, f"Done. I took back {what}. Chapter {done['chapter']} is as it was before.")
+        r.changed = [done["paragraph"]] if done["what"] == "edit" and done["paragraph"] else []
         return r
 
     def _describe_found(self, f) -> str:
@@ -385,11 +407,22 @@ class Agent:
         r.ui = look
         return r
 
+    def _setting_cultures(self, book: str) -> list[str]:
+        """Name cultures that fit this book's own setting, read from its premise, wiki and opening pages."""
+        try:
+            b = self.store.bible(book)
+            bits = [b.read("premise")] + [f"{e.name} {e.summary()}" for k in ("characters", "world") for e in list(b.entries(k).values())[:40]]
+            bits += [p.text for p in self.store.all_paragraphs(book)[:12]]
+        except Exception:
+            return []
+        from ideas import cultures_for
+        return cultures_for(" ".join(bits)[:20000])
+
     def _ideas_reply(self, sess: Session, req: dict) -> Reply:
         if req.get("repeat"):
             req = sess.last_ideas or {"kind": "name", "n": 5, "opts": {}}
         sess.last_ideas = req
-        items = self.ideas.generate(req["kind"], req["n"], **req["opts"])
+        items = self.ideas.generate(req["kind"], req["n"], fits=self._setting_cultures(sess.book), **req["opts"])
         label = KINDS[req["kind"]]["label"].lower()
         if len(items) == 1:
             say = items[0]

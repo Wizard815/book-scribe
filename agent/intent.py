@@ -286,6 +286,15 @@ _FILE_REQ = [
 ]
 
 
+_UNDO = re.compile(r"^(?:please |ok |okay |no |oh |hey )*(?:can you |could you )?(?:undo|revert|put (?:it|that|them) back|take (?:it|that) back|go back to (?:how|what) it was|change it back|bring (?:it|that) back)(?: that| it| the last (?:change|edit|one)| my last (?:change|edit)| please)*[.!?]?$")
+
+
+def undo_request(text: str) -> bool:
+    """"undo that", "put it back", "take that back": the writer wants the last saved change reversed."""
+    n = norm(text)
+    return len(n.split()) <= 9 and bool(_UNDO.match(n))
+
+
 def file_request(text: str) -> bool:
     """"I just downloaded a new PDF, can you open it": the writer wants a file found on the computer."""
     n = norm(text)
@@ -318,9 +327,9 @@ def ideas_request(text: str) -> dict | None:
         return None
     opts: dict = {}
     if kind in ("name", "character"):
-        if re.search(r"\b(?:girl|woman|female|lady|she|her|mother|daughter|sister|queen|wife|aunt|heroine)\b", n):
+        if re.search(r"\b(?:girl|woman|female|lady|she|her|mother|daughter|sister|queen|wife|aunt|heroine|princess|nun|maiden)\b", n):
             opts["gender"] = "female"
-        elif re.search(r"\b(?:boy|man|male|gentleman|he|him|father|son|brother|king|husband|uncle|hero)\b", n):
+        elif re.search(r"\b(?:boy|man|male|gentleman|he|him|father|son|brother|king|husband|uncle|hero|knight|sir|lord|prince|squire|monk|priest)\b", n):
             opts["gender"] = "male"
         for word, culture in _CULTURES:
             if re.search(rf"\b{word}\b", n):

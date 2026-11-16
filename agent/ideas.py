@@ -36,6 +36,32 @@ KINDS: dict[str, dict] = {
 }
 
 
+# What a book's own words say about where and when it is set -> the name cultures that fit. First match wins; no match means "any".
+SETTING_HINTS: list[tuple[str, list[str]]] = [
+    (r"\b(?:arthur|camelot|round table|merlin|excalibur|avalon|guinevere|lancelot|bedivere|gawain|morgan le fay|lady of the lake|uther|cornwall|knights? of)\b", ["welsh", "english"]),
+    (r"\b(?:viking|norse|odin|thor|jarl|valhalla|longship|asgard)\b", ["norse"]),
+    (r"\b(?:samurai|shogun|ronin|edo|kyoto|daimyo|katana)\b", ["japanese"]),
+    (r"\b(?:ireland|irish|dublin|cork|galway|gaelic)\b", ["irish"]),
+    (r"\b(?:scotland|scottish|highlands|edinburgh|clan)\b", ["scottish"]),
+    (r"\b(?:victorian|regency|london|england|english|yorkshire|manor|duke|earl)\b", ["english"]),
+    (r"\b(?:paris|france|french|napoleon|versailles)\b", ["french"]),
+    (r"\b(?:roman|rome|caesar|legion|italy|florence|venice)\b", ["italian"]),
+    (r"\b(?:athens|sparta|greek|zeus|olympus|troy)\b", ["greek"]),
+    (r"\b(?:russia|russian|tsar|moscow|siberia)\b", ["russian"]),
+    (r"\b(?:china|chinese|dynasty|emperor of china|beijing)\b", ["chinese"]),
+    (r"\b(?:baghdad|cairo|arabian|sultan|caliph|bedouin|damascus)\b", ["arabic"]),
+]
+
+
+def cultures_for(text: str) -> list[str]:
+    """Name cultures that fit a story, from its own text (premise, wiki, opening pages). [] when it gives no clue."""
+    low = (text or "").lower()
+    for rx, cultures in SETTING_HINTS:
+        if re.search(rx, low):
+            return cultures
+    return []
+
+
 class Ideas:
     """Generators with a short memory so a session never hears the same answer twice in a row."""
 
@@ -93,12 +119,16 @@ class Ideas:
                            "occupation": D.OCCUPATIONS, "quirk": D.QUIRKS, "constraint": D.CONSTRAINTS}[kind])
 
     # --- public ----------------------------------------------------------------------------------------------------------------
-    def generate(self, kind: str, n: int = 5, **opts) -> list[str]:
+    def generate(self, kind: str, n: int = 5, fits: list[str] | None = None, **opts) -> list[str]:
         if kind not in KINDS:
             raise ValueError(f"unknown kind {kind!r}; choose from {', '.join(KINDS)}")
         n = max(1, min(int(n), 12))
         allowed = KINDS[kind]["options"]
         opts = {k: v for k, v in opts.items() if k in allowed and v in allowed[k]}
+        fits = [c for c in (fits or []) if c in CULTURES]
+        if fits and kind in ("name", "character") and opts.get("culture", "any") == "any":  # the book's own setting beats pure chance
+            make_fit = {"name": lambda: self.name(self.rng.choice(fits), opts.get("gender", "any")), "character": lambda: self.character(self.rng.choice(fits), opts.get("gender", "any"))}[kind]
+            return [self._fresh(make_fit) for _ in range(n)]
         make = {
             "name": lambda: self.name(**opts), "place": lambda: self.place(**opts), "character": lambda: self.character(**opts),
             "title": self.title,

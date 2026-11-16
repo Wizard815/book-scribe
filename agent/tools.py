@@ -49,7 +49,7 @@ def build(agent) -> Toolbox:
     async def random_ideas(ctx: Ctx, kind="name", n=5, culture="any", gender="any", type="village"):
         if kind not in KINDS:
             return f"Unknown kind {kind!r}. Kinds: {', '.join(KINDS)}."
-        out = agent.ideas.generate(kind, _int(n, 5, 1, 12), culture=culture, gender=gender, type=type)
+        out = agent.ideas.generate(kind, _int(n, 5, 1, 12), fits=agent._setting_cultures(book(ctx)), culture=culture, gender=gender, type=type)
         ctx.ideas = out
         return out
 
