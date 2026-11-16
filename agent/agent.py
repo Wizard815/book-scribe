@@ -59,6 +59,8 @@ class Session:
     voice_focus: str | None = None  # whose voice "make it deeper" / "his voice" refers to
     recent_speakers: list[str] = field(default_factory=list)
     last_ideas: dict | None = None  # the last random-idea request, so "more" can repeat it
+    summary: str = ""  # rolling summary of everything folded out of working memory (the full record lives in the journal)
+    compacting: bool = False
 
 
 @dataclass
@@ -77,9 +79,10 @@ class Reply:
 
 
 class Agent:
-    def __init__(self, s: Settings, store: BookStore, llm: LLM, memory, kg: StoryKG, graph=None, check_drift: bool = False, voices=None, prefs=None, index=None):
+    def __init__(self, s: Settings, store: BookStore, llm: LLM, memory, kg: StoryKG, graph=None, check_drift: bool = False, voices=None, prefs=None, index=None, journal=None, library=None, addons=None):
         self.s, self.store, self.llm, self.memory, self.kg = s, store, llm, memory, kg
         self.graph, self.check_drift, self.voices, self.prefs, self.index = graph, check_drift, voices, prefs, index
+        self.journal, self.library, self.addons = journal, library, addons  # long-term record, imported files, administrator addons
         self._speaker_cache: dict[str, list[str | None]] = {}
         self.sessions: dict[str, Session] = {}
         self._bg: set[asyncio.Task] = set()
@@ -119,17 +122,40 @@ class Agent:
             out.append({"id": p.id, "chapter": p.chapter, "label": self._where(sess, p)})
         return out
 
-    def session(self, sid: str, book: str | None = None) -> Session:
+    def session(self, sid: str = "", book: str | None = None) -> Session:
+        """There is ONE conversation per book: the writer never starts a "new chat", and `sid` (kept for older clients) is ignored.
+        A fresh server picks the conversation up from the journal: the rolling summary plus the latest turns."""
         book = book or self.s.default_book
-        sess = self.sessions.get(sid)
-        if not sess or sess.book != book:
+        sess = self.sessions.get(book)
+        if not sess:
             self.store.ensure_book(book)
             nums = self.store.chapter_numbers(book)
-            sess = self.sessions[sid] = Session(book=book, chapter=nums[0] if nums else 1)
+            sess = self.sessions[book] = Session(book=book, chapter=nums[0] if nums else 1)
+            if self.journal:
+                sess.summary = self.journal.summary(book)
+                sess.history = [{"role": r["role"], "content": r["text"]} for r in self.journal.recent(book, 30) if r["role"] in ("user", "assistant")]
+                sess.history = self._window(sess)
         return sess
 
     # ------------------------------------------------------------------
-    async def handle(self, sid: str, user_text: str, book: str | None = None) -> Reply:
+    async def handle(self, sid: str, user_text: str, book: str | None = None, via: str = "typed") -> Reply:
+        """One turn. Everything said is written to the journal (so nothing is ever lost when working memory is trimmed)."""
+        reply = await self._handle(sid, user_text, book)
+        if self.journal and reply.text and user_text.strip():
+            sess = self.session(sid, book)
+            self.journal.append(sess.book, "user", user_text, via)
+            self.journal.append(sess.book, "assistant", reply.text[:1200])
+            if self.index:
+                self.index.schedule(sess.book)
+            self._spawn(self._compact(sess))
+        return reply
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+
+    async def _handle(self, sid: str, user_text: str, book: str | None = None) -> Reply:
         sess = self.session(sid, book)
         self.kg.refresh(sess.book)
         text = user_text.strip()
@@ -351,7 +377,7 @@ class Agent:
         return {"off": 0.7, "low": 0.8, "high": 1.0}.get(self._pref("surprise", "low"), 0.8)
 
     def _context(self, sess: Session, text: str, extra: str = "", target: Paragraph | None = None, canon: str = "",
-                 sparks: list[str] | None = None, tools: bool = False) -> list[dict]:
+                 sparks: list[str] | None = None, tools: bool = False, recall: str = "") -> list[dict]:
         prefs = self.memory.search(text, limit=6)
         sys = [SYSTEM, MODES[sess.mode]]
         age = (self.prefs.get("writer_age") if self.prefs else "") or self.s.writer_age
@@ -364,17 +390,24 @@ class Agent:
             sys.append("STORY BIBLE (canon; never contradict):\n" + bible)
         if canon:
             sys.append(canon)
+        if sess.summary:
+            sys.append("EARLIER IN THIS LONG CONVERSATION (a summary; the full record can be searched with the recall tool):\n" + sess.summary)
+        if recall:
+            sys.append(recall)
         if sparks:
             sys.append("OPTIONAL SPARKS (random seeds; use at most one, only if it makes the writing better, and ignore the rest):\n- " + "\n- ".join(sparks))
         if tools:
-            sys.append(harness.TOOLS_PROMPT.replace("{tools}", self.toolbox.describe()))  # replace, not format: the prompt has literal braces
+            sys.append(harness.TOOLS_PROMPT.replace("{tools}", self.toolbox.describe()))
+            skills = tools_mod.skills_prompt(self)
+            if skills:
+                sys.append(skills)  # replace, not format: the prompt has literal braces
         rel = self.graph.context_for(sess.book, text + " " + extra) if self.graph else ""
         if rel:
             sys.append("STORY GRAPH (EXTRACTED = stated in the text, INFERRED = a guess):\n" + rel)
         ms = self._manuscript(sess, target)
         if ms:
             sys.append("MANUSCRIPT AROUND THE WORK (for continuity; do not repeat it):\n" + ms)
-        return [{"role": "system", "content": "\n\n".join(sys)}] + sess.history[-10:]
+        return [{"role": "system", "content": "\n\n".join(sys)}] + self._window(sess)
 
     async def _gated(self, messages: list[dict], ctx: "harness.Ctx | None" = None, tools: bool = False) -> tuple[str, list[str]]:
         strict, limit = self._pref("strictness", "gentle"), self._max_sentence()
@@ -407,16 +440,102 @@ class Agent:
             self.traces.append({"at": int(time.time()), "tools": ctx.calls, "highlighted": len(reply.highlights)})
         return reply
 
+    # --- working memory: a window of recent turns, a rolling summary, and the journal behind them ----------------------------
+    def _window(self, sess: Session) -> list[dict]:
+        """The newest turns that fit the context budget (and begin with the writer, as chat models expect)."""
+        out, size = [], 0
+        for m in reversed(sess.history):
+            if size + len(m["content"]) > self.s.context_chars and len(out) >= 2:
+                break
+            out.insert(0, m)
+            size += len(m["content"])
+        while out and out[0]["role"] != "user":
+            out.pop(0)
+        return out
+
+    async def _compact(self, sess: Session, force: bool = False) -> None:
+        """Fold the oldest turns into the rolling summary once working memory outgrows its budget. The writer never notices: the turns stay
+        in the journal, and the recall tool and meaning-search can bring any of them back."""
+        budget = self.s.context_chars
+        size = sum(len(m["content"]) for m in sess.history)
+        if sess.compacting or not sess.history or (not force and size <= budget * 1.4):
+            return
+        sess.compacting = True
+        try:
+            count = len(sess.history)
+            keep: list[dict] = []
+            if not force:
+                used = 0
+                for m in reversed(sess.history):
+                    if used + len(m["content"]) > budget * 0.6 and len(keep) >= 2:
+                        break
+                    keep.insert(0, m)
+                    used += len(m["content"])
+                while keep and keep[0]["role"] != "user":
+                    keep.pop(0)
+            old = sess.history[: count - len(keep)]
+            if not old:
+                return
+            sess.summary = await self._summarise(sess.summary, old)
+            if self.journal:
+                self.journal.set_summary(sess.book, sess.summary)
+            sess.history = keep + sess.history[count:]  # turns that arrived while the summary was being written stay
+        finally:
+            sess.compacting = False
+
+    async def _summarise(self, previous: str, turns: list[dict]) -> str:
+        convo = "\n".join(f"{'Writer' if m['role'] == 'user' else 'Co-writer'}: {m['content'][:700]}" for m in turns)
+        try:
+            return (await self.llm.chat([
+                {"role": "system", "content": "You keep the running memory of a long conversation between a writer and their AI co-writer. Reply with only the updated summary."},
+                {"role": "user", "content": f"CURRENT SUMMARY:\n{previous or '(none yet)'}\n\nNEW CONVERSATION TO FOLD IN:\n{convo}\n\n"
+                 "Write the updated summary in under 250 words. Keep: decisions made, facts about the story and its people, the writer's preferences, "
+                 "ideas still open, and what they were working on. Drop small talk."}], temperature=0.2, max_tokens=500)).strip()[:3000]
+        except Exception:  # no model right now: keep something rather than let memory grow without bound
+            bits = [m["content"][:110].replace("\n", " ") for m in turns if m["role"] == "user"]
+            return ((previous + " | " if previous else "") + "Earlier the writer said: " + "; ".join(bits))[-1800:]
+
+    async def clear_chat(self, book: str | None = None) -> None:
+        """The writer's Clear button: empties the screen and working memory, but folds it into the summary first, so the agent still remembers."""
+        sess = self.session("", book)
+        await self._compact(sess, force=True)
+        sess.history, sess.pending = [], None
+        if self.journal:
+            self.journal.clear_screen(sess.book)
+
+    _MEMORY_ASK = re.compile(r"\b(remember|remind|earlier|before|last (time|week|month|year)|ages ago|a while ago|back when|i (said|mentioned|told)|you (said|mentioned|told)|forgot|forgotten|what was (that|the)|did (i|we)|we (talked|discussed|decided))\b", re.I)
+
+    async def _recall(self, sess: Session, text: str) -> str:
+        """Older conversation and library passages that are close in meaning to what the writer just said ("that old lighthouse I described")."""
+        if not (self.journal or self.library) or len(text.split()) < 4:
+            return ""
+        b, found = sess.book, []
+        if self.index and self.index.status(b)["ready"]:
+            try:
+                hits = await self.index.search(b, text, k=6, scope="mem|lib")
+            except Exception:
+                hits = []
+            floor = max(0.3, hits[0][1] * 0.88) if hits else 1.0
+            docs = {**(self.journal.chunks(b) if self.journal else {}), **(self.library.chunks(b) if self.library else {})}
+            found = [docs[k] for k, s in hits if s >= floor and k in docs][:4]
+        elif self._MEMORY_ASK.search(text):
+            found = [x for _, x in (self.journal.search_words(b, text, 3) if self.journal else []) + (self.library.search_words(b, text, 2) if self.library else [])]
+        recent = [m["content"][:60] for m in sess.history[-6:]]
+        found = [f for f in found if not any(r and r in f for r in recent)]  # skip what is already in the visible conversation
+        if not found:
+            return ""
+        return "FROM EARLIER CONVERSATIONS AND THE LIBRARY (may or may not matter; use only if it does, and say where it came from):\n- " + "\n- ".join(f[:450] for f in found)
+
     def _remember(self, sess: Session, user: str, assistant: str) -> None:
         sess.history += [{"role": "user", "content": user}, {"role": "assistant", "content": assistant}]
-        del sess.history[:-12]
+        del sess.history[:-60]  # compaction (below) normally trims far sooner; this is only a hard ceiling
 
     # --- flows -----------------------------------------------------------
     async def _converse(self, sess: Session, text: str) -> Reply:
         sess.history.append({"role": "user", "content": text})
         ctx = harness.Ctx(sess=sess)
         canon = await self._canon_by_meaning(sess, text)
-        msgs = self._context(sess, text, canon=canon, sparks=self._sparks(sess, text), tools=True)
+        msgs = self._context(sess, text, canon=canon, sparks=self._sparks(sess, text), tools=True, recall=await self._recall(sess, text))
         out, _ = await harness.run(self.llm, msgs, self.toolbox, ctx, max_steps=3, temperature=self._temperature())
         out = out or "I'm not sure what to say to that. Could you tell me a little more?"
         sess.history.append({"role": "assistant", "content": out})
@@ -467,6 +586,11 @@ class Agent:
     async def _revise(self, sess: Session, instruction: str) -> Reply:
         """The writer answered a proposal with changes ("yes but shorter", "no, make it longer"): redo it, don't save or drop."""
         p = sess.pending
+        if p.kind == "wiki":
+            new = (await self.llm.chat([{"role": "system", "content": "Rewrite the note for a story wiki. Plain facts, at most 80 words. Output only the note."},
+                                        {"role": "user", "content": f"NOTE:\n{p.text}\n\nChange requested: {instruction}"}], temperature=0.3, max_tokens=250)).strip()
+            p.text = new or p.text
+            return self._reply(sess, f"Revised: {p.text} Should I save it to the wiki?")
         if p.kind == "edit":
             orig = self.store.find(sess.book, p.paragraph_id)
             msgs = self._context(sess, instruction, orig.text, orig) + [{"role": "user", "content":
@@ -483,10 +607,27 @@ class Agent:
         return reply
 
     async def _accept(self, sess: Session) -> Reply:
+        if sess.pending.kind == "wiki":
+            return self._commit_wiki(sess)
         if sess.pending.kind == "confirm_target":
             p, sess.pending = sess.pending, None
             return await self._propose_edit(sess, p.text, target=self.store.find(sess.book, p.paragraph_id), sure=True)
         return self._commit(sess)
+
+    def _commit_wiki(self, sess: Session) -> Reply:
+        """Save a note the model proposed for the story wiki, after the writer said yes. The note is appended; nothing is overwritten."""
+        p, sess.pending = sess.pending, None
+        d = p.data or {}
+        try:
+            bible = self.store.bible(sess.book)
+            old = next((e for e in bible.entries(d["kind"]).values() if e.name.lower() == d["name"].lower()), None)
+            body = ((old.body.strip() + "\n\n") if old and old.body.strip() else "") + p.text
+            bible.upsert(d["kind"], old.name if old else d["name"], None, body)
+        except Exception as e:
+            return self._reply(sess, f"I couldn't save that: {e}")
+        if self.index:
+            self.index.schedule(sess.book)
+        return self._reply(sess, f"Saved to the wiki under {d['name']}.")
 
     def _commit(self, sess: Session) -> Reply:
         p, sess.pending = sess.pending, None

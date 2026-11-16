@@ -31,6 +31,11 @@ from import_text import import_text
 from prefs import FIELDS as PREF_FIELDS, Prefs
 import uisettings
 from embeddings import ParagraphIndex
+import extract as extract_mod
+import ingest
+from addons import Addons
+from journal import Journal
+from library import Library
 from ideas import describe_kinds
 from story_graph import StoryGraph
 from voices import VoiceBook
@@ -46,6 +51,10 @@ class ChatIn(BaseModel):
     text: str
     session_id: str | None = None
     book: str | None = None
+
+
+class PersonIn(BaseModel):
+    person_id: str = Field(max_length=60)
 
 
 class EditIn(BaseModel):
@@ -169,7 +178,10 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     prefs = Prefs(s.state_dir)
     emb_http = embed_http or httpx.AsyncClient()
     index = ParagraphIndex(store, reg, router, emb_http, s.state_dir, debounce=s.index_debounce)
-    agent = Agent(s, store, llm, mem, StoryKG(store), graph, check_drift, voices, prefs, index)
+    journal, library = Journal(store), Library(store)
+    index.sources = [journal.chunks, library.chunks]  # the long conversation and the added files are searched by meaning too
+    addons = Addons(s, s.addons_dir).load()
+    agent = Agent(s, store, llm, mem, StoryKG(store), graph, check_drift, voices, prefs, index, journal, library, addons)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -342,7 +354,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     @app.post("/api/chat", dependencies=[Depends(writer)])
     async def chat(body: ChatIn):
         sid = body.session_id or uuid.uuid4().hex
-        reply = await agent.handle(sid, body.text, body.book)
+        reply = await agent.handle(sid, body.text, body.book, via="typed")
         return {"session_id": sid, "user_text": body.text, **asdict(reply), "served_by": router.served("chat")}
 
     @app.post("/api/transcribe", dependencies=[Depends(writer)])
@@ -354,7 +366,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         """Mic → whisper → agent in one round trip (fewest taps for the writer)."""
         text = await stt.transcribe(await audio.read(), audio.filename or "audio.webm", audio.content_type or "audio/webm")
         sid = session_id or uuid.uuid4().hex
-        reply = await agent.handle(sid, text, book or None)
+        reply = await agent.handle(sid, text, book or None, via="voice")
         return {"session_id": sid, "user_text": text, **asdict(reply), "served_by": router.served("stt", "chat")}
 
     @app.post("/api/tts", dependencies=[Depends(writer)])
@@ -440,6 +452,11 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     async def admin_embeddings_rebuild(book: str, body: RebuildIn):
         index.start(book_or_400(book), body.full)
         return index.status(book)
+
+    @app.get("/api/admin/addons", dependencies=[Depends(admin)])
+    async def admin_addons():
+        return {"directory": s.addons_dir or "", "loaded": addons.status, "readers": [{"addon": n, "extensions": list(e)} for n, e in addons.readers],
+                "tools": [t.name for t in addons.tools]}
 
     @app.get("/api/admin/traces", dependencies=[Depends(admin)])
     async def admin_traces():
@@ -533,6 +550,141 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         if not chapters:
             raise HTTPException(400, "I could not find any chapters. Start each chapter with a line like: Chapter 1")
         return {"chapters": chapters, "paragraphs": paragraphs}
+
+    # --- the one long conversation ---------------------------------------------------------------------------------
+    @app.get("/api/books/{book}/chat", dependencies=[Depends(writer)])
+    async def chat_log(book: str, n: int = 30):
+        """What the chat window shows after a reload: the latest turns since the writer last cleared the screen."""
+        book_or_400(book)
+        rows = [r for r in journal.recent(book, max(1, min(n, 100))) if r["role"] in ("user", "assistant")]
+        return {"messages": [{"role": r["role"], "text": r["text"], "at": r["at"]} for r in rows], "total": journal.count(book), "days": journal.days(book)}
+
+    @app.post("/api/books/{book}/chat/clear", dependencies=[Depends(writer)])
+    async def chat_clear(book: str):
+        """Clear the screen. The agent folds the conversation into its summary first, and the journal keeps every word."""
+        await agent.clear_chat(book_or_400(book))
+        return {"ok": True}
+
+    # --- the library: files the writer adds -----------------------------------------------------------------------------
+    UPLOAD_LIMIT = extract_mod.MAX_BYTES
+
+    @app.get("/api/books/{book}/library", dependencies=[Depends(writer)])
+    async def library_list(book: str):
+        return {"items": library.items(book_or_400(book)), "formats": {"documents": "txt md html rtf docx odt pptx xlsx csv json epub pdf (also old doc/xls/ppt)",
+                "pictures": "jpg png gif webp bmp tiff (read by the chat model if it can see pictures)", "audio": "mp3 wav m4a ogg flac webm (turned into words)",
+                "family trees": "ged gdz gramps ftm ftmb", "addons": [{"extensions": list(e), "addon": n} for n, e in addons.readers]}}
+
+    @app.post("/api/books/{book}/library", dependencies=[Depends(writer)])
+    async def library_add(book: str, files: list[UploadFile] = File(...)):
+        book_or_400(book)
+        store.ensure_book(book)
+        out = []
+        for f in files[:10]:
+            data = await f.read(UPLOAD_LIMIT + 1)
+            name = (f.filename or "file")[:120]
+            try:
+                out.append(await ingest.add_file(book, name, data, library, llm, stt, journal))
+            except extract_mod.Unreadable as e:
+                out.append({"title": name, "error": str(e), "message": str(e)})
+            except Exception:
+                out.append({"title": name, "error": "I could not add that file.", "message": f"I could not add {name}."})
+        index.schedule(book)
+        return {"items": out}
+
+    def lib_item(book: str, slug: str) -> dict:
+        try:
+            return library.meta(book_or_400(book), slug)
+        except KeyError:
+            raise HTTPException(404, "No such file in the library.")
+
+    @app.get("/api/books/{book}/library/{slug}", dependencies=[Depends(writer)])
+    async def library_get(book: str, slug: str, part: int = 1):
+        meta = lib_item(book, slug)
+        parts = __import__("library").chunk_text(library.text(book, slug), 4000) or [""]
+        part = max(1, min(part, len(parts)))
+        out = {**meta, "text": parts[part - 1], "part": part, "parts": len(parts)}
+        tree = library.tree(book, slug)
+        if tree:
+            out["people"] = [{"id": p.id, "name": p.name or "Unknown", "label": tree.label(p.id)} for p in sorted(tree.people.values(), key=lambda p: p.name)[:1500]]
+        return out
+
+    FILE_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}
+
+    @app.get("/api/books/{book}/library/{slug}/file", dependencies=[Depends(writer)])
+    async def library_file(book: str, slug: str):
+        """The original file. Only pictures are shown in the page; everything else downloads, and nothing is ever run as a web page."""
+        lib_item(book, slug)
+        path = library.source(book, slug)
+        if not path:
+            raise HTTPException(404, "The original file is gone.")
+        ctype = FILE_TYPES.get(path.suffix.lower())
+        name = library.meta(book, slug)["filename"].replace('"', "")
+        return Response(path.read_bytes(), media_type=ctype or "application/octet-stream", headers={
+            "Content-Disposition": ("inline" if ctype else "attachment") + f'; filename="{name.encode("ascii", "replace").decode()}"',
+            "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self'"})
+
+    @app.delete("/api/books/{book}/library/{slug}", dependencies=[Depends(writer)])
+    async def library_delete(book: str, slug: str):
+        lib_item(book, slug)
+        library.delete(book, slug)
+        index.schedule(book)
+        return {"ok": True}
+
+    @app.post("/api/books/{book}/library/{slug}/retry", dependencies=[Depends(writer)])
+    async def library_retry(book: str, slug: str):
+        """Try again to read a picture or recording that could not be read the first time (for example after the admin picked a vision model)."""
+        meta = lib_item(book, slug)
+        path = library.source(book, slug)
+        data = path.read_bytes() if path else b""
+        try:
+            ex = extract_mod.extract(data, meta["filename"])
+            if ex.kind in ("image", "scan"):
+                text = await ingest._look(llm, ex.images)
+            elif ex.kind == "audio":
+                text = await stt.transcribe(ex.audio or b"", ex.audio_name)
+            else:
+                text = ex.text
+        except Exception:
+            raise HTTPException(502, "It still could not be read. Check that a model that can look at pictures (or hear audio) is set up.")
+        library.update_text(book, slug, text, "read", [])
+        index.schedule(book)
+        return {"ok": True}
+
+    @app.post("/api/books/{book}/library/{slug}/character", dependencies=[Depends(writer)])
+    async def library_person_to_character(book: str, slug: str, body: PersonIn):
+        """Turn someone in a family tree into a character in the story wiki (the writer pressed the button, so this is the confirmation)."""
+        lib_item(book, slug)
+        tree = library.tree(book, slug)
+        person = tree.people.get(body.person_id) if tree else None
+        if not person:
+            raise HTTPException(404, "That person is not in the tree.")
+        state = {k: v for k, v in {"gender": person.sex, "born": " ".join(x for x in person.birth if x), "died": " ".join(x for x in person.death if x),
+                                   "from_family_tree": library.meta(book, slug)["title"]}.items() if v}
+        e = store.bible(book).upsert("characters", person.name or "Unknown", state, tree.describe(person.id))
+        index.schedule(book)
+        return {"slug": e.slug, "name": e.name}
+
+    @app.get("/api/books/{book}/memory/search", dependencies=[Depends(writer)])
+    async def memory_search(book: str, q: str = ""):
+        """One search box over everything: the book, the wiki, old conversation and the library, by meaning when the index is ready."""
+        book_or_400(book)
+        q = q.strip()[:300]
+        if not q:
+            return {"hits": []}
+        hits: list[dict] = []
+        if index.status(book)["ready"]:
+            docs = index._docs(book)
+            for key, score in await index.search(book, q, k=12, scope="para|bible|mem|lib"):
+                if key in docs and score >= 0.25:
+                    src = "book" if not key.split(":")[0] in ("bible", "mem", "lib") else {"bible": "wiki", "mem": "conversation", "lib": "library"}[key.split(":")[0]]
+                    hits.append({"source": src, "text": docs[key][:300], "key": key, "score": round(score, 2)})
+        else:
+            for key, text in journal.search_words(book, q, 4) + library.search_words(book, q, 4):
+                hits.append({"source": "conversation" if key.startswith("mem:") else "library", "text": text[:300], "key": key, "score": 0})
+            agent.kg.refresh(book)
+            for h in agent.kg.search(q, limit=4):
+                hits.append({"source": "book", "text": h.para.text[:300], "key": h.para.id, "score": 0})
+        return {"hits": hits[:12]}
 
     # --- story bible -------------------------------------------------------------------------------------------
     @app.get("/api/books/{book}/bible", dependencies=[Depends(writer)])

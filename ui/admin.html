@@ -261,6 +261,8 @@ label { display: block; margin: 8px 0; color: var(--muted); font-weight: 700; }
     const go = (full) => async () => { await api("POST", `/api/admin/books/${encodeURIComponent(d.book)}/embeddings/rebuild`, { full }); render2(d.book); };
     if (ix.state === "running") poll = setInterval(() => render2(d.book), 1500);
     const mem = d.memory;
+    let addon = { loaded: [], readers: [], tools: [], directory: "" };
+    try { addon = await api("GET", "/api/admin/addons"); } catch (e) { /* older server */ }
     let traces = [];
     try { traces = (await api("GET", "/api/admin/traces")).traces || []; } catch (e) { /* older server: no traces */ }
     return [
@@ -271,6 +273,8 @@ label { display: block; margin: 8px 0; color: var(--muted); font-weight: 700; }
         h("dt", { textContent: "Embedding server" }), h("dd", { textContent: ix.configured ? `${ix.provider.model} at ${ix.provider.base_url}` : "None set. Add one under Models and fallbacks > Embeddings." }),
         h("dt", { textContent: "Index" }), h("dd", { textContent: ix.ready ? `Ready. ${ix.indexed} of ${ix.paragraphs} paragraphs (${pct}%). Vectors of ${ix.dims} numbers. Built ${when(ix.built)}.` : ix.configured ? (ix.same_provider ? "Empty. Press Update index." : "Out of date: the embedding model changed. Press Rebuild from scratch.") : "Off" }),
         h("dt", { textContent: "Story bible" }), h("dd", { textContent: ix.configured ? `${ix.bible_indexed} of ${ix.bible_entries} entries searchable by meaning` : "Off" }),
+        h("dt", { textContent: "Conversation memory" }), h("dd", { textContent: ix.configured ? `${ix.memory_indexed} of ${ix.memory_chunks} stretches of talk searchable by meaning` : "Off" }),
+        h("dt", { textContent: "Library files" }), h("dd", { textContent: ix.configured ? `${ix.library_indexed} of ${ix.library_chunks} passages searchable by meaning` : "Off" }),
         h("dt", { textContent: "Not yet indexed" }), h("dd", { textContent: `${ix.stale} paragraph(s)` }),
         h("dt", { textContent: "Status" }), h("dd", { className: ix.state === "error" ? "err" : "", textContent: ix.state === "running" ? `Working… ${ix.done} of ${ix.total}` : ix.state === "error" ? ix.error : ix.state === "ok" ? "Finished" : ix.state })),
       h("div", { className: "bar", style: "margin-top:10px" }, h("span", { style: `width:${pct}%` })),
@@ -281,6 +285,12 @@ label { display: block; margin: 8px 0; color: var(--muted); font-weight: 700; }
       h("dl", { className: "kv" }, h("dt", { textContent: "Storing in" }), h("dd", { textContent: mem.backend === "mem0" ? "mem0 (vectors on disk)" : mem.backend === "file" ? "A plain file (mem0 is not running)" : mem.backend }),
         mem.error ? h("dt", { textContent: "Why not mem0" }) : null, mem.error ? h("dd", { className: "err", textContent: mem.error }) : null),
       h("p", { className: "hint", textContent: "mem0 remembers what the writer likes and where new writing drifted from the story bible. It needs a working chat model and embedding server." }),
+      h("h2", { textContent: "Addons", style: "margin-top:22px" }),
+      addon.directory ? h("dl", { className: "kv" }, h("dt", { textContent: "Folder" }), h("dd", { textContent: addon.directory }),
+        h("dt", { textContent: "Loaded" }), h("dd", { textContent: addon.loaded.length ? addon.loaded.map((a) => a.ok ? `${a.name} (ok)` : `${a.name}: ${a.error}`).join("; ") : "none" }),
+        h("dt", { textContent: "File types added" }), h("dd", { textContent: addon.readers.map((r) => `${r.extensions.join(" ")} by ${r.addon}`).join("; ") || "none" }),
+        h("dt", { textContent: "Tools added" }), h("dd", { textContent: addon.tools.join(", ") || "none" }))
+        : h("p", { className: "hint", textContent: "No addon folder set. Put your own .py files in a folder and set ADDONS_DIR in .env to teach Book Scribe new file types and tools. See docs/ADDONS.md." }),
       h("h2", { textContent: "What the agent's tools did lately", style: "margin-top:22px" }),
       traces.length ? h("ul", {}, ...traces.slice(-12).reverse().map((x) => h("li", { textContent: `${new Date(x.at * 1000).toLocaleTimeString()} — used ${x.tools.join(", ")}${x.highlighted ? `, lit up ${x.highlighted} passage(s)` : ""}` })))
         : h("p", { className: "hint", textContent: "Nothing yet. When the model looks something up, makes up names with the random generator, points at a passage or changes the screen, it shows here (only which tools ran, never the writer's words or the book's text)." }),

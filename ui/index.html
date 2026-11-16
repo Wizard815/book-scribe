@@ -225,7 +225,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
         <div class="tools">
           <button id="read" type="button" aria-pressed="true">Read aloud: On</button>
           <button id="stop" type="button">Stop talking</button>
-          <button id="fresh" type="button">New chat</button>
+          <button id="fresh" type="button" aria-label="Clear the chat. I will still remember our work.">Clear chat</button>
         </div>
       </div>
       <div class="grip" data-grip="chat" aria-hidden="true"></div>
@@ -455,6 +455,26 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
       b.type = "button"; b.textContent = label; if (cls) b.className = cls; b.onclick = () => send(say); box.append(b);
     }
   }
+  // One long conversation: the server keeps it (and a summary of the older part), so a reload or a new device picks up where we left off.
+  async function restoreChat() {
+    if (state.mode !== "scribe" || !state.bookName) return false;
+    try {
+      const r = await siteFetch(`/api/books/${encodeURIComponent(state.bookName)}/chat`);
+      const j = await r.json();
+      if (!r.ok || !j.messages || !j.messages.length) return false;
+      $("chat").replaceChildren(); state.history = [];
+      for (const m of j.messages) { bubble(m.role === "user" ? "me" : "assistant", m.text); state.history.push({ role: m.role, text: m.text }); }
+      showIdeas(false); setPending(null);
+      return true;
+    } catch (_) { return false; }
+  }
+  async function clearChat() {  // empties the screen only: the agent folds the talk into its memory first and the journal keeps every word
+    stopSpeaking();
+    if (state.mode === "scribe" && state.bookName) { try { await siteFetch(`/api/books/${encodeURIComponent(state.bookName)}/chat/clear`, { method: "POST" }); } catch (_) {} }
+    state.history = []; welcome();
+    if (state.mode === "scribe") bubble("note", "The chat is clear. I still remember everything we have worked on.");
+    setStatus("Ready");
+  }
   function welcome() {
     $("chat").replaceChildren();
     bubble("assistant", "Hello. I am Book Scribe. Tell me about your story, or ask me to help you write. Press Talk, or type below.");
@@ -511,7 +531,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     $("barSite").hidden = state.mode !== "scribe";
     $("barLocal").hidden = state.mode !== "claude";
     $("saveBook").hidden = !state.downloads;
-    if (state.mode === "claude") { loadLocalBook(); } else { await loadSiteBook(); }
+    if (state.mode === "claude") { loadLocalBook(); } else { await loadSiteBook(); await restoreChat(); }
     setStatus("Ready");
   }
   function bookContext() {
@@ -723,7 +743,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   async function setBook(name) {  // switch which book is open (Settings > Books)
     state.bookName = name; store.set("bs_book_name", name);
     state.history = []; state.sid = state.sid.slice(0, 20) + Date.now().toString(36);
-    await loadSiteBook(); welcome();
+    await loadSiteBook(); if (!(await restoreChat())) welcome();
   }
   function siteMessage(t) {
     const p = document.createElement("p"); p.id = "bookEmpty"; p.textContent = t; $("book").replaceChildren(p);
@@ -765,7 +785,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send($("msg").value); } });
   $("talk").onclick = toggleTalk; $("stop").onclick = stopSpeaking;
   $("read").onclick = () => { state.read = !state.read; if (!state.read) stopSpeaking(); applyRead(); };
-  $("fresh").onclick = () => { stopSpeaking(); state.history = []; state.sid = state.sid.slice(0, 20) + Date.now().toString(36); welcome(); setStatus("Ready"); };
+  $("fresh").onclick = clearChat;
   $("prevCh").onclick = () => stepChapter(-1); $("nextCh").onclick = () => stepChapter(1);
   $("copyBook").onclick = copyBook; $("saveBook").onclick = saveBook; $("clearBook").onclick = clearBook;
   narrowQ.addEventListener("change", applyUI);
@@ -773,7 +793,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 
   Object.assign(window.BS, {
     state, store, bubble, note, welcome, applySize, applyRead, siteFetch, loadSiteBook, setBook, setStatus, send, applyLook, currentLook,
-    afterLogin: async () => { await loadSiteBook(); setStatus("Ready"); },
+    afterLogin: async () => { await loadSiteBook(); await restoreChat(); setStatus("Ready"); },
   });
   try { applyLook(JSON.parse(store.get("bs_look", "null")), false); } catch (_) { applySize(); }  // the login screen is already in the writer's own look
   applySize(); applyRead(); applyUI(); welcome();
@@ -809,6 +829,15 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 .entry .meta { font-size: 18px; color: var(--muted); flex: 1 1 100%; }
 .idea { border: 2px solid var(--line); border-radius: 14px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
 .idea .txt { font-size: 26px; flex: 1 1 260px; overflow-wrap: anywhere; }
+.lib-item { border: 2px solid var(--line); border-radius: 14px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.lib-item .name { font-size: 26px; font-weight: 700; flex: 1 1 240px; overflow-wrap: anywhere; }
+.lib-item .meta { font-size: 19px; color: var(--muted); flex: 1 1 100%; }
+.lib-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 24px; line-height: 1.5; background: var(--bg); border: 2px solid var(--line); border-radius: 14px; padding: 16px; max-height: 55vh; overflow-y: auto; }
+.lib-img { max-width: 100%; max-height: 50vh; border-radius: 12px; border: 2px solid var(--line); align-self: flex-start; }
+.badge { display: inline-block; font-size: 16px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; background: var(--mine); color: var(--fg); border-radius: 8px; padding: 2px 10px; margin-right: 8px; }
+.hit { border: 2px solid var(--line); border-radius: 14px; padding: 10px 14px; font-size: 22px; overflow-wrap: anywhere; }
+#dropBanner { position: fixed; inset: 0; z-index: 400; display: none; align-items: center; justify-content: center; text-align: center; padding: 24px; font-size: 44px; font-weight: 700; color: var(--accent-fg); background: color-mix(in srgb, var(--accent) 92%, transparent); }
+body.dragging #dropBanner { display: flex; }
 .sect { margin: 16px 0 4px; font-size: 26px; font-weight: 700; }
 .form { border: 3px dashed var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
 @media (max-width: 600px) { .card, .panel { padding: 14px; border-radius: 14px; } .overlay button { font-size: 19px; min-height: 54px; padding: 6px 14px; } .card h2, .panel h2 { font-size: 26px; } }
@@ -839,6 +868,29 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     <div id="ideaList" style="display:flex;flex-direction:column;gap:10px;margin-top:10px"></div>
   </div>
 </div>
+
+<div id="libView" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="libTitle">
+  <div class="panel">
+    <div class="sbar"><h2 id="libTitle">Library</h2><button type="button" id="libClose" class="primary">Close</button></div>
+    <div id="libList">
+      <p class="hint">Add anything: notes, research, old drafts, scans, photos, recordings, family trees. I read it, remember it, and can find it again by what it means. You can also drop files anywhere on this page.</p>
+      <div class="row" style="margin:10px 0">
+        <button type="button" id="libAdd" class="primary">Add files</button>
+        <button type="button" id="libPhoto">Take a photo</button>
+      </div>
+      <p id="libMsg" role="status" class="ok"></p>
+      <label for="libQ">Search everything: the book, the wiki, what we said, your files</label>
+      <div class="row"><input type="text" id="libQ" placeholder="for example: the old lighthouse" style="flex:1 1 300px"><button type="button" id="libSearch">Search</button></div>
+      <div id="libHits" style="display:flex;flex-direction:column;gap:10px;margin:10px 0"></div>
+      <div class="sect">Your files</div>
+      <div id="libItems" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+    <div id="libDetail" hidden></div>
+    <input type="file" id="libFile" multiple hidden>
+    <input type="file" id="libCam" accept="image/*" capture="environment" hidden>
+  </div>
+</div>
+<div id="dropBanner" aria-hidden="true">Drop files here to add them to your library</div>
 
 <div id="settingsView" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="setTitle">
   <div class="panel">
@@ -910,6 +962,10 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     const s = h("button", { type: "button", textContent: "Settings" }); s.onclick = () => openSettings();
     box.append(s);
     const tools = document.querySelector(".tools");
+    if (tools && !document.getElementById("libBtn")) {
+      const f = h("button", { type: "button", id: "addFileBtn", textContent: "Add file" }); f.onclick = () => $("libFile").click();
+      const l = h("button", { type: "button", id: "libBtn", textContent: "Library" }); l.onclick = openLibrary; tools.append(f, l);
+    }
     if (tools && !document.getElementById("ideasBtn")) { const i = h("button", { type: "button", id: "ideasBtn", textContent: "Ideas" }); i.onclick = openIdeas; tools.append(i); }
     if (status.auth_required) {
       const o = h("button", { type: "button", textContent: "Log out" });
@@ -1206,6 +1262,116 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   $("ideaGo").onclick = giveIdeas;
   $("ideasClose").onclick = () => ($("ideasView").hidden = true);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("ideasView").hidden) $("ideasView").hidden = true; });
+
+  // ---- Library: add any file, find anything by meaning ---------------------------------------------------------------------------------------
+  const KIND = { document: "Document", family_tree: "Family tree", database: "Database", image: "Picture", scan: "Scanned pages", audio: "Recording", text: "Text" };
+  const setLibMsg = (t, bad) => msg($("libMsg"), t, bad);
+  async function uploadFiles(files) {
+    const list = [...files].slice(0, 10);
+    if (!list.length || !book()) return;
+    if (!BS.state.bookName) return;
+    const note = list.length === 1 ? `Adding ${list[0].name}. Pictures and long files can take a minute.` : `Adding ${list.length} files. Pictures and long files can take a minute.`;
+    setLibMsg(note); BS.setStatus("Adding…");
+    const fd = new FormData(); list.forEach((f) => fd.append("files", f, f.name));
+    try {
+      const r = await BS.siteFetch(`/api/books/${enc(book())}/library`, { method: "POST", body: fd });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : "I could not add that. Please try again.");
+      for (const it of j.items) BS.bubble("assistant", it.message);  // the one chat is where everything is reported
+      setLibMsg(j.items.map((i) => i.message).join(" "), j.items.every((i) => i.error));
+      BS.setStatus("Ready");
+      if (!$("libView").hidden && $("libDetail").hidden) drawLibrary();
+    } catch (e) { setLibMsg(e.message, true); BS.setStatus("Ready"); if (e.code !== "auth") BS.note(e.message); }
+  }
+  ["libFile", "libCam"].forEach((id) => ($(id).onchange = (e) => { uploadFiles(e.target.files); e.target.value = ""; }));
+  $("libAdd").onclick = () => $("libFile").click();
+  $("libPhoto").onclick = () => $("libCam").click();
+  let dragDepth = 0;
+  const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files");
+  document.addEventListener("dragenter", (e) => { if (hasFiles(e) && book()) { dragDepth++; document.body.classList.add("dragging"); } });
+  document.addEventListener("dragleave", () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) document.body.classList.remove("dragging"); });
+  document.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+  document.addEventListener("drop", (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; document.body.classList.remove("dragging"); uploadFiles(e.dataTransfer.files); });
+
+  async function openLibrary() {
+    $("libView").hidden = false; $("libDetail").hidden = true; $("libList").hidden = false;
+    await drawLibrary();
+    setTimeout(() => $("libAdd").focus(), 50);
+  }
+  const closeLibrary = () => ($("libView").hidden = true);
+  $("libClose").onclick = closeLibrary;
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("libView").hidden) closeLibrary(); });
+  async function drawLibrary() {
+    try {
+      const j = await call("GET", `/api/books/${enc(book())}/library`);
+      $("libItems").replaceChildren(...(j.items.length ? j.items.map((m) => {
+        const open = h("button", { type: "button", className: "primary", textContent: "Open" }); open.onclick = () => openItem(m.slug, 1);
+        const when = new Date(m.added * 1000).toLocaleDateString();
+        return h("div", { className: "lib-item" }, h("span", { className: "name", textContent: m.title }),
+          h("span", { className: "meta", textContent: `${KIND[m.kind] || m.kind} · added ${when}${m.status === "unread" ? " · not read yet" : ""}${m.people ? ` · ${m.people} people` : ""}` }), open);
+      }) : [h("p", { className: "hint", textContent: "Nothing here yet. Press Add files, or drop files onto the page." })]));
+    } catch (e) { $("libItems").replaceChildren(h("p", { className: "err", textContent: e.message })); }
+  }
+  async function searchAll() {
+    const q = $("libQ").value.trim(); if (!q) return;
+    const box = $("libHits"); box.replaceChildren(h("p", { className: "hint", textContent: "Searching…" }));
+    try {
+      const j = await call("GET", `/api/books/${enc(book())}/memory/search?q=${enc(q)}`);
+      const label = { book: "Book", wiki: "Wiki", conversation: "We said", library: "File" };
+      box.replaceChildren(...(j.hits.length ? j.hits.map((x) => h("div", { className: "hit" }, h("span", { className: "badge", textContent: label[x.source] || x.source }), x.text)) : [h("p", { className: "hint", textContent: "Nothing found. Try other words, or describe what you remember." })]));
+    } catch (e) { box.replaceChildren(h("p", { className: "err", textContent: e.message })); }
+  }
+  $("libSearch").onclick = searchAll;
+  $("libQ").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); searchAll(); } });
+
+  async function openItem(slug, part) {
+    const box = $("libDetail");
+    try {
+      const j = await call("GET", `/api/books/${enc(book())}/library/${enc(slug)}?part=${part}`);
+      const info = h("p", { role: "status", className: "ok" });
+      const back = h("button", { type: "button", textContent: "Back to the list" }); back.onclick = () => { box.hidden = true; $("libList").hidden = false; drawLibrary(); };
+      const dl = h("a", { className: "btn", href: `/api/books/${enc(book())}/library/${enc(slug)}/file`, textContent: "Download the original" });
+      const del = h("button", { type: "button", className: "danger", textContent: "Delete" });
+      let armed = 0;
+      del.onclick = async () => {
+        if (!armed) { armed = 1; del.textContent = "Really delete? Tap again"; setTimeout(() => { armed = 0; del.textContent = "Delete"; }, 4000); return; }
+        try { await call("DELETE", `/api/books/${enc(book())}/library/${enc(slug)}`); back.click(); } catch (e) { msg(info, e.message, true); }
+      };
+      const row = h("div", { className: "row" }, back, dl);
+      if (j.status === "unread") {
+        const again = h("button", { type: "button", className: "primary", textContent: "Try reading it again" });
+        again.onclick = async () => { msg(info, "Trying…"); try { await call("POST", `/api/books/${enc(book())}/library/${enc(slug)}/retry`); openItem(slug, 1); } catch (e) { msg(info, e.message, true); } };
+        row.append(again);
+      }
+      row.append(del);
+      const kids = [h("h2", { textContent: j.title }), h("p", { className: "hint", textContent: `${KIND[j.kind] || j.kind}${j.pages ? ` · ${j.pages} pages` : ""} · ${j.chars.toLocaleString()} characters read` }), row, info];
+      (j.notes || []).forEach((n) => kids.push(h("p", { className: j.status === "unread" ? "err" : "hint", textContent: n })));
+      if (j.kind === "image") kids.push(h("img", { className: "lib-img", src: `/api/books/${enc(book())}/library/${enc(slug)}/file`, alt: `The picture ${j.title}` }));
+      if (j.text) kids.push(h("div", { className: "lib-text", tabIndex: 0, textContent: j.text, "aria-label": "What I read" }));
+      if (j.parts > 1) {
+        const nav = h("div", { className: "row" });
+        const prev = h("button", { type: "button", textContent: "Earlier part", disabled: j.part <= 1 }); prev.onclick = () => openItem(slug, j.part - 1);
+        const next = h("button", { type: "button", textContent: "Later part", disabled: j.part >= j.parts }); next.onclick = () => openItem(slug, j.part + 1);
+        nav.append(prev, h("span", { className: "hint", textContent: `Part ${j.part} of ${j.parts}` }), next); kids.push(nav);
+      }
+      if (j.people) {
+        kids.push(h("div", { className: "sect", textContent: "People in this tree" }), h("p", { className: "hint", textContent: "Tap Use as character to bring someone into your story wiki. You can ask me about anyone here." }));
+        const filter = h("input", { type: "text", "aria-label": "Find a person", placeholder: "Type a name to find someone" });
+        const list = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+        const draw = () => {
+          const q = filter.value.trim().toLowerCase();
+          const shown = j.people.filter((x) => !q || x.name.toLowerCase().includes(q)).slice(0, 40);
+          list.replaceChildren(...shown.map((x) => {
+            const b = h("button", { type: "button", textContent: "Use as character" });
+            b.onclick = async () => { try { const r = await call("POST", `/api/books/${enc(book())}/library/${enc(slug)}/character`, { person_id: x.id }); msg(info, `Added ${r.name} to the story wiki.`); BS.bubble("assistant", `I added ${r.name} to the story wiki as a character, with what the family tree says about them.`); } catch (e) { msg(info, e.message, true); } };
+            return h("div", { className: "lib-item" }, h("span", { className: "name", textContent: x.label }), b);
+          }));
+        };
+        filter.oninput = draw; draw(); kids.push(filter, list);
+      }
+      box.replaceChildren(...kids); $("libList").hidden = true; box.hidden = false; box.scrollIntoView({ block: "start" });
+    } catch (e) { setLibMsg(e.message, true); }
+  }
 
   // ---- start ----------------------------------------------------------------------------------------------------------------------------
   (async () => {

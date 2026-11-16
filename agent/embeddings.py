@@ -47,6 +47,11 @@ def _pack(vec: list[float]) -> str:
     return base64.b64encode(array("f", vec).tobytes()).decode()
 
 
+def _scope(key: str) -> str:
+    """Which kind of document a key is: a manuscript paragraph, a story-bible entry, a journal chunk or a library chunk."""
+    return "bible" if key.startswith("bible:") else "mem" if key.startswith("mem:") else "lib" if key.startswith("lib:") else "para"
+
+
 def _unpack(s: str):
     raw = base64.b64decode(s)
     if np is not None:
@@ -63,6 +68,8 @@ class ParagraphIndex:
         self._locks: dict[str, asyncio.Lock] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._cache: dict[str, tuple] = {}
+        self.sources: list = []  # extra document providers: fn(book) -> {key: text}. Keys start "mem:" (journal) or "lib:" (library files)
+        self._qcache: dict[str, list[float]] = {}
 
     # --- provider ---------------------------------------------------------------------------------------------
     def _identity(self) -> dict | None:
@@ -97,6 +104,11 @@ class ParagraphIndex:
     def _docs(self, book: str) -> dict[str, str]:
         docs = {p.id: p.text for p in self.store.all_paragraphs(book)}
         docs.update(self.bible_docs(book))
+        for src in self.sources:
+            try:
+                docs.update(src(book))
+            except Exception:  # a broken source must not stop the manuscript from being indexed
+                pass
         return docs
 
     # --- storage ----------------------------------------------------------------------------------------------
@@ -129,14 +141,18 @@ class ParagraphIndex:
         items = data.get("items", {})
         same = self._matches_provider(data)
         fresh = {k for k, text in docs.items() if same and items.get(k, {}).get("h") == _h(text)}
-        paras = [k for k in docs if not k.startswith("bible:")]
-        bible = [k for k in docs if k.startswith("bible:")]
+        paras = [k for k in docs if _scope(k) == "para"]
+        bible = [k for k in docs if _scope(k) == "bible"]
+        mem = [k for k in docs if _scope(k) == "mem"]
+        lib = [k for k in docs if _scope(k) == "lib"]
         prog = self.progress.get(book, {})
         ident = self._identity()
         idx_paras = sum(1 for k in paras if k in fresh)
         return {
             "configured": ident is not None, "provider": ident, "same_provider": same, "paragraphs": len(paras), "indexed": idx_paras,
             "stale": len(paras) - idx_paras, "bible_entries": len(bible), "bible_indexed": sum(1 for k in bible if k in fresh),
+            "memory_chunks": len(mem), "memory_indexed": sum(1 for k in mem if k in fresh),
+            "library_chunks": len(lib), "library_indexed": sum(1 for k in lib if k in fresh),
             "dims": data.get("dims"), "built": data.get("built"),
             "state": prog.get("state", "idle"), "done": prog.get("done", 0), "total": prog.get("total", 0), "error": prog.get("error", ""),
             "ready": bool(ident and same and idx_paras > 0),
@@ -220,27 +236,38 @@ class ParagraphIndex:
         self._cache[book] = (mt, ids, m)
         return ids, m
 
-    async def search(self, book: str, query: str, k: int = 5, chapter_of=None, bible: bool = False) -> list[tuple[str, float]]:
-        """Keys most similar in meaning to `query`, best first: paragraph ids, or (bible=True) "bible:..." keys.
-        [] when there is no usable index or the provider fails."""
+    async def _embed_query(self, query: str) -> list[float]:
+        if query in self._qcache:
+            return self._qcache[query]
+        (q,) = await self.embed([query])
+        if len(self._qcache) > 32:
+            self._qcache.pop(next(iter(self._qcache)))
+        self._qcache[query] = q
+        return q
+
+    async def search(self, book: str, query: str, k: int = 5, chapter_of=None, bible: bool = False, scope: str = "") -> list[tuple[str, float]]:
+        """Keys most similar in meaning to `query`, best first. `scope` is one or more of para|bible|mem|lib joined with "|"
+        (bible=True is the older spelling of scope="bible"). [] when there is no usable index or the provider fails."""
         mat = self._matrix(book)
         if not mat or not query.strip():
             return []
+        want = set((scope or ("bible" if bible else "para")).split("|"))
         ids, m = mat
         try:
-            (q,) = await self.embed([query])
+            q = await self._embed_query(query)
         except (NotConfigured, Exception):
             return []
+        ok = lambda key: _scope(key) in want and (_scope(key) != "para" or chapter_of is None or chapter_of(key))  # noqa: E731
         if np is not None:
             qv = np.asarray(q, dtype=np.float32)
             if qv.shape[0] != m.shape[1]:
                 return []
-            qv /= max(float(np.linalg.norm(qv)), 1e-9)
+            qv = qv / max(float(np.linalg.norm(qv)), 1e-9)
             scores = m @ qv
             order = np.argsort(-scores)
-            out = [(ids[i], float(scores[i])) for i in order if ids[i].startswith("bible:") == bible and (bible or chapter_of is None or chapter_of(ids[i]))]
+            out = [(ids[i], float(scores[i])) for i in order if ok(ids[i])]
         else:  # pragma: no cover
             n = sum(x * x for x in q) ** 0.5 or 1
             sc = [sum(a * b / n for a, b in zip(row, q)) for row in m]
-            out = sorted(((ids[i], sc[i]) for i in range(len(ids)) if ids[i].startswith("bible:") == bible and (bible or chapter_of is None or chapter_of(ids[i]))), key=lambda t: -t[1])
+            out = sorted(((ids[i], sc[i]) for i in range(len(ids)) if ok(ids[i])), key=lambda t: -t[1])
         return out[:k]

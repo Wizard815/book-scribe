@@ -229,7 +229,7 @@ async def test_adjusting_by_voice_changes_speed_pitch_and_style_then_keep_saves_
     await agent.handle("s", "let me hear Jonas")
     before = vb.profile("demo", "Jonas")
     r = await agent.handle("s", "make his voice deeper and a bit slower and more sarcastic")
-    prof = r.pending and agent.sessions["s"].pending.data["profile"]
+    prof = r.pending and agent.session("s").pending.data["profile"]
     assert prof["speed"] == 0.85 and prof["traits"]["pitch"] == "low" and "sarcastic" in prof["style"]
     assert vb.profile("demo", "Jonas")["speed"] == before["speed"]  # still only a draft
     assert (await agent.handle("s", "keep it")).text.startswith("Saved")
@@ -263,7 +263,7 @@ async def test_try_another_cycles_to_a_different_voice(world):
     s, reg, _, _, t1, _ = world
     first = vb.resolve("demo", "Jonas", t1).voice
     await agent.handle("s", "try another voice for Jonas")
-    second = agent.sessions["s"].pending.data["profile"]["pinned"][t1.id]
+    second = agent.session("s").pending.data["profile"]["pinned"][t1.id]
     assert second != first and second.startswith("am_")
     await agent.handle("s", "yes")
     assert vb.resolve("demo", "Jonas", t1).voice == second
@@ -284,7 +284,7 @@ async def test_open_ended_feedback_goes_to_the_model_and_is_validated(world):
     agent, _, llm, vb = make_agent(world, ['{"voice": "nonexistent", "speed": 9, "style": "tired, professorial", "gender": "male", "pitch": "low", "say": "Made him sound weary."}'])
     await agent.handle("s", "let me hear Jonas")
     r = await agent.handle("s", "make his voice sound like a tired professor")
-    prof = agent.sessions["s"].pending.data["profile"]
+    prof = agent.session("s").pending.data["profile"]
     assert prof["style"] == "tired, professorial" and prof["speed"] == 1.6 and "Made him sound weary" in r.text  # bad voice name ignored, speed clamped
 
 
