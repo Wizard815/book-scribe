@@ -190,7 +190,9 @@ class BookStore:
         while end < len(lines) and lines[end].strip() and not PID_RE.match(lines[end].strip()) and not lines[end].startswith("#"):
             end += 1
         lines[marker + 1 : end] = [clean_paragraph(new_text)]
+        self._snapshot(book, para.chapter, "edit", paragraph_id)
         path.write_text("\n".join(lines))
+        self._stamp(book)
         return self.find(book, paragraph_id)
 
     def append_paragraph(self, book: str, chapter: int, text: str, scene: int | None = None) -> Paragraph:
@@ -203,8 +205,82 @@ class BookStore:
         if not any(SCENE_RE.match(l.strip()) and int(SCENE_RE.match(l.strip()).group(1)) == scene for l in raw.splitlines()):
             raw = raw.rstrip("\n") + f"\n\n## Scene {scene}\n"
         text = clean_paragraph(text)
+        self._snapshot(book, chapter, "append", pid)
         path.write_text(raw.rstrip("\n") + f"\n\n<!-- paragraph_id: {pid} -->\n{text}\n")
+        self._stamp(book)
         return Paragraph(pid, text, chapter, scene)
+
+    # --- undo: every saved change first copies the chapter as it was, so the writer can always take it back ---------------------------
+    HISTORY_KEEP = 200
+
+    def _hist(self, book: str) -> Path:
+        d = self.book_dir(book) / "history"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _snapshot(self, book: str, chapter: int, what: str, paragraph_id: str) -> None:
+        import hashlib, json, time
+        path = self.chapter_path(book, chapter)
+        before = _read(path) if path.exists() else ""
+        d = self._hist(book)
+        name = f"{int(time.time() * 1000)}_ch{chapter}.md"
+        (d / name).write_text(before, encoding="utf-8")
+        with open(d / "log.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"file": name, "chapter": chapter, "what": what, "paragraph": paragraph_id, "at": int(time.time()), "after": None}) + "\n")
+        self._pending_hash = (book, hashlib.sha1(before.encode()).hexdigest())
+
+    @staticmethod
+    def _rows(log) -> list[dict]:
+        import json
+        out = []
+        try:
+            for line in log.read_text(encoding="utf-8").splitlines():
+                try:
+                    r = json.loads(line)
+                    if isinstance(r, dict) and "file" in r and "chapter" in r:
+                        out.append(r)
+                except ValueError:
+                    continue  # one damaged line must not disable undo
+        except OSError:
+            pass
+        return out
+
+    def _stamp(self, book: str) -> None:
+        """Remember what the chapter looked like right after the change, so an undo can tell if someone edited it from outside meanwhile."""
+        import hashlib, json
+        log = self._hist(book) / "log.jsonl"
+        try:
+            rows = self._rows(log)
+            last = rows[-1]
+            last["after"] = hashlib.sha1(_read(self.chapter_path(book, last["chapter"])).encode()).hexdigest()
+            rows[-1] = last
+            log.write_text("".join(json.dumps(r) + "\n" for r in rows[-self.HISTORY_KEEP:]), encoding="utf-8")
+        except (OSError, ValueError, IndexError, KeyError):
+            pass
+
+    def undo_last(self, book: str) -> dict | None:
+        """Put the book back as it was before the last saved change. -> {"chapter", "what", "paragraph"} or None when there is nothing to undo.
+        Raises BookError if the chapter was changed outside the app since (undoing would throw that work away)."""
+        import hashlib, json
+        log = self._hist(book) / "log.jsonl"
+        rows = self._rows(log)
+        while rows:
+            last = rows[-1]
+            snap = self._hist(book) / str(last.get("file", ""))
+            if snap.is_file() and snap.parent == self._hist(book):
+                break
+            rows.pop()  # a log line whose copy is gone cannot be undone
+        else:
+            return None
+        path = self.chapter_path(book, last["chapter"])
+        now = hashlib.sha1((_read(path) if path.exists() else "").encode()).hexdigest()
+        if last.get("after") and now != last["after"]:
+            raise BookError("That chapter was changed outside Book Scribe since, so I will not undo over it.")
+        path.write_text(snap.read_text(encoding="utf-8"), encoding="utf-8")
+        snap.unlink()
+        rows.pop()
+        log.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        return {"chapter": last["chapter"], "what": last["what"], "paragraph": last.get("paragraph", "")}
 
     def nth_paragraph(self, book: str, chapter: int, n: int, scene: int | None = None) -> Paragraph | None:
         """n-th paragraph of a chapter (1-based, -1 = last), optionally within one scene. None if out of range."""

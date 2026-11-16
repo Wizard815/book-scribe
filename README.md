@@ -385,3 +385,7 @@ How the agent and the chat fit together: see [docs/ARCHITECTURE.md](docs/ARCHITE
 * **Live talk and three voices.** One button for a hands-free conversation; choose one voice, or the agent plus a woman reader and a man
   reader; choose local, cloud or automatic for thinking, listening and speaking. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 * **Addons.** Your own Python files (`ADDONS_DIR`) can add file readers and read-only tools for the model.
+* **Undo.** Every saved change first copies the chapter as it was. Say "undo that" or "put it back" (repeatable, newest first). It refuses
+  if the chapter was edited outside the app since, so nothing you typed elsewhere is ever lost. A proposal that is still waiting is simply dropped.
+* **Names that fit the book.** "Give me a name for a young knight" reads the premise, wiki and opening pages: an Arthurian book gets Welsh and
+  English names, a Viking one Norse names. Asking for a culture by name still wins.
