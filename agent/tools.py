@@ -334,6 +334,27 @@ def build(agent) -> Toolbox:
         sess.pending = Pending(kind="page", text=last["title"], chapter=sess.chapter, data={"title": last["title"], "url": last["url"], "text": last["text"]})
         return "Proposed. Ask the writer in one short sentence whether to keep this page in the library. It is saved only if they say yes."
 
+    async def propose_wiki_notes(ctx: Ctx, notes=None):
+        from agent import Pending
+
+        if ctx.sess.pending:
+            return "A proposal is already waiting for the writer's answer. Do not propose another."
+        kinds = {"character": "characters", "thread": "threads", "place": "world", "rule": "world", "title": "premise", "plot": "premise"}
+        batch = []
+        for n in (notes if isinstance(notes, list) else [])[:8]:
+            if not isinstance(n, dict):
+                continue
+            k = kinds.get(str(n.get("kind", "")), str(n.get("kind", "")))
+            name, note = str(n.get("name", "")).strip()[:80], str(n.get("note", "")).strip()[:1200]
+            if k == "premise":
+                name = name or "Premise"
+            if k in ("characters", "threads", "world", "premise") and name and note:
+                batch.append({"kind": k, "name": name, "note": note})
+        if not batch:
+            return 'Give notes as a list: [{"kind": "characters", "name": "...", "note": "..."}].'
+        ctx.sess.pending = Pending(kind="wiki", text="; ".join(f"{b['name']}: {b['note']}" for b in batch)[:600], chapter=ctx.sess.chapter, data={"batch": batch})
+        return f"Proposed {len(batch)} notes together. Say in one sentence what they are and ask the writer if you should save them all. One yes saves every one."
+
     async def propose_append(ctx: Ctx, text="", chapter=None):
         from agent import Pending
 
@@ -399,8 +420,10 @@ def build(agent) -> Toolbox:
         T("read_page", "Read one web search result in full.", {"id": "an id from web_search, like w2"}, read_page, required=("id",), when=lambda: web_on() and agent.web.can_search),
         T("propose_save_page", "Offer to keep the last looked-up page in the writer's library. Saved only after they say yes.", {}, propose_save_page,
           when=lambda: web_on()),
+        T("propose_wiki_notes", "Offer SEVERAL wiki notes at once (for example three characters): the writer says one yes and all are saved. Prefer this to many single proposals.",
+          {"notes": 'a list like [{"kind": "characters|threads|world|premise", "name": "...", "note": "..."}]'}, propose_wiki_notes, required=("notes",)),
         T("propose_append", "Put NEW prose into the book: give the paragraph and the app shows it and asks the writer yes or no. Use this whenever the writer asks you to write, draft or continue "
-          "(including 'next paragraph'). Never paste a draft into the chat instead.", {"text": "the whole paragraph, in the book's voice", "chapter": "chapter number (a new chapter must be the next number)"},
+          "(including 'next paragraph'). Never paste a draft into the chat instead.", {"text": "ONLY the paragraph's prose, nothing else: no comment to the writer, no question", "chapter": "chapter number (a new chapter must be the next number)"},
           propose_append, required=("text",)),
         T("use_skill", "Load a playbook for a kind of job (see SKILLS).", {"name": "skill name"}, use_skill, required=("name",)),
     ]
