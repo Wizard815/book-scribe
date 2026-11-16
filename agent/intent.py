@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import NamedTuple
 
 _UNITS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split())}
 _TENS = {w: 10 * i for i, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if w != "_"}
@@ -303,7 +304,14 @@ def new_chapter(text: str) -> int | None:
 
 
 _DELETE = re.compile(rf"^{_POLITE}(?:delete|remove|cut|scrap|erase|get rid of|take out)\b(.+)$")
-_MOVE = re.compile(rf"^{_POLITE}(?:move|put|shift|send)\b(.+?)\b(?:to|into|in) (?:the )?(?:end of |start of )?chapter (\d+)(?: please)?$")
+_MOVE_LEAD = re.compile(rf"^{_POLITE}(?:move|put|shift|send)\b(.+)$")
+_TOPWORD = r"(?:start|beginning|top|front)"
+
+
+class Move(NamedTuple):
+    ref: "Ref"
+    chapter: int | None  # None: the chapter the paragraph is already in
+    where: object  # "end" | "start" | ("before"|"after", paragraph number)
 
 
 def delete_request(text: str) -> Ref | None:
@@ -315,13 +323,39 @@ def delete_request(text: str) -> Ref | None:
     return ref if ref.para is not None else None
 
 
-def move_request(text: str) -> tuple[Ref, int] | None:
-    """"move the last paragraph to chapter 2" / "move paragraph 5 of chapter 1 to chapter 2" -> (which paragraph, target chapter)."""
-    m = _MOVE.match(norm(text))
+def move_request(text: str) -> "Move | None":
+    """"move paragraph 5 to chapter 2", "move the last paragraph to the start of chapter 2", "move paragraph 4 before paragraph 1", "move it to the end"."""
+    n = norm(text)
+    m0 = _MOVE_LEAD.match(n)
+    if not m0 or len(n.split()) > 18:
+        return None
+    body = m0.group(1).strip()
+    if m := re.search(r"^(.+?)\b(before|after|ahead of|behind)\b (?:the )?(?:paragraph|section|part) (\d+)(?: (?:of|in) chapter (\d+))?$", body):
+        ref = parse_ref(m.group(1))
+        return Move(ref, int(m.group(4)) if m.group(4) else None, ("before" if m.group(2) in ("before", "ahead of") else "after", int(m.group(3)))) if ref.para is not None else None
+    if m := re.search(rf"^(.+?)\bto (?:the )?{_TOPWORD}(?: of)?(?: (?:the )?chapter (\d+))?(?: of the chapter)?$", body):
+        ref = parse_ref(m.group(1))
+        return Move(ref, int(m.group(2)) if m.group(2) else None, "start") if ref.para is not None else None
+    if m := re.search(r"^(.+?)\bto (?:the )?end(?: of)?(?: (?:the )?chapter (\d+))?(?: of the chapter)?$", body):
+        ref = parse_ref(m.group(1))
+        return Move(ref, int(m.group(2)) if m.group(2) else None, "end") if ref.para is not None else None
+    if m := re.search(r"^(.+?)\b(?:to|into|in) (?:the )?(?:end of )?chapter (\d+)$", body):
+        ref = parse_ref(m.group(1))
+        return Move(ref, int(m.group(2)), "end") if ref.para is not None else None
+    return None
+
+
+_PICK_WORDS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10}
+_PICK = re.compile(r"^(?:(?:i |we |let's |lets |i'll |ill )?(?:like|take|want|choose|pick|use|prefer|go with|will take)\s+)?(?:the |number |option |name |idea |no )*(\d{1,2}|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)(?: one| 1| please| is good| sounds good)?$")
+
+
+def pick_number(text: str) -> int | None:
+    """"number 2", "the second one", "I like 3", "use the third": which of the numbered ideas the writer chose."""
+    m = _PICK.match(norm(text))
     if not m:
         return None
-    ref = parse_ref(m.group(1))
-    return (ref, int(m.group(2))) if ref.para is not None else None
+    w = m.group(1)
+    return int(w) if w.isdigit() else _PICK_WORDS[w]
 
 
 _UNDO = re.compile(r"^(?:please |ok |okay |no |oh |hey )*(?:can you |could you )?(?:undo|revert|put (?:it|that|them) back|take (?:it|that) back|go back to (?:how|what) it was|change it back|bring (?:it|that) back)(?: that| it| the last (?:change|edit|one)| my last (?:change|edit)| please)*[.!?]?$")

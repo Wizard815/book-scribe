@@ -229,20 +229,63 @@ class BookStore:
         self._stamp(book)
         return para
 
-    def move_paragraph(self, book: str, paragraph_id: str, to_chapter: int) -> Paragraph:
-        """Move a paragraph to the end of another chapter (a new chapter is made if it is the next number). One undo takes it back."""
+    def insert_paragraph(self, book: str, chapter: int, text: str, before_id: str | None = None) -> Paragraph:
+        """Add a paragraph just before another one (or at the end when before_id is None). Undoable."""
+        if before_id is None:
+            return self.append_paragraph(book, chapter, text)
+        before = self.find(book, before_id)
+        if before.chapter != chapter:
+            raise BookError("That paragraph is in a different chapter.")
+        path = self.chapter_path(book, chapter)
+        lines = _read(path).split("\n")
+        i = next((k for k, l in enumerate(lines) if (m := PID_RE.match(l.strip())) and m.group(1) == before_id), None)
+        if i is None:
+            raise BookError(f"paragraph {before_id} not found")
+        paras = self.paragraphs(book, chapter)
+        nums = [int(m.group(1)) for p in paras if p.scene == before.scene and (m := re.search(r"_p(\d+)$", p.id))]
+        pid = f"ch{chapter}_s{before.scene}_p{1 + max(nums, default=0)}"
+        text = clean_paragraph(text)
+        self._snapshot(book, chapter, "append", pid)
+        lines[i:i] = [f"<!-- paragraph_id: {pid} -->", text, ""]
+        path.write_text("\n".join(lines))
+        self._stamp(book)
+        return Paragraph(pid, text, chapter, before.scene)
+
+    def move_paragraph(self, book: str, paragraph_id: str, to_chapter: int, where="end") -> Paragraph:
+        """Move a paragraph: to the end of a chapter (the default), to its start, or just before / after another paragraph. A new chapter is made if it
+        is the next number. The whole move is one undo."""
         import uuid
         para = self.find(book, paragraph_id)
-        if to_chapter == para.chapter:
-            raise BookError("It is already in that chapter.")
+        same = to_chapter == para.chapter
+        if same and where == "end" and self.paragraphs(book, to_chapter)[-1].id == paragraph_id:
+            raise BookError("It is already there.")
         nums = self.chapter_numbers(book)
         if to_chapter not in nums:
             if to_chapter != (max(nums) + 1 if nums else 1):
                 raise BookError(f"There is no chapter {to_chapter}, and it is not the next one.")
             self.create_chapter(book, to_chapter)
+        before_id: str | None = None
+        existing = [p for p in self.paragraphs(book, to_chapter) if p.id != paragraph_id] if to_chapter in nums or same else []
+        if where == "start":
+            before_id = existing[0].id if existing else None
+        elif isinstance(where, tuple):
+            k = where[1]
+            if not 1 <= k <= len(self.paragraphs(book, to_chapter)):
+                raise BookError(f"There is no paragraph {k} in chapter {to_chapter}.")
+            anchor = self.paragraphs(book, to_chapter)[k - 1]
+            if anchor.id == paragraph_id:
+                raise BookError("That is the paragraph you are moving.")
+            if where[0] == "before":
+                before_id = anchor.id
+            else:
+                later = [p for p in self.paragraphs(book, to_chapter) if p.id != paragraph_id]
+                at = next(i for i, p in enumerate(later) if p.id == anchor.id)
+                before_id = later[at + 1].id if at + 1 < len(later) else None
+        if same and before_id is None and where == "end":
+            pass
         self._group = uuid.uuid4().hex
         try:
-            new = self.append_paragraph(book, to_chapter, para.text)
+            new = self.insert_paragraph(book, to_chapter, para.text, before_id)
             self.delete_paragraph(book, paragraph_id)
         finally:
             self._group = None
@@ -261,7 +304,8 @@ class BookStore:
         path = self.chapter_path(book, chapter)
         before = _read(path) if path.exists() else ""
         d = self._hist(book)
-        name = f"{int(time.time() * 1000)}_ch{chapter}.md"
+        import uuid
+        name = f"{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}_ch{chapter}.md"  # unique even for two saves in one millisecond
         (d / name).write_text(before, encoding="utf-8")
         with open(d / "log.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps({"file": name, "chapter": chapter, "what": what, "paragraph": paragraph_id, "at": int(time.time()), "after": None,
@@ -314,7 +358,11 @@ class BookStore:
         batch = [last]  # a move is two saved changes; undoing it takes back both
         if last.get("group"):
             batch = [r for r in rows if r.get("group") == last["group"]][::-1]
-        for r in batch:  # check everything first, so a refusal leaves the book exactly as it is
+        checked: set[int] = set()
+        for r in batch:  # newest first. Check everything before touching anything, so a refusal leaves the book exactly as it is.
+            if r["chapter"] in checked:
+                continue  # an older save of the same chapter inside this move: only the newest one can match the file as it is now
+            checked.add(r["chapter"])
             p = self.chapter_path(book, r["chapter"])
             if r.get("after") and hashlib.sha1((_read(p) if p.exists() else "").encode()).hexdigest() != r["after"]:
                 raise BookError("That chapter was changed outside Book Scribe since, so I will not undo over it.")
@@ -324,7 +372,7 @@ class BookStore:
             s.unlink()
             rows.remove(r)
         log.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
-        return {"chapter": last["chapter"], "what": last["what"], "paragraph": last.get("paragraph", "")}
+        return {"chapter": last["chapter"], "what": "move" if last.get("group") else last["what"], "paragraph": last.get("paragraph", "")}
 
     def nth_paragraph(self, book: str, chapter: int, n: int, scene: int | None = None) -> Paragraph | None:
         """n-th paragraph of a chapter (1-based, -1 = last), optionally within one scene. None if out of range."""

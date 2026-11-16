@@ -154,7 +154,7 @@ async def test_brainstorm_runs_separate_calls_within_a_budget(books):
 async def test_asking_for_names_is_instant_and_repeatable(books):
     agent, _, llm, _ = make(books, [])
     r = await agent.handle("s", "give me three Irish names for a girl")
-    assert len(r.ideas) == 3 and llm.calls == [] and "Tap one" in r.text
+    assert len(r.ideas) == 3 and llm.calls == [] and "Say the number" in r.text
     first = list(r.ideas)
     r2 = await agent.handle("s", "more")
     assert len(r2.ideas) == 3 and not set(first) & set(r2.ideas) and llm.calls == []  # same kind, new answers
