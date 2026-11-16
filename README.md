@@ -367,3 +367,14 @@ a paragraph aloud splits it into narration and dialogue and speaks each part in 
   porter's entry. The admin page shows both counts.
 
 How the agent and the chat fit together: see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## One conversation, a library, and family trees
+
+* **One agent, one chat.** No "new chat" and no context to manage. Older talk is summarised automatically, everything said is kept in a
+  journal (as text) and searchable by meaning, and **Clear chat** only clears the screen.
+* **Library.** Add almost any file: documents, PDFs, spreadsheets, ebooks, zips, photos and scans (read by the chat model if it can see
+  pictures), recordings, and family trees. Use the Add file / Library buttons, take a photo, or drop files on the page.
+* **Family trees.** GEDCOM (`.ged`, from Family Tree Maker 2017-2026, Ancestry, MyHeritage, FamilySearch, RootsMagic, Legacy...), Gramps, and FTM
+  backups. Ask about anyone, or turn a person into a story character. Raw `.ftm` files are only read as plain tables: export GEDCOM for the
+  full tree, or write an addon. See [docs/ADDONS.md](docs/ADDONS.md).
+* **Addons.** Your own Python files (`ADDONS_DIR`) can add file readers and read-only tools for the model.

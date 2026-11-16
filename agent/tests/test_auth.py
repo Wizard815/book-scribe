@@ -23,7 +23,9 @@ def with_account(app, user="writer", pw="correct horse battery"):
 
 PROTECTED = [("GET", "/api/books"), ("GET", "/api/books/demo/chapters"), ("GET", "/api/books/demo/chapters/1"), ("GET", "/api/books/demo/voices"),
              ("GET", "/api/books/demo/graph"), ("POST", "/api/chat"), ("POST", "/api/tts"), ("POST", "/api/transcribe"), ("POST", "/api/voice"),
-             ("PUT", "/api/books/demo/paragraphs/ch1_s1_p1"), ("POST", "/api/account/password")]
+             ("PUT", "/api/books/demo/paragraphs/ch1_s1_p1"), ("POST", "/api/account/password"),
+             ("GET", "/api/books/demo/library"), ("POST", "/api/books/demo/library"), ("GET", "/api/books/demo/library/x"), ("GET", "/api/books/demo/library/x/file"),
+             ("DELETE", "/api/books/demo/library/x"), ("GET", "/api/books/demo/memory/search"), ("GET", "/api/books/demo/chat"), ("POST", "/api/books/demo/chat/clear")]
 
 
 @pytest.mark.parametrize("method,path", PROTECTED)

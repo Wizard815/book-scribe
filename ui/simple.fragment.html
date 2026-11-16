@@ -217,7 +217,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
         <div class="tools">
           <button id="read" type="button" aria-pressed="true">Read aloud: On</button>
           <button id="stop" type="button">Stop talking</button>
-          <button id="fresh" type="button">New chat</button>
+          <button id="fresh" type="button" aria-label="Clear the chat. I will still remember our work.">Clear chat</button>
         </div>
       </div>
       <div class="grip" data-grip="chat" aria-hidden="true"></div>
@@ -447,6 +447,26 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
       b.type = "button"; b.textContent = label; if (cls) b.className = cls; b.onclick = () => send(say); box.append(b);
     }
   }
+  // One long conversation: the server keeps it (and a summary of the older part), so a reload or a new device picks up where we left off.
+  async function restoreChat() {
+    if (state.mode !== "scribe" || !state.bookName) return false;
+    try {
+      const r = await siteFetch(`/api/books/${encodeURIComponent(state.bookName)}/chat`);
+      const j = await r.json();
+      if (!r.ok || !j.messages || !j.messages.length) return false;
+      $("chat").replaceChildren(); state.history = [];
+      for (const m of j.messages) { bubble(m.role === "user" ? "me" : "assistant", m.text); state.history.push({ role: m.role, text: m.text }); }
+      showIdeas(false); setPending(null);
+      return true;
+    } catch (_) { return false; }
+  }
+  async function clearChat() {  // empties the screen only: the agent folds the talk into its memory first and the journal keeps every word
+    stopSpeaking();
+    if (state.mode === "scribe" && state.bookName) { try { await siteFetch(`/api/books/${encodeURIComponent(state.bookName)}/chat/clear`, { method: "POST" }); } catch (_) {} }
+    state.history = []; welcome();
+    if (state.mode === "scribe") bubble("note", "The chat is clear. I still remember everything we have worked on.");
+    setStatus("Ready");
+  }
   function welcome() {
     $("chat").replaceChildren();
     bubble("assistant", "Hello. I am Book Scribe. Tell me about your story, or ask me to help you write. Press Talk, or type below.");
@@ -503,7 +523,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     $("barSite").hidden = state.mode !== "scribe";
     $("barLocal").hidden = state.mode !== "claude";
     $("saveBook").hidden = !state.downloads;
-    if (state.mode === "claude") { loadLocalBook(); } else { await loadSiteBook(); }
+    if (state.mode === "claude") { loadLocalBook(); } else { await loadSiteBook(); await restoreChat(); }
     setStatus("Ready");
   }
   function bookContext() {
@@ -715,7 +735,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   async function setBook(name) {  // switch which book is open (Settings > Books)
     state.bookName = name; store.set("bs_book_name", name);
     state.history = []; state.sid = state.sid.slice(0, 20) + Date.now().toString(36);
-    await loadSiteBook(); welcome();
+    await loadSiteBook(); if (!(await restoreChat())) welcome();
   }
   function siteMessage(t) {
     const p = document.createElement("p"); p.id = "bookEmpty"; p.textContent = t; $("book").replaceChildren(p);
@@ -757,7 +777,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send($("msg").value); } });
   $("talk").onclick = toggleTalk; $("stop").onclick = stopSpeaking;
   $("read").onclick = () => { state.read = !state.read; if (!state.read) stopSpeaking(); applyRead(); };
-  $("fresh").onclick = () => { stopSpeaking(); state.history = []; state.sid = state.sid.slice(0, 20) + Date.now().toString(36); welcome(); setStatus("Ready"); };
+  $("fresh").onclick = clearChat;
   $("prevCh").onclick = () => stepChapter(-1); $("nextCh").onclick = () => stepChapter(1);
   $("copyBook").onclick = copyBook; $("saveBook").onclick = saveBook; $("clearBook").onclick = clearBook;
   narrowQ.addEventListener("change", applyUI);
@@ -765,7 +785,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 
   Object.assign(window.BS, {
     state, store, bubble, note, welcome, applySize, applyRead, siteFetch, loadSiteBook, setBook, setStatus, send, applyLook, currentLook,
-    afterLogin: async () => { await loadSiteBook(); setStatus("Ready"); },
+    afterLogin: async () => { await loadSiteBook(); await restoreChat(); setStatus("Ready"); },
   });
   try { applyLook(JSON.parse(store.get("bs_look", "null")), false); } catch (_) { applySize(); }  // the login screen is already in the writer's own look
   applySize(); applyRead(); applyUI(); welcome();

@@ -6,10 +6,30 @@ things in the turn's Ctx for the writer's screen (highlights, a new look, tap-to
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
+import skills as skills_mod
 import uisettings
 from harness import Ctx, Tool, Toolbox
 from ideas import KINDS, Ideas
+from library import chunk_text
+
+SKILLS_DIR = Path(__file__).parent / "skills"
+
+
+def _skills(agent) -> dict:
+    cached = getattr(agent, "_skills", None)
+    if cached is None:
+        extra = Path(agent.addons.dir) / "skills" if agent.addons and agent.addons.dir else None
+        cached = agent._skills = skills_mod.load(SKILLS_DIR, extra)
+    return cached
+
+
+def skills_prompt(agent) -> str:
+    sk = _skills(agent)
+    if not sk:
+        return ""
+    return "SKILLS (playbooks; load one with [[tool: use_skill {\"name\": \"...\"}]] when the job matches):\n" + "\n".join(f"- {s.name}: {s.description}" for s in sk.values())
 
 
 def _int(v, default: int, lo: int, hi: int) -> int:
@@ -117,8 +137,94 @@ def build(agent) -> Toolbox:
 
         return list(await asyncio.gather(*(one(sp) for sp in seeds)))
 
+    async def _semantic(ctx: Ctx, query: str, scope: str, k: int, words) -> list[tuple[str, str]]:
+        """[(key, text)] best first: by meaning when the index is ready, else by words."""
+        b = book(ctx)
+        if agent.index and agent.index.status(b)["ready"]:
+            hits = await agent.index.search(b, query, k=k * 2, scope=scope)
+            docs = {}
+            if "mem" in scope and agent.journal:
+                docs.update(agent.journal.chunks(b))
+            if "lib" in scope and agent.library:
+                docs.update(agent.library.chunks(b))
+            floor = max(0.25, hits[0][1] * 0.8) if hits else 1.0
+            got = [(key, docs[key]) for key, s in hits if s >= floor and key in docs]
+            if got:
+                return got[:k]
+        return words(b, query, k)
+
+    async def recall(ctx: Ctx, query="", k=4):
+        if not agent.journal:
+            return "There is no conversation record."
+        got = await _semantic(ctx, query, "mem", _int(k, 4, 1, 8), agent.journal.search_words)
+        return [{"text": text[:500]} for _, text in got] or "Nothing like that was said before."
+
+    async def search_library(ctx: Ctx, query="", k=4):
+        if not agent.library:
+            return "There is no library."
+        got = await _semantic(ctx, query, "lib", _int(k, 4, 1, 8), agent.library.search_words)
+        return [{"text": text[:600]} for _, text in got] or "Nothing in the library matches that."
+
+    async def list_library(ctx: Ctx):
+        items = agent.library.items(book(ctx)) if agent.library else []
+        return [{"title": m["title"], "kind": m["kind"].replace("_", " "), "status": m["status"]} for m in items[:40]] or "The library is empty."
+
+    def _find_item(ctx: Ctx, title: str):
+        want = title.strip().lower()
+        items = agent.library.items(book(ctx)) if agent.library else []
+        return next((m for m in items if m["title"].lower() == want), None) or next((m for m in items if want and want in m["title"].lower()), None)
+
+    async def read_library(ctx: Ctx, title="", part=1):
+        m = _find_item(ctx, title)
+        if not m:
+            return "No file in the library has that title. Use list_library."
+        parts = chunk_text(agent.library.text(book(ctx), m["slug"]), 1400)
+        if not parts:
+            return f"{m['title']} has no readable text. " + " ".join(m.get("notes", []))
+        n = _int(part, 1, 1, len(parts))
+        return f"{m['title']}, part {n} of {len(parts)}:\n{parts[n - 1]}"
+
+    async def family_lookup(ctx: Ctx, name=""):
+        trees = agent.library.trees(book(ctx)) if agent.library else []
+        if not trees:
+            return "No family tree has been added to the library."
+        out = []
+        for slug, tree in trees:
+            for p in tree.find(name, 3):
+                out.append(tree.describe(p.id))
+        return "\n\n".join(out[:4]) or f"Nobody called {name!r} is in the family tree."
+
+    async def wiki_list(ctx: Ctx):
+        b = store.bible(book(ctx))
+        out = {k: list(b.entries(k)) for k in ("characters", "threads", "world")}
+        out["premise"] = "written" if b.read("premise").strip() else "empty"
+        return out
+
+    async def wiki_read(ctx: Ctx, name=""):
+        b = store.bible(book(ctx))
+        for kind in ("characters", "threads", "world"):
+            for n, e in b.entries(kind).items():
+                if n.lower() == name.strip().lower() or (name.strip() and name.strip().lower() in n.lower()):
+                    return f"{kind[:-1].upper()} {e.name}:\n{e.summary()}"
+        return "No wiki page has that name. Use wiki_list."
+
+    async def propose_wiki_note(ctx: Ctx, kind="characters", name="", note=""):
+        from agent import Pending  # local: agent.py imports this module
+
+        kind = {"character": "characters", "thread": "threads", "place": "world", "rule": "world"}.get(kind, kind)
+        if kind not in ("characters", "threads", "world") or not name.strip() or not note.strip():
+            return "Need kind (characters|threads|world), a name, and the note."
+        if ctx.sess.pending:
+            return "A proposal is already waiting for the writer's answer. Do not propose another."
+        ctx.sess.pending = Pending(kind="wiki", text=note.strip()[:1200], chapter=ctx.sess.chapter, data={"kind": kind, "name": name.strip()[:80]})
+        return "Proposed. In your reply, say in one sentence what you would add and ask the writer if you should save it. It is saved only if they say yes."
+
+    async def use_skill(ctx: Ctx, name=""):
+        s = _skills(agent).get(name.strip().lower())
+        return f"SKILL {s.name}:\n{s.body}" if s else "No such skill. Skills: " + ", ".join(_skills(agent))
+
     T = Tool
-    return Toolbox([
+    base = [
         T("random_ideas", "Real randomness for names, places, character sketches, problems, twists, titles, objects, sensory details, weather, jobs, quirks and writing challenges. "
           "USE THIS instead of inventing names or plot turns yourself: your own first choices are the predictable ones.",
           {"kind": "|".join(KINDS), "n": "1-12", "culture": "for names/characters, e.g. irish, japanese, fantasy_elvish, any", "gender": "female|male|neutral|any", "type": "for places: village|town|inn|ship|street|wild"},
@@ -134,4 +240,16 @@ def build(agent) -> Toolbox:
           {"setting": "size|contrast|bold|spacing|simple|rate|theme|layout", "value": "size: 0-7, bigger or smaller; contrast: normal|high|dark; bold/simple: true|false; spacing: 0-2; rate: 0.6-1.5; theme: auto|light|dark; layout: side|stack|chat|book"},
           set_ui, required=("setting", "value")),
         T("brainstorm", "Get several genuinely different ideas on a topic at once (costs extra time; use sparingly).", {"topic": "what to brainstorm", "n": "2-4"}, brainstorm, required=("topic",)),
-    ])
+        T("recall", "Search EVERYTHING the writer ever said in this long conversation (by meaning). Use when they ask 'what did I say about...' or you suspect a forgotten idea or description.",
+          {"query": "what to look for", "k": "1-8"}, recall, required=("query",)),
+        T("search_library", "Search the files the writer added (research, notes, scans, photos, family trees) by meaning.", {"query": "what to look for", "k": "1-8"}, search_library, required=("query",)),
+        T("list_library", "List the files in the writer's library.", {}, list_library),
+        T("read_library", "Read one library file, part by part.", {"title": "the file's title", "part": "number"}, read_library, required=("title",)),
+        T("family_lookup", "Look up a person in the writer's family tree: dates, places, parents, spouse, children, siblings, notes.", {"name": "a name"}, family_lookup, required=("name",)),
+        T("wiki_list", "List every page in the story wiki (characters, threads, world).", {}, wiki_list),
+        T("wiki_read", "Read one story wiki page in full.", {"name": "the page name"}, wiki_read, required=("name",)),
+        T("propose_wiki_note", "Offer to add a note to the story wiki. The writer must say yes before it is saved.",
+          {"kind": "characters|threads|world", "name": "page name", "note": "the facts to add, plain words"}, propose_wiki_note, required=("kind", "name", "note")),
+        T("use_skill", "Load a playbook for a kind of job (see SKILLS).", {"name": "skill name"}, use_skill, required=("name",)),
+    ]
+    return Toolbox(base + list(agent.addons.tools if agent.addons else []))

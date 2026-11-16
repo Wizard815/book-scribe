@@ -34,6 +34,8 @@ class Settings:
     writer_age: str | None = None
     tts_mode: str = "single"  # single | multi
     voice_profile: dict = field(default_factory=dict)
+    context_chars: int = 9000  # recent conversation kept word for word; older turns are folded into a summary
+    addons_dir: str | None = None  # folder of the administrator's addon .py files (see addons.py)
     index_debounce: float = 15.0  # seconds to wait after a save before updating the embedding index
     # reading aloud
     speech_llm: bool = True  # let the chat model assign speakers to dialogue the rules can't place (cached)
@@ -70,7 +72,10 @@ def load_settings(config_path: str | None = None) -> Settings:
         writer_username=os.getenv("WRITER_USERNAME", ""),
         writer_password=os.getenv("WRITER_PASSWORD", ""),
         trust_proxy=os.getenv("TRUST_PROXY", "").lower() in ("1", "true", "yes"),
+        addons_dir=os.getenv("ADDONS_DIR") or None,
     )
+    if os.getenv("CONTEXT_CHARS", "").isdigit():
+        s.context_chars = max(2000, int(os.environ["CONTEXT_CHARS"]))
     path = Path(config_path or os.getenv("CONFIG_PATH", "/app/config.yaml"))
     if path.is_file():
         cfg = yaml.safe_load(path.read_text()) or {}
