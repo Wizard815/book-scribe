@@ -227,7 +227,9 @@ async def test_stepping_past_the_chapter_end_says_so(books):
 async def test_unsaved_proposal_dropped_by_new_command_is_announced(books):
     agent, _, _ = make(books, ["New text."])
     await agent.handle("s", "rewrite the first paragraph of chapter 1")
-    r = await agent.handle("s", "go to chapter 1")
+    r = await agent.handle("s", "go to chapter 1")  # looking at the book keeps the proposal waiting
+    assert r.pending and r.pending["kind"] == "edit" and not r.notes
+    r = await agent.handle("s", "write a new scene about the rain")  # a different job abandons it, and says so
     assert "dropped the unsaved proposal" in " ".join(r.notes).lower()
 
 

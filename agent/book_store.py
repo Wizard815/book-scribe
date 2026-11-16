@@ -198,7 +198,8 @@ class BookStore:
     def append_paragraph(self, book: str, chapter: int, text: str, scene: int | None = None) -> Paragraph:
         paras = self.paragraphs(book, chapter)
         scene = scene or (paras[-1].scene if paras else 1)
-        k = 1 + sum(1 for p in paras if p.scene == scene)
+        nums = [int(m.group(1)) for p in paras if p.scene == scene and (m := re.search(r"_p(\d+)$", p.id))]
+        k = 1 + max(nums, default=0)  # one past the highest, so ids stay unique after a paragraph was deleted
         pid = f"ch{chapter}_s{scene}_p{k}"
         path = self.chapter_path(book, chapter)
         raw = _read(path)
@@ -209,6 +210,43 @@ class BookStore:
         path.write_text(raw.rstrip("\n") + f"\n\n<!-- paragraph_id: {pid} -->\n{text}\n")
         self._stamp(book)
         return Paragraph(pid, text, chapter, scene)
+
+    def delete_paragraph(self, book: str, paragraph_id: str) -> Paragraph:
+        """Remove one paragraph (undoable). Returns what was removed."""
+        para = self.find(book, paragraph_id)
+        path = self.chapter_path(book, para.chapter)
+        lines = _read(path).split("\n")
+        marker = next((i for i, l in enumerate(lines) if (m := PID_RE.match(l.strip())) and m.group(1) == paragraph_id), None)
+        if marker is None:
+            raise BookError(f"paragraph {paragraph_id} not found")
+        end = marker + 1
+        while end < len(lines) and lines[end].strip() and not PID_RE.match(lines[end].strip()) and not lines[end].startswith("#"):
+            end += 1
+        while end < len(lines) and not lines[end].strip():
+            end += 1
+        self._snapshot(book, para.chapter, "delete", paragraph_id)
+        path.write_text("\n".join(lines[:marker] + lines[end:]))
+        self._stamp(book)
+        return para
+
+    def move_paragraph(self, book: str, paragraph_id: str, to_chapter: int) -> Paragraph:
+        """Move a paragraph to the end of another chapter (a new chapter is made if it is the next number). One undo takes it back."""
+        import uuid
+        para = self.find(book, paragraph_id)
+        if to_chapter == para.chapter:
+            raise BookError("It is already in that chapter.")
+        nums = self.chapter_numbers(book)
+        if to_chapter not in nums:
+            if to_chapter != (max(nums) + 1 if nums else 1):
+                raise BookError(f"There is no chapter {to_chapter}, and it is not the next one.")
+            self.create_chapter(book, to_chapter)
+        self._group = uuid.uuid4().hex
+        try:
+            new = self.append_paragraph(book, to_chapter, para.text)
+            self.delete_paragraph(book, paragraph_id)
+        finally:
+            self._group = None
+        return new
 
     # --- undo: every saved change first copies the chapter as it was, so the writer can always take it back ---------------------------
     HISTORY_KEEP = 200
@@ -226,7 +264,8 @@ class BookStore:
         name = f"{int(time.time() * 1000)}_ch{chapter}.md"
         (d / name).write_text(before, encoding="utf-8")
         with open(d / "log.jsonl", "a", encoding="utf-8") as f:
-            f.write(json.dumps({"file": name, "chapter": chapter, "what": what, "paragraph": paragraph_id, "at": int(time.time()), "after": None}) + "\n")
+            f.write(json.dumps({"file": name, "chapter": chapter, "what": what, "paragraph": paragraph_id, "at": int(time.time()), "after": None,
+                                "group": getattr(self, "_group", None)}) + "\n")
         self._pending_hash = (book, hashlib.sha1(before.encode()).hexdigest())
 
     @staticmethod
@@ -272,13 +311,18 @@ class BookStore:
             rows.pop()  # a log line whose copy is gone cannot be undone
         else:
             return None
-        path = self.chapter_path(book, last["chapter"])
-        now = hashlib.sha1((_read(path) if path.exists() else "").encode()).hexdigest()
-        if last.get("after") and now != last["after"]:
-            raise BookError("That chapter was changed outside Book Scribe since, so I will not undo over it.")
-        path.write_text(snap.read_text(encoding="utf-8"), encoding="utf-8")
-        snap.unlink()
-        rows.pop()
+        batch = [last]  # a move is two saved changes; undoing it takes back both
+        if last.get("group"):
+            batch = [r for r in rows if r.get("group") == last["group"]][::-1]
+        for r in batch:  # check everything first, so a refusal leaves the book exactly as it is
+            p = self.chapter_path(book, r["chapter"])
+            if r.get("after") and hashlib.sha1((_read(p) if p.exists() else "").encode()).hexdigest() != r["after"]:
+                raise BookError("That chapter was changed outside Book Scribe since, so I will not undo over it.")
+        for r in batch:
+            s = self._hist(book) / str(r["file"])
+            self.chapter_path(book, r["chapter"]).write_text(s.read_text(encoding="utf-8"), encoding="utf-8")
+            s.unlink()
+            rows.remove(r)
         log.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
         return {"chapter": last["chapter"], "what": last["what"], "paragraph": last.get("paragraph", "")}
 

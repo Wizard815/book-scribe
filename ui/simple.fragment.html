@@ -612,7 +612,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     (j.notes || []).forEach((n) => bubble("note", n));
     if (b && j.highlights && j.highlights.length) addRefButtons(b, j.highlights);
     if (b && j.ideas && j.ideas.length) addIdeaButtons(b, j.ideas);
-    setPending(j.pending || null, j.text);
+    setPending(j.pending || null, (j.pending && j.pending.ask) || j.text);
     if (j.open_item && window.BS.openLibraryItem) window.BS.openLibraryItem(j.open_item.slug);
     if (j.highlights && j.highlights.length) applyHighlights(j.highlights);
     else if (j.chapter) showChapter(j.chapter, j.focus, j.changed && j.changed.length);
@@ -858,6 +858,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     if (!state.bookName) return;
     try {
       const { paragraphs } = await api(`/books/${encodeURIComponent(state.bookName)}/chapters/${n}`);
+      if (!state.chapters.includes(n)) state.chapters = (await api(`/books/${encodeURIComponent(state.bookName)}/chapters`)).chapters;  // a chapter that was just started
       state.chapter = n;
       const i = state.chapters.indexOf(n);
       $("chapterLabel").textContent = `Chapter ${n} of ${state.chapters.length || n}`;
