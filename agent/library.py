@@ -114,7 +114,10 @@ class Library:
         p = self._item_dir(book, slug) / "tree.json"
         if not p.exists():
             return None
-        raw = json.loads(p.read_text(encoding="utf-8"))
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
         t = genealogy.Tree(source=slug)
         for k, v in raw["people"].items():
             v["birth"], v["death"] = tuple(v["birth"]), tuple(v["death"])

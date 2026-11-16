@@ -29,9 +29,17 @@ class BibleError(Exception):
 
 
 def slugify(name: str) -> str:
-    s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    """File-safe id for a page. Accents are folded (Zoë -> zoe); a name with no Latin letters at all (李明, ليلى, ???) gets a stable id
+    made from the name itself, so any script can be a character or a place."""
+    import hashlib
+    import unicodedata
+
+    folded = "".join(c for c in unicodedata.normalize("NFKD", name) if not unicodedata.combining(c))
+    s = re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")[:70].strip("-")
     if not s:
-        raise BibleError(f"cannot make a slug from {name!r}")
+        if not name.strip():
+            raise BibleError("a page needs a name")
+        s = "n-" + hashlib.sha1(name.strip().encode("utf-8")).hexdigest()[:8]
     return s
 
 
@@ -98,7 +106,10 @@ class Bible:
         for f in sorted(d.glob("*.md")):
             if f.stem.startswith("_"):  # _index.md is a roster, not an entry
                 continue
-            e = parse_entry(f.stem, f.read_text())
+            try:
+                e = parse_entry(f.stem, f.read_text(encoding="utf-8", errors="replace"))
+            except (OSError, ValueError):
+                continue  # one unreadable page must never stop the whole agent
             out[e.name] = e
         return out
 
@@ -110,7 +121,10 @@ class Bible:
 
     def read(self, name: str) -> str:
         p = self.root / f"{name}.md"
-        return p.read_text() if name in ("premise", "timeline") and p.exists() else ""
+        try:
+            return p.read_text(encoding="utf-8", errors="replace") if name in ("premise", "timeline") and p.exists() else ""
+        except OSError:
+            return ""
 
     def mentioned(self, kind: str, text: str) -> list[Entry]:
         return [e for n, e in self.entries(kind).items() if re.search(rf"\b{re.escape(n)}\b", text, re.I)]
@@ -135,7 +149,7 @@ class Bible:
         self.ensure()
         slug = slugify(name)
         p = self._path(kind, slug)
-        e = parse_entry(slug, p.read_text()) if p.exists() else Entry(slug, name)
+        e = parse_entry(slug, p.read_text(encoding="utf-8", errors="replace")) if p.exists() else Entry(slug, name)
         if state:
             e.state.update(state)
         if body is not None:

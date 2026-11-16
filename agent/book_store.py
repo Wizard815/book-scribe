@@ -22,6 +22,18 @@ SCENE_RE = re.compile(r"^##\s+Scene\s+(\d+)", re.I)
 CHAPTER_FILE_RE = re.compile(r"chapter_(\d+)\.md$")
 
 
+
+def _read(path) -> str:
+    """Read a chapter file the way a person's editor may have saved it: UTF-8 (with or without a BOM), UTF-16, or old Windows text.
+    The file is always written back as UTF-8, so a manuscript saved by Notepad or Word is repaired the first time it is edited."""
+    raw = path.read_bytes()
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return raw.decode("utf-16", errors="replace")
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
+
 class BookError(Exception):
     pass
 
@@ -136,7 +148,7 @@ class BookStore:
         p = self.chapter_path(book, n)
         if not p.exists():
             raise BookError(f"chapter {n} not found")
-        return p.read_text()
+        return _read(p)
 
     def paragraphs(self, book: str, n: int) -> list[Paragraph]:
         return parse_chapter(self.read_chapter_raw(book, n), n)
@@ -170,7 +182,7 @@ class BookStore:
         """Rewrite only the named paragraph; every other byte of the chapter is untouched."""
         para = self.find(book, paragraph_id)
         path = self.chapter_path(book, para.chapter)
-        lines = path.read_text().split("\n")
+        lines = _read(path).split("\n")
         marker = next((i for i, l in enumerate(lines) if (m := PID_RE.match(l.strip())) and m.group(1) == paragraph_id), None)
         if marker is None:
             raise BookError(f"paragraph {paragraph_id} not found")
@@ -187,7 +199,7 @@ class BookStore:
         k = 1 + sum(1 for p in paras if p.scene == scene)
         pid = f"ch{chapter}_s{scene}_p{k}"
         path = self.chapter_path(book, chapter)
-        raw = path.read_text()
+        raw = _read(path)
         if not any(SCENE_RE.match(l.strip()) and int(SCENE_RE.match(l.strip()).group(1)) == scene for l in raw.splitlines()):
             raw = raw.rstrip("\n") + f"\n\n## Scene {scene}\n"
         text = clean_paragraph(text)

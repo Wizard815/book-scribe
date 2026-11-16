@@ -56,7 +56,8 @@ class Journal:
             for line in path.read_text(encoding="utf-8").splitlines():
                 try:
                     r = json.loads(line)
-                    if isinstance(r, dict) and isinstance(r.get("text"), str) and "at" in r:
+                    if (isinstance(r, dict) and isinstance(r.get("text"), str) and isinstance(r.get("role"), str)
+                            and isinstance(r.get("at"), (int, float)) and not isinstance(r.get("at"), bool)):
                         out.append(r)
                 except ValueError:
                     continue  # a half-written line after a crash: skip it, keep the rest
@@ -84,7 +85,8 @@ class Journal:
     # --- the screen and the summary ----------------------------------------------------------------------------------
     def _state(self, book: str, name: str) -> dict:
         try:
-            return json.loads((self.dir(book) / name).read_text())
+            d = json.loads((self.dir(book) / name).read_text())
+            return d if isinstance(d, dict) else {}  # valid JSON of the wrong shape counts as damaged
         except (OSError, ValueError):
             return {}
 
@@ -95,13 +97,17 @@ class Journal:
         tmp.replace(p)
 
     def screen_from(self, book: str) -> int:
-        return int(self._state(book, "screen.json").get("from", 0))
+        try:
+            return int(self._state(book, "screen.json").get("from", 0))
+        except (TypeError, ValueError):
+            return 0
 
     def clear_screen(self, book: str) -> None:
         self._put(book, "screen.json", {"from": int(time.time()) + 1})
 
     def summary(self, book: str) -> str:
-        return str(self._state(book, "summary.json").get("text", ""))
+        t = self._state(book, "summary.json").get("text", "")
+        return t if isinstance(t, str) else ""
 
     def set_summary(self, book: str, text: str) -> None:
         self._put(book, "summary.json", {"text": text.strip()[:3000], "at": int(time.time())})
