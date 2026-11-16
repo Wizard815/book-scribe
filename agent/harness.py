@@ -31,6 +31,7 @@ class Ctx:
     ui: dict | None = None  # the new look, if the model changed the screen
     ideas: list[str] = field(default_factory=list)  # generated options the UI can show as tap-to-use buttons
     notes: list[str] = field(default_factory=list)  # short notices for the writer ("I looked up Excalibur on Wikipedia.")
+    drafted: str = ""  # a paragraph the model proposed for the book through propose_append
     open_item: dict | None = None  # a library file to open on the writer's screen: {"slug", "title"}
     calls: list[str] = field(default_factory=list)  # tool names used, for the admin trace
     llm_calls: int = 0  # extra model calls spent by tools such as brainstorm

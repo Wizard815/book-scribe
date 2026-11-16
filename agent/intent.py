@@ -67,6 +67,9 @@ def _words(text: str) -> list[str]:
     return norm(text).split()
 
 
+_SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| the paragraph)?(?: in| in there| down| to the book| to chapter \d+| into the book| away)?(?: please| now| for me)?|that one|that'?s? (?:the one|fine|good|right)|do it)$")
+
+
 def confirmation(text: str) -> tuple[str | None, str]:
     """-> ("yes"|"no"|"hold"|None, remainder).
 
@@ -95,6 +98,8 @@ def confirmation(text: str) -> tuple[str | None, str]:
         return None, text  # "don't change the ending of chapter 2" is a new instruction, not a rejection
     if rest and rest[0] in ("but", "except", "only", "although", "and", "though"):
         rest = rest[1:]
+    if kind == "yes" and _SAVE_WORDS.match(" ".join(rest)):
+        rest = []  # "yes, add it" / "yes save that" / "yes go ahead and put it in": more yes, not a change request
     return kind, " ".join(rest)
 
 
@@ -153,7 +158,7 @@ _POLITE = r"(?:(?:please|kindly|hey|ok|okay|so|now|and|then)\s+)*(?:(?:can|could
 _EDIT_VERBS = r"(?:change|make|rewrite|rephrase|reword|fix|edit|tweak|soften|tighten|revise|replace|shorten|lengthen|expand|trim|polish|improve|punch up|sharpen|simplify|modernize|modernise)"
 _EDIT_LEAD = re.compile(rf"^{_POLITE}{_EDIT_VERBS}\b")
 _EDIT_CLAUSE = re.compile(rf"[,;]\s*(?:and |then |please )*{_EDIT_VERBS}\b|\b(?:and|then) {_EDIT_VERBS} (?:him|her|them|it|that|this|the)\b")
-_DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
+_DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|next paragraph|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
 _QUESTION = re.compile(r"^(?:so |and |but )?(how|what|why|should|do you|does|is|are|which|would|am i|did|will it|shall)\b")
 _OPINION = re.compile(r"^(?:i |i'm |im |i've |my )?(?:hate|like|love|dislike|prefer|think|feel|want|wish|need|always|never|don't like|dont like|can't|cant)\b|^i (?:hate|like|love|dislike|prefer|think|feel|wish|really|just|always|never|don't|dont|can't|cant)\b")
 
@@ -286,6 +291,39 @@ _FILE_REQ = [
 ]
 
 
+_NEW_CHAPTER = re.compile(rf"^{_POLITE}(?:start|begin|open|make|create|add|write|give me)(?: me)?(?: a| the)?(?: new| next| fresh)? chapter(?: (?:number )?(\d+))?(?: please| now)?[.!?]?$|^(?:a )?new chapter(?: please)?[.!?]?$")
+
+
+def new_chapter(text: str) -> int | None:
+    """"start chapter 2", "begin a new chapter": -> the chapter number (0 = the next one), else None."""
+    m = _NEW_CHAPTER.match(norm(text))
+    if not m:
+        return None
+    return int(m.group(1)) if m.group(1) else 0
+
+
+_DELETE = re.compile(rf"^{_POLITE}(?:delete|remove|cut|scrap|erase|get rid of|take out)\b(.+)$")
+_MOVE = re.compile(rf"^{_POLITE}(?:move|put|shift|send)\b(.+?)\b(?:to|into|in) (?:the )?(?:end of |start of )?chapter (\d+)(?: please)?$")
+
+
+def delete_request(text: str) -> Ref | None:
+    """"delete paragraph 3", "remove the last paragraph of chapter 2" -> which paragraph. Only an explicit paragraph counts."""
+    m = _DELETE.match(norm(text))
+    if not m or len(norm(text).split()) > 14:
+        return None
+    ref = parse_ref(m.group(1))
+    return ref if ref.para is not None else None
+
+
+def move_request(text: str) -> tuple[Ref, int] | None:
+    """"move the last paragraph to chapter 2" / "move paragraph 5 of chapter 1 to chapter 2" -> (which paragraph, target chapter)."""
+    m = _MOVE.match(norm(text))
+    if not m:
+        return None
+    ref = parse_ref(m.group(1))
+    return (ref, int(m.group(2))) if ref.para is not None else None
+
+
 _UNDO = re.compile(r"^(?:please |ok |okay |no |oh |hey )*(?:can you |could you )?(?:undo|revert|put (?:it|that|them) back|take (?:it|that) back|go back to (?:how|what) it was|change it back|bring (?:it|that) back)(?: that| it| the last (?:change|edit|one)| my last (?:change|edit)| please)*[.!?]?$")
 
 
@@ -313,6 +351,8 @@ def ideas_request(text: str) -> dict | None:
     """{"kind", "n", "opts"} when the writer asks for random ideas (names, places, twists…), else None. Questions about names that
     already exist ("what is the name of the inn in chapter 2") are not requests for new ones."""
     n = norm(text)
+    if len(n.split()) > 22:  # a long message that merely mentions a title or a name is the writer telling a story, not asking for random ideas
+        return None
     if re.match(r"^(?:give me |show me |can i have |let me have )?(?:more|another(?: (?:one|1))?|again|different ones|some more|(?:one|1) more|another please)(?: please)?$", n):
         return {"repeat": True}
     if re.match(r"^(?:what|who|which|where|when|why|how) (?!should (?:i|we) call)", n) or re.search(r"\bchapter \d+", n):

@@ -49,6 +49,7 @@ class Pending:
     paragraph_id: str | None = None
     scene: int | None = None
     data: dict | None = None  # kind "voice": {speaker, profile, draft}
+    ask: str = ""  # the short question shown in big letters ("Add this to chapter 2?")
 
 
 @dataclass
@@ -212,6 +213,19 @@ class Agent:
                 return await self._revise(sess, rest)  # "yes but make it shorter" / "no, make it longer": never save or drop blindly
             if not kind and (r := self._ui_reply(sess, text)):  # "bigger" while reviewing a proposal: change the screen, keep the proposal
                 return r
+            if not kind and sess.pending.kind != "voice" and (intent.is_question(text) or intent.goto_chapter(text) is not None or intent.step_direction(text)
+                                                               or intent.is_read_aloud(text)):
+                # a question or a look at the book while a change is waiting: answer it, and keep the change waiting (the card stays on screen)
+                text_lc = text
+                keep = sess.pending
+                if intent.is_question(text_lc) and intent.goto_chapter(text_lc) is None and not intent.step_direction(text_lc) and not intent.is_read_aloud(text_lc):
+                    r = await self._converse(sess, text_lc)
+                else:
+                    sess.pending = None  # navigation commands below run as usual, then the change is put back
+                    r = await self._navigate_keeping(sess, text_lc)
+                sess.pending = keep
+                r.pending = {"kind": keep.kind, "text": keep.text, "paragraph_id": keep.paragraph_id, "ask": keep.ask}
+                return r
             if kind == "no" and rest:  # "no, I mean chapter 3 paragraph 2": the guess was wrong; keep the instruction, change the target
                 original, sess.pending = sess.pending.text, None
                 target, sure = await self._resolve(sess, rest)
@@ -221,6 +235,13 @@ class Agent:
             else:
                 sess.pending = None  # anything else is a new command; the unsaved proposal is abandoned, and we say so
                 sess.notices.append("I dropped the unsaved proposal.")
+
+        if not sess.pending and (draft := self._draft_to_rescue(sess, text)):  # "yes, add it" to a draft that was shown without a proposal
+            sess.pending = Pending("append", draft, sess.chapter)
+            sess.history[-1]["content"] = "[the draft paragraph was saved]"  # so a later "yes" can never save it a second time
+            r = await self._accept(sess)
+            r.text += " (That was the paragraph I just showed you.)"
+            return r
 
         if intent.is_noise(text):  # silence that the speech model turned into "Thank you."
             return Reply(text="", mode=sess.mode, chapter=sess.chapter, focus=sess.focus)
@@ -237,6 +258,12 @@ class Agent:
             return self._ideas_reply(sess, req)
         if intent.undo_request(text):
             return self._undo_reply(sess)
+        if (n := intent.new_chapter(text)) is not None:
+            return self._new_chapter_reply(sess, n)
+        if (ref := intent.delete_request(text)) is not None:
+            return self._delete_reply(sess, ref, text)
+        if (mv := intent.move_request(text)) is not None:
+            return self._move_reply(sess, mv[0], mv[1], text)
         if (what := intent.open_request(text)) and (r := self._open_reply(sess, what)):  # "open the harbour notes"
             return r
         if intent.file_request(text):  # "I just downloaded a new PDF, can you open it"
@@ -250,7 +277,8 @@ class Agent:
             if n in self.store.chapter_numbers(sess.book):
                 sess.chapter, sess.focus = n, None
                 return self._reply(sess, f"Chapter {n}.")
-            return self._reply(sess, f"There is no chapter {n} yet.")
+            nxt = max(self.store.chapter_numbers(sess.book), default=0) + 1
+            return self._reply(sess, f"There is no chapter {n} yet." + (f" Say start chapter {n} and I will begin it." if n == nxt else ""))
         if d := intent.step_direction(text):
             return await self._step(sess, d)
         if intent.is_read_aloud(text):
@@ -286,6 +314,112 @@ class Agent:
             return None
         r = self._reply(sess, f"Opening {best['title']}.")
         r.open_item = {"slug": best["slug"], "title": best["title"]}
+        return r
+
+    _OFFER = re.compile(r"(?:add|save|put|use|keep|go ahead|shall i|should i|want me to|happy with)[^.?!]*\?\s*$", re.I)
+
+    def _draft_to_rescue(self, sess: Session, text: str) -> str:
+        """If the writer says yes and my last message was a draft paragraph that asked to be saved but never became a proposal, recover it."""
+        kind, rest = intent.confirmation(text)
+        if kind != "yes" or rest or not sess.history or sess.history[-1]["role"] != "assistant":
+            return ""
+        last = sess.history[-1]["content"].strip()
+        if len(last) < 200 or not self._OFFER.search(last) or last.startswith("["):
+            return ""
+        body = re.sub(r"(?:\s*[^.?!]*\?)\s*$", "", last).strip()  # drop the closing question
+        body = re.sub(r"^[^\n]{0,90}:\s*\n?", "", body, count=1).strip() if re.match(r"^[^\n]{0,90}:\s", body) else body  # drop "Here's the next paragraph:"
+        return body if len(body) >= 120 else ""
+
+    def _book_state(self, sess: Session) -> str:
+        nums = self.store.chapter_numbers(sess.book)
+        counts = ", ".join(f"chapter {n}: {len(self.store.paragraphs(sess.book, n))} saved paragraphs" for n in nums[-8:]) or "no chapters yet"
+        wait = (f"A proposal is waiting for the writer's yes or no ({sess.pending.ask or sess.pending.kind}). " if sess.pending else "Nothing is waiting for an answer. ")
+        return (f"BOOK STATE (what is really saved): {counts}. The writer is looking at chapter {sess.chapter}. {wait}"
+                "Text you write in chat is NOT in the book: only a confirmed proposal is saved. The app shows its own big YES and NO buttons and the writer can also answer by voice, "
+                "so never tell them to press, click, tap or look at anything on the screen (they may not be able to see it).")
+
+    def _ask_for(self, sess: Session, p: Pending) -> str:
+        """The short question shown in big letters on the page (and read out)."""
+        try:
+            if p.kind == "edit":
+                return f"Save this change to {self._where(sess, self.store.find(sess.book, p.paragraph_id))}?"
+            if p.kind == "append":
+                return f"Add this paragraph to chapter {p.chapter}?" if p.chapter in self.store.chapter_numbers(sess.book) else f"Start chapter {p.chapter} with this paragraph?"
+            if p.kind == "wiki":
+                d = p.data or {}
+                return "Save this to the book's premise?" if d.get("kind") == "premise" else f"Save this note under {d.get('name', 'the wiki')}?"
+            if p.kind == "delete":
+                return f"Delete {self._where(sess, self.store.find(sess.book, p.paragraph_id))}?"
+            if p.kind == "move":
+                return f"Move {self._where(sess, self.store.find(sess.book, p.paragraph_id))} to chapter {(p.data or {}).get('to')}?"
+            if p.kind == "confirm_target":
+                return "Is that the paragraph you mean?"
+            if p.kind == "voice":
+                return "Keep this voice?"
+        except Exception:
+            return ""
+        return ""
+
+    async def _navigate_keeping(self, sess: Session, text: str) -> Reply:
+        return await self._handle("", text, sess.book)
+
+    def _new_chapter_reply(self, sess: Session, n: int) -> Reply:
+        nums = self.store.chapter_numbers(sess.book)
+        nxt = max(nums, default=0) + 1
+        target = n or nxt
+        if target in nums:
+            sess.chapter, sess.focus = target, None
+            return self._reply(sess, f"Chapter {target} already exists. I have gone there.")
+        if target != nxt:
+            return self._reply(sess, f"That would skip a chapter. The next one is chapter {nxt}. Say start chapter {nxt}.")
+        self.store.create_chapter(sess.book, target)
+        sess.chapter, sess.focus = target, None
+        if self.index:
+            self.index.schedule(sess.book)
+        return self._reply(sess, f"Chapter {target} is ready. Tell me what happens in it, or say write the first paragraph.")
+
+    def _delete_reply(self, sess: Session, ref, text: str) -> Reply:
+        target = self._by_ref(sess, ref)
+        if not target:
+            return self._reply(sess, "I couldn't find that paragraph.")
+        sess.pending = Pending("delete", target.text, target.chapter, paragraph_id=target.id)
+        sess.chapter, sess.focus = target.chapter, target.id
+        r = self._reply(sess, f"Delete {self._where(sess, target)}? It begins: {excerpt(target.text, 12)} You can say undo afterwards.")
+        r.highlights = self._hl(sess, [target.id])
+        return r
+
+    def _move_reply(self, sess: Session, ref, to: int, text: str) -> Reply:
+        target = self._by_ref(sess, ref)
+        if not target:
+            return self._reply(sess, "I couldn't find that paragraph.")
+        nums = self.store.chapter_numbers(sess.book)
+        if to == target.chapter:
+            return self._reply(sess, "It is already in that chapter.")
+        if to not in nums and to != max(nums, default=0) + 1:
+            return self._reply(sess, f"There is no chapter {to}, and it is not the next one. The next is chapter {max(nums, default=0) + 1}.")
+        sess.pending = Pending("move", target.text, target.chapter, paragraph_id=target.id, data={"to": to})
+        sess.chapter, sess.focus = target.chapter, target.id
+        r = self._reply(sess, f"Move {self._where(sess, target)} to the end of chapter {to}? It begins: {excerpt(target.text, 12)}")
+        r.highlights = self._hl(sess, [target.id])
+        return r
+
+    def _commit_change(self, sess: Session) -> Reply:
+        p, sess.pending = sess.pending, None
+        try:
+            if p.kind == "delete":
+                self.store.delete_paragraph(sess.book, p.paragraph_id)
+                text, changed = "Deleted. Say undo if you want it back.", []
+            else:
+                new = self.store.move_paragraph(sess.book, p.paragraph_id, (p.data or {})["to"])
+                sess.chapter, sess.focus = new.chapter, new.id
+                text, changed = f"Moved to the end of chapter {new.chapter}. Say undo to put it back.", [new.id]
+        except BookError as e:
+            return self._reply(sess, f"I couldn't do that: {e}")
+        self.kg.refresh(sess.book)
+        if self.index:
+            self.index.schedule(sess.book)
+        r = self._reply(sess, text)
+        r.changed = changed
         return r
 
     def _undo_reply(self, sess: Session) -> Reply:
@@ -555,7 +689,7 @@ class Agent:
     def _context(self, sess: Session, text: str, extra: str = "", target: Paragraph | None = None, canon: str = "",
                  sparks: list[str] | None = None, tools: bool = False, recall: str = "") -> list[dict]:
         prefs = self.memory.search(text, limit=6)
-        sys = [SYSTEM, MODES[sess.mode]]
+        sys = [SYSTEM, MODES[sess.mode], self._book_state(sess)]
         age = (self.prefs.get("writer_age") if self.prefs else "") or self.s.writer_age
         if age:
             sys.append(f"The writer is {age}; let that subtly shape idiom and description density. Never mention it.")
@@ -722,6 +856,12 @@ class Agent:
         msgs = self._context(sess, text, canon=canon, sparks=self._sparks(sess, text), tools=True, recall=await self._recall(sess, text))
         out, _ = await harness.run(self.llm, msgs, self.toolbox, ctx, max_steps=3, temperature=self._temperature())
         out = out or "I'm not sure what to say to that. Could you tell me a little more?"
+        if ctx.drafted and sess.pending and sess.pending.kind == "append":  # the model proposed a paragraph: show it, hear it, and ask
+            tail = f"Should I add it to chapter {sess.pending.chapter}?" if sess.pending.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.pending.chapter} with it?"
+            lead = (out.strip() + " ") if out.strip() and len(out.strip()) <= 220 and out.strip() != "I'm not sure what to say to that. Could you tell me a little more?" else ""
+            sess.history.append({"role": "assistant", "content": "[proposed a new paragraph]"})
+            reply = self._reply(sess, f"{lead}Here's a draft: {ctx.drafted} {tail}", await self._speech_text(sess, ctx.drafted, f"{lead}Here's a draft:", tail))
+            return self._attach(sess, reply, ctx, "", text)
         sess.history.append({"role": "assistant", "content": out})
         return self._attach(sess, self._reply(sess, out), ctx, out, text)
 
@@ -751,18 +891,24 @@ class Agent:
         return reply
 
     async def _propose_draft(self, sess: Session, text: str) -> Reply:
-        if sess.chapter not in self.store.chapter_numbers(sess.book):
-            self.store.create_chapter(sess.book, sess.chapter)
-        recent = "\n\n".join(p.text for p in self.store.paragraphs(sess.book, sess.chapter)[-4:])
+        asked = intent.parse_ref(text).chapter
+        nums = self.store.chapter_numbers(sess.book)
+        if asked and (asked in nums or asked == (max(nums, default=0) + 1)):
+            sess.chapter = asked  # "write paragraph 2 of chapter 3": the chapter the writer named, not the one on screen (a new chapter is made on save)
+        if sess.chapter not in nums and sess.chapter != max(nums, default=0) + 1:
+            sess.chapter = max(nums, default=1)
+        recent = "\n\n".join(p.text for p in self.store.paragraphs(sess.book, sess.chapter)[-4:]) if sess.chapter in self.store.chapter_numbers(sess.book) else ""
         ctx = harness.Ctx(sess=sess)
         canon = await self._canon_by_meaning(sess, text)
         msgs = self._context(sess, text, recent, canon=canon, sparks=self._sparks(sess, text, drafting=True), tools=True) + [
             {"role": "user", "content": f"{text}\n\nStory so far in this chapter (most recent):\n{recent or '(nothing yet)'}\n\nWrite ONE new paragraph of prose. Output only the paragraph."}
         ]
         new, issues = await self._gated(msgs, ctx, tools=True)
+        if ctx.drafted:  # the model already proposed its paragraph through propose_append: that is the draft
+            new = ctx.drafted
         sess.pending = Pending("append", new, sess.chapter)
         self._remember(sess, text, "[proposed a new paragraph]")
-        tail = f"Should I add it to chapter {sess.chapter}?"
+        tail = f"Should I add it to chapter {sess.chapter}?" if sess.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.chapter} with it?"
         reply = self._reply(sess, f"Here's a draft: {new} {tail}", await self._speech_text(sess, new, "Here's a draft:", tail))
         reply.notes += [f"Style note: {i}" for i in issues]
         return self._attach(sess, reply, ctx, "", text)
@@ -796,6 +942,8 @@ class Agent:
     async def _accept(self, sess: Session) -> Reply:
         if sess.pending.kind == "page":
             return self._commit_page(sess)
+        if sess.pending.kind in ("delete", "move"):
+            return self._commit_change(sess)
         if sess.pending.kind == "wiki":
             return self._commit_wiki(sess)
         if sess.pending.kind == "family":
@@ -832,6 +980,12 @@ class Agent:
         d = p.data or {}
         try:
             bible = self.store.bible(sess.book)
+            if d["kind"] == "premise":
+                cur = bible.read("premise").rstrip()
+                bible.write_doc("premise", (cur if cur.strip("# \nPremise") else "# Premise") + "\n\n" + p.text)
+                if self.index:
+                    self.index.schedule(sess.book)
+                return self._reply(sess, "Saved to the book's premise.")
             old = next((e for e in bible.entries(d["kind"]).values() if e.name.lower() == d["name"].lower()), None)
             body = ((old.body.strip() + "\n\n") if old and old.body.strip() else "") + p.text
             bible.upsert(d["kind"], old.name if old else d["name"], None, body)
@@ -847,6 +1001,8 @@ class Agent:
             if p.kind == "edit":
                 para = self.store.replace_paragraph(sess.book, p.paragraph_id, p.text)
             else:
+                if p.chapter not in self.store.chapter_numbers(sess.book):
+                    self.store.create_chapter(sess.book, p.chapter)
                 para = self.store.append_paragraph(sess.book, p.chapter, p.text, p.scene)
         except BookError as e:
             return self._reply(sess, f"I couldn't save that: {e}")
@@ -1079,7 +1235,9 @@ class Agent:
             self.memory.add(f"Writer said: {text[:300]}", "preference")
 
     def _reply(self, sess: Session, text: str, speech: list[dict] | None = None) -> Reply:
-        pend = {"kind": sess.pending.kind, "text": sess.pending.text, "paragraph_id": sess.pending.paragraph_id} if sess.pending else None
+        if sess.pending and not sess.pending.ask:
+            sess.pending.ask = self._ask_for(sess, sess.pending) or text
+        pend = {"kind": sess.pending.kind, "text": sess.pending.text, "paragraph_id": sess.pending.paragraph_id, "ask": sess.pending.ask} if sess.pending else None
         notices, sess.notices = sess.notices, []
         if speech is None:
             speech = [{"speaker": vx.ASSISTANT, "text": text}] if text else []

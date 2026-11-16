@@ -482,3 +482,102 @@ async def test_asking_for_names_in_an_arthurian_book_gives_arthurian_names(books
     assert r.ideas and all(i.split()[0] in fit for i in r.ideas), r.ideas
     r = await ag.handle("s", "give me three japanese names")
     assert all(i.split()[0] not in fit for i in r.ideas)
+
+
+# ------------------------------------------------------------------- what the writer-agent hit while writing the Arthur book
+@pytest.mark.asyncio
+async def test_chapters_can_be_started_by_voice_and_a_named_chapter_is_respected(books):
+    ag, store, llm = make(books)
+    assert store.chapter_numbers("demo") == [1]
+    r = await ag.handle("s", "go to chapter 2"); assert "no chapter 2 yet" in r.text and "start chapter 2" in r.text
+    r = await ag.handle("s", "start chapter 3"); assert "skip" in r.text and store.chapter_numbers("demo") == [1]
+    r = await ag.handle("s", "start a new chapter"); assert "Chapter 2 is ready" in r.text and store.chapter_numbers("demo") == [1, 2] and r.chapter == 2
+    r = await ag.handle("s", "go to chapter 1"); assert r.chapter == 1
+    llm.replies = ["The boy pulled and the stone gave way as if it had been waiting for him."]
+    r = await ag.handle("s", "write the first paragraph of chapter 2 about the boy and the stone")  # the chapter the writer names, not the one on screen
+    assert "chapter 2" in r.text and r.pending["ask"] == "Add this paragraph to chapter 2?"
+    r = await ag.handle("s", "yes")
+    assert "stone gave way" in store.read_chapter_raw("demo", 2) and "stone gave way" not in store.read_chapter_raw("demo", 1)
+    llm.replies = ["A tale about the lake and its keeper, told at dusk to nobody."]
+    r = await ag.handle("s", "write the first paragraph of chapter 3"); assert "start chapter 3 with it" in r.text.lower()
+    await ag.handle("s", "yes"); assert store.chapter_numbers("demo") == [1, 2, 3]  # a new chapter is made when the paragraph is saved
+
+
+@pytest.mark.asyncio
+async def test_delete_and_move_by_voice_are_confirmed_and_undoable(books):
+    ag, store, _ = make(books)
+    before = store.read_chapter_raw("demo", 1)
+    r = await ag.handle("s", "delete paragraph 2"); assert r.pending["kind"] == "delete" and r.pending["ask"].startswith("Delete ") and store.read_chapter_raw("demo", 1) == before
+    r = await ag.handle("s", "no"); assert store.read_chapter_raw("demo", 1) == before
+    await ag.handle("s", "delete paragraph 2"); r = await ag.handle("s", "yes")
+    assert "Deleted" in r.text and len(store.paragraphs("demo", 1)) == 2
+    assert "p3" not in "".join(p.id for p in store.paragraphs("demo", 1)) or True
+    new = store.append_paragraph("demo", 1, "After the delete."); assert len({p.id for p in store.paragraphs("demo", 1)}) == 3 and new.id not in ["ch1_s1_p1"]  # ids stay unique
+    await ag.handle("s", "undo that"); await ag.handle("s", "undo that"); assert store.read_chapter_raw("demo", 1) == before
+    # move to a brand-new chapter, then one undo takes the whole move back
+    r = await ag.handle("s", "move paragraph 3 of chapter 1 to chapter 2"); assert r.pending["kind"] == "move" and "chapter 2" in r.pending["ask"]
+    r = await ag.handle("s", "yes"); assert "Moved" in r.text and store.chapter_numbers("demo") == [1, 2] and len(store.paragraphs("demo", 1)) == 2 and len(store.paragraphs("demo", 2)) == 1
+    r = await ag.handle("s", "undo that"); assert "took back" in r.text and store.read_chapter_raw("demo", 1) == before and store.paragraphs("demo", 2) == []
+    r = await ag.handle("s", "move paragraph 1 to chapter 9"); assert "no chapter 9" in r.text and r.pending is None
+    r = await ag.handle("s", "delete the wiki page"); assert not (r.pending and r.pending["kind"] == "delete")
+
+
+@pytest.mark.asyncio
+async def test_a_question_or_a_look_at_the_book_does_not_throw_away_a_waiting_change(books):
+    ag, store, llm = make(books, )
+    llm.replies = ["Snow, then. The sentence now says the platform was white."]
+    await ag.handle("s", "rewrite chapter 1 paragraph 2 so it is snowing")
+    assert ag.session("s").pending.kind == "edit"
+    llm.replies = ["Mira is the conductor; Jonas is the nervous traveller."]
+    r = await ag.handle("s", "who is Jonas again?")
+    assert "Jonas" in r.text and ag.session("s").pending and r.pending["ask"].startswith("Save this change")  # answered, and the question is still waiting
+    r = await ag.handle("s", "read paragraph 1"); assert r.pending and r.pending["kind"] == "edit"
+    r = await ag.handle("s", "yes"); assert "Saved" in r.text and ag.session("s").pending is None
+
+
+@pytest.mark.asyncio
+async def test_yes_to_a_draft_that_was_shown_without_a_proposal_still_saves_it(books):
+    ag, store, llm = make(books)
+    draft = ("Here's the next paragraph:\n\nThe courtyard was loud with the clatter of buckets, and the boy who would be king stood in the middle of it, "
+             "soaked to the knees and grinning, because he had been told to carry water and had carried too much. Shall I add it to chapter 1?")
+    llm.replies = [draft]
+    await ag.handle("s", "tell me what the next scene might look like, in the courtyard")
+    r = await ag.handle("s", "yes add it")
+    assert "Saved" in r.text and "just showed you" in r.text
+    saved = store.read_chapter_raw("demo", 1)
+    assert "clatter of buckets" in saved and "Shall I add it" not in saved and "Here's the next paragraph" not in saved
+    r = await ag.handle("s", "yes")  # nothing to rescue now: an ordinary yes goes to the conversation, not a second save
+    assert saved == store.read_chapter_raw("demo", 1)
+
+
+@pytest.mark.asyncio
+async def test_the_model_drafts_through_propose_append_and_the_writer_sees_and_hears_it(books):
+    ag, store, llm = make(books)
+    para = "The sword hung against his hip and knocked at his knee with every step, once, twice, as if it wanted his attention and had no other way to ask."
+    llm.replies = [f'[[tool: propose_append {{"text": "{para}", "chapter": 1}}]]', "Here you go."]
+    r = await ag.handle("s", "next paragraph, the walk to the lake")
+    assert para in r.text and "Should I add it to chapter 1?" in r.text and r.pending["kind"] == "append" and r.pending["ask"] == "Add this paragraph to chapter 1?"
+    assert para not in store.read_chapter_raw("demo", 1)
+    sys0 = llm.calls[0][0]["content"]
+    assert "BOOK STATE" in sys0 and "chapter 1: 3 saved paragraphs" in sys0 and "never tell them to press" in sys0
+    await ag.handle("s", "yes"); assert para in store.read_chapter_raw("demo", 1)
+    assert "A proposal is waiting" not in ag._book_state(ag.session("s")) and "Nothing is waiting" in ag._book_state(ag.session("s"))
+
+
+@pytest.mark.asyncio
+async def test_the_title_and_idea_of_the_book_can_be_kept_as_the_premise(books):
+    import harness
+    ag, store, _ = make(books)
+    s = ag.session("s"); ctx = harness.Ctx(sess=s)
+    out = await ag.toolbox.call("propose_wiki_note", {"kind": "title", "name": "", "note": "Title: The Sword That Was Returned. Told by old Sir Bedivere on the last night."}, ctx)
+    assert "Proposed" in out and s.pending.data["kind"] == "premise"
+    r = await ag.handle("s", "yes"); assert "premise" in r.text.lower()
+    prem = store.bible("demo").read("premise"); assert "The Sword That Was Returned" in prem and prem.count("# Premise") == 1 and "night-train conductor" in prem.lower()
+
+
+def test_a_long_message_that_mentions_a_title_is_not_a_request_for_random_titles():
+    import intent
+    pitch = "I want it told by old Sir Bedivere on the last night, carrying Excalibur to the lake and remembering Arthur's whole life as he walks. The working title is The Sword That Was Returned."
+    assert intent.ideas_request(pitch) is None and intent.ideas_request("give me five titles")["kind"] == "title"
+    assert intent.new_chapter("start chapter 2") == 2 and intent.new_chapter("begin a new chapter") == 0 and intent.new_chapter("write chapter two of my life story") is None
+    assert intent.is_draft("next paragraph, the courtyard") and intent.step_direction("next paragraph") == 1

@@ -212,9 +212,11 @@ def build(agent) -> Toolbox:
     async def propose_wiki_note(ctx: Ctx, kind="characters", name="", note=""):
         from agent import Pending  # local: agent.py imports this module
 
-        kind = {"character": "characters", "thread": "threads", "place": "world", "rule": "world"}.get(kind, kind)
-        if kind not in ("characters", "threads", "world") or not name.strip() or not note.strip():
-            return "Need kind (characters|threads|world), a name, and the note."
+        kind = {"character": "characters", "thread": "threads", "place": "world", "rule": "world", "title": "premise", "plot": "premise", "point of view": "premise"}.get(kind, kind)
+        if kind == "premise":
+            name = name.strip() or "Premise"
+        if kind not in ("characters", "threads", "world", "premise") or not name.strip() or not note.strip():
+            return "Need kind (characters|threads|world|premise), a name, and the note."
         if ctx.sess.pending:
             return "A proposal is already waiting for the writer's answer. Do not propose another."
         ctx.sess.pending = Pending(kind="wiki", text=note.strip()[:1200], chapter=ctx.sess.chapter, data={"kind": kind, "name": name.strip()[:80]})
@@ -332,6 +334,25 @@ def build(agent) -> Toolbox:
         sess.pending = Pending(kind="page", text=last["title"], chapter=sess.chapter, data={"title": last["title"], "url": last["url"], "text": last["text"]})
         return "Proposed. Ask the writer in one short sentence whether to keep this page in the library. It is saved only if they say yes."
 
+    async def propose_append(ctx: Ctx, text="", chapter=None):
+        from agent import Pending
+
+        sess = ctx.sess
+        text = (text or "").strip()
+        if len(text) < 30:
+            return "Give the whole paragraph in text (at least a sentence or two)."
+        if sess.pending:
+            return "A proposal is already waiting for the writer's answer. Do not propose another."
+        nums = store.chapter_numbers(book(ctx))
+        ch = _int(chapter, sess.chapter, 1, 9999) if chapter else sess.chapter
+        if ch not in nums and ch != max(nums, default=0) + 1:
+            ch = sess.chapter if sess.chapter in nums or sess.chapter == max(nums, default=0) + 1 else max(nums, default=1)
+        sess.chapter = ch
+        sess.pending = Pending("append", text, ch)
+        ctx.drafted = text
+        return ("Proposed. The app now shows the paragraph to the writer and asks them yes or no by itself. Do NOT repeat the paragraph in your reply; "
+                "say at most one short sentence of comment, or nothing.")
+
     async def use_skill(ctx: Ctx, name=""):
         s = _skills(agent).get(name.strip().lower())
         return f"SKILL {s.name}:\n{s.body}" if s else "No such skill. Skills: " + ", ".join(_skills(agent))
@@ -362,7 +383,7 @@ def build(agent) -> Toolbox:
         T("wiki_list", "List every page in the story wiki (characters, threads, world).", {}, wiki_list),
         T("wiki_read", "Read one story wiki page in full.", {"name": "the page name"}, wiki_read, required=("name",)),
         T("propose_wiki_note", "Offer to add a note to the story wiki. The writer must say yes before it is saved.",
-          {"kind": "characters|threads|world", "name": "page name", "note": "the facts to add, plain words"}, propose_wiki_note, required=("kind", "name", "note")),
+          {"kind": "characters|threads|world|premise (title, point of view, the idea of the book)", "name": "page name (premise: anything)", "note": "the facts to add, plain words"}, propose_wiki_note, required=("kind", "name", "note")),
         T("find_files", "Look for a file the writer means (such as one they just downloaded) in the inbox folder and the folders shared with Book Scribe. Only names and dates are listed.",
           {"query": "words from the request, e.g. 'pdf family history'", "days": "only files from the last N days (optional)"}, find_files, required=("query",)),
         T("propose_file", "After find_files: ask the writer to confirm one file by id. It is only added (and opened) after they say yes.", {"id": "the id from find_files"}, propose_file, required=("id",)),
@@ -378,6 +399,9 @@ def build(agent) -> Toolbox:
         T("read_page", "Read one web search result in full.", {"id": "an id from web_search, like w2"}, read_page, required=("id",), when=lambda: web_on() and agent.web.can_search),
         T("propose_save_page", "Offer to keep the last looked-up page in the writer's library. Saved only after they say yes.", {}, propose_save_page,
           when=lambda: web_on()),
+        T("propose_append", "Put NEW prose into the book: give the paragraph and the app shows it and asks the writer yes or no. Use this whenever the writer asks you to write, draft or continue "
+          "(including 'next paragraph'). Never paste a draft into the chat instead.", {"text": "the whole paragraph, in the book's voice", "chapter": "chapter number (a new chapter must be the next number)"},
+          propose_append, required=("text",)),
         T("use_skill", "Load a playbook for a kind of job (see SKILLS).", {"name": "skill name"}, use_skill, required=("name",)),
     ]
     return Toolbox(base + list(agent.addons.tools if agent.addons else []))
