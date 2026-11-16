@@ -389,3 +389,8 @@ How the agent and the chat fit together: see [docs/ARCHITECTURE.md](docs/ARCHITE
   if the chapter was edited outside the app since, so nothing you typed elsewhere is ever lost. A proposal that is still waiting is simply dropped.
 * **Names that fit the book.** "Give me a name for a young knight" reads the premise, wiki and opening pages: an Arthurian book gets Welsh and
   English names, a Viking one Norse names. Asking for a culture by name still wins.
+* **Voice-first editing.** "Start chapter 2", "delete paragraph 3", "move paragraph 4 to the start of chapter 2", "move it after paragraph 1",
+  "undo that": each is confirmed with the big YES / NO card (or by voice) and each is one undo. A question, small talk or "goodbye" while a
+  change is waiting never drops it; I say out loud that it is still waiting. Random ideas are numbered: say "number 2" or "the second one".
+* **Big print layout.** From 40px words upward the layout and size rows fold away, the controls stop growing, the typing box sits behind a
+  Keyboard button, and new replies start at their beginning, so the conversation always has room (also on a phone).
