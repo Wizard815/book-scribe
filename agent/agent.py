@@ -63,6 +63,7 @@ class Session:
     voice_focus: str | None = None  # whose voice "make it deeper" / "his voice" refers to
     recent_speakers: list[str] = field(default_factory=list)
     last_ideas: dict | None = None  # the last random-idea request, so "more" can repeat it
+    web_hits: dict = field(default_factory=dict)  # last web search results by id
     via: str = "typed"  # how the last message arrived: "voice" means the reply will be spoken aloud
     interrupted: bool = False  # the writer cut my last reply off by speaking over it
     found: list = field(default_factory=list)  # files the finder offered, best first (inbox.Found)
@@ -93,6 +94,7 @@ class Agent:
         self.graph, self.check_drift, self.voices, self.prefs, self.index = graph, check_drift, voices, prefs, index
         self.journal, self.library, self.addons = journal, library, addons  # long-term record, imported files, administrator addons
         self.inbox, self.stt = Inbox(store), None  # the drop folder; speech-to-text for audio files (set by main)
+        self.web = None  # web.Web when the administrator set up Wikipedia / SearXNG (set by main)
         self._speaker_cache: dict[str, list[str | None]] = {}
         self.sessions: dict[str, Session] = {}
         self._bg: set[asyncio.Task] = set()
@@ -576,6 +578,8 @@ class Agent:
         """Whatever a turn's tools and the reply's own words point at: passages to highlight, a new look, tap-to-use ideas."""
         ids = list(dict.fromkeys(ctx.highlights + self.refs.find(sess.book, text)))[:5]
         reply.highlights = self._hl(sess, ids)
+        if ctx.notes:
+            reply.notes += ctx.notes
         if ctx.open_item:
             reply.open_item = ctx.open_item
         if ctx.ui:
@@ -733,7 +737,7 @@ class Agent:
     async def _revise(self, sess: Session, instruction: str) -> Reply:
         """The writer answered a proposal with changes ("yes but shorter", "no, make it longer"): redo it, don't save or drop."""
         p = sess.pending
-        if p.kind == "family":
+        if p.kind in ("family", "page"):
             sess.pending = None
             return self._reply(sess, "Okay, I won't add it yet. Ask me again with the person and how many generations you want.")
         if p.kind == "wiki":
@@ -757,6 +761,8 @@ class Agent:
         return reply
 
     async def _accept(self, sess: Session) -> Reply:
+        if sess.pending.kind == "page":
+            return self._commit_page(sess)
         if sess.pending.kind == "wiki":
             return self._commit_wiki(sess)
         if sess.pending.kind == "family":
@@ -770,6 +776,22 @@ class Agent:
             p, sess.pending = sess.pending, None
             return await self._propose_edit(sess, p.text, target=self.store.find(sess.book, p.paragraph_id), sure=True)
         return self._commit(sess)
+
+    def _commit_page(self, sess: Session) -> Reply:
+        """Keep a web page's text in the library (with its address), after the writer said yes."""
+        p, sess.pending = sess.pending, None
+        d = p.data or {}
+        if not self.library:
+            return self._reply(sess, "The library is not available.")
+        text = f"Source: {d.get('url', '')}\n\n{d.get('text', '')}"
+        meta = self.library.add(sess.book, f"{d.get('title', 'page')}.txt", text.encode("utf-8"), d.get("title") or "Web page", "document", text)
+        if self.journal:
+            self.journal.append(sess.book, "note", f"The writer kept a web page in the library: {meta['title']} ({d.get('url', '')}).")
+        if self.index:
+            self.index.schedule(sess.book)
+        r = self._reply(sess, f"Saved {meta['title']} to the library, with its web address.")
+        r.open_item = {"slug": meta["slug"], "title": meta["title"]}
+        return r
 
     def _commit_wiki(self, sess: Session) -> Reply:
         """Save a note the model proposed for the story wiki, after the writer said yes. The note is appended; nothing is overwritten."""

@@ -107,3 +107,12 @@ Add ideas: extend the lists in `agent/ideas_data.py`.
 
 * Replies arrive whole, not streamed word by word. Streaming is the next big speed win.
 * Tool use depends on the model following the one-line text protocol; small local models may ignore it (nothing breaks, they just answer).
+
+## Looking things up (Wikipedia, SearXNG)
+
+Off by default. The administrator sets `WIKIPEDIA_URL` (Wikipedia, or an offline Kiwix mirror) and/or `SEARXNG_URL` in `.env`; the writer can
+switch lookups off in Settings. The model then gets `wikipedia`, `web_search`, `read_page` and `propose_save_page`. Only the short query the model
+chose leaves the machine, every lookup shows the writer a note ("I looked up Excalibur on Wikipedia."), and keeping a page in the library
+needs a yes. Everything fetched is marked untrusted data: the model is told never to follow instructions inside it, and nothing it says can write
+to the book or wiki without the writer's yes. `web.py` only opens public internet addresses over ordinary ports (every redirect is re-checked), caps
+the size, and never fetches pages from your own network. SearXNG must have the `json` output format enabled in its settings.

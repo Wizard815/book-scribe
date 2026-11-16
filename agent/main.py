@@ -35,6 +35,7 @@ from embeddings import ParagraphIndex
 import extract as extract_mod
 import ingest
 from addons import Addons
+from web import Web
 from journal import Journal
 from library import Library
 from ideas import describe_kinds
@@ -107,6 +108,7 @@ class PrefsIn(BaseModel):
     voice_mode: str | None = Field(default=None, max_length=10)   # same | separate: one voice for everything, or agent + female reader + male reader
     narrator_reader: str | None = Field(default=None, max_length=8)  # female | male: which reader narrates
     live_interrupt: str | None = Field(default=None, max_length=4)   # on | off: may the writer cut the agent off by speaking (headphones)
+    web_lookup: str | None = Field(default=None, max_length=4)       # on | off: may the agent look things up on the web (only if the administrator set it up)
 
 
 class IdeasIn(BaseModel):
@@ -183,7 +185,7 @@ class ProfileIn(BaseModel):
     tier: int | None = None
 
 
-def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=None, check_drift=True, require_auth=True, embed_http=None) -> FastAPI:
+def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=None, check_drift=True, require_auth=True, embed_http=None, web_http=None) -> FastAPI:
     s = settings or load_settings()
     store = BookStore(s.project_dir)
     store.ensure_book(s.default_book)
@@ -210,6 +212,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     addons = Addons(s, s.addons_dir).load()
     agent = Agent(s, store, llm, mem, StoryKG(store), graph, check_drift, voices, prefs, index, journal, library, addons)
     agent.stt = stt
+    agent.web = Web(s.searxng_url, s.wikipedia_url, web_http) if (s.searxng_url or s.wikipedia_url) else None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -382,6 +385,8 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     @app.post("/api/chat", dependencies=[Depends(writer)])
     async def chat(body: ChatIn):
         sid = body.session_id or uuid.uuid4().hex
+        if body.book:
+            book_or_400(body.book)
         reply = await agent.handle(sid, body.text, body.book, via="typed")
         return {"session_id": sid, "user_text": body.text, **asdict(reply), "served_by": router.served("chat")}
 
@@ -394,6 +399,8 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         """Mic → whisper → agent in one round trip (fewest taps for the writer)."""
         text = await stt.transcribe(await audio.read(), audio.filename or "audio.webm", audio.content_type or "audio/webm", hint=agent.stt_hint(book or None))
         sid = session_id or uuid.uuid4().hex
+        if book:
+            book_or_400(book)
         reply = await agent.handle(sid, text, book or None, via="voice", interrupted=bool(interrupted))
         return {"session_id": sid, "user_text": text, **asdict(reply), "served_by": router.served("stt", "chat")}
 
@@ -483,7 +490,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
 
     @app.get("/api/admin/addons", dependencies=[Depends(admin)])
     async def admin_addons():
-        return {"directory": s.addons_dir or "", "search_dirs": [str(r) for r in agent._finder(s.default_book).roots[1:]], "loaded": addons.status, "readers": [{"addon": n, "extensions": list(e)} for n, e in addons.readers],
+        return {"web": {"searxng": s.searxng_url, "wikipedia": s.wikipedia_url}, "directory": s.addons_dir or "", "search_dirs": [str(r) for r in agent._finder(s.default_book).roots[1:]], "loaded": addons.status, "readers": [{"addon": n, "extensions": list(e)} for n, e in addons.readers],
                 "tools": [t.name for t in addons.tools]}
 
     @app.get("/api/admin/traces", dependencies=[Depends(admin)])
@@ -531,7 +538,8 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         d = prefs.all()
         d.update(look=agent._look(), surprise=d["surprise"] or "low", strictness=d["strictness"] or "gentle", default_book=s.default_book,
                  chat_engine=d["chat_engine"] or "auto", listen_engine=d["listen_engine"] or "auto", voice_engine=d["voice_engine"] or "auto",
-                 voice_mode=d["voice_mode"] or "characters", narrator_reader=d["narrator_reader"] or "female", live_interrupt=d["live_interrupt"] or "off")
+                 voice_mode=d["voice_mode"] or "characters", narrator_reader=d["narrator_reader"] or "female", live_interrupt=d["live_interrupt"] or "off", web_lookup=d["web_lookup"] or "on",
+                 web={"search": agent.web.can_search, "wikipedia": agent.web.can_wikipedia} if agent.web else {"search": False, "wikipedia": False})
         return d
 
     def apply_engines() -> None:
@@ -615,7 +623,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         book_or_400(book)
         store.ensure_book(book)
         out = []
-        for f in files[:10]:
+        for f in files[:25]:
             data = await f.read(UPLOAD_LIMIT + 1)
             name = (f.filename or "file")[:120]
             try:
@@ -624,6 +632,8 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
                 out.append({"title": name, "error": str(e), "message": str(e)})
             except Exception:
                 out.append({"title": name, "error": "I could not add that file.", "message": f"I could not add {name}."})
+        if len(files) > 25:
+            out.append({"title": "More files", "error": "Too many at once.", "message": f"I took the first 25 files. Please add the other {len(files) - 25} again."})
         index.schedule(book)
         return {"items": out}
 
