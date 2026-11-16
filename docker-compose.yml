@@ -11,6 +11,11 @@ services:
     volumes:
       - ./data/books:/data/books          # manuscripts + .state/ (providers.json with API keys, memory)
       - ./config.yaml:/app/config.yaml:ro
+      # To let the agent find files you just downloaded ("I just downloaded a PDF, can you open it"), share your Downloads folder READ-ONLY
+      # and list it in FILE_SEARCH_DIRS in .env. It only lists names and dates, and copies a file only after you say yes.
+      # - ~/Downloads:/downloads:ro
+      # Addons (your own Python file readers/tools, see docs/ADDONS.md):
+      # - ./addons:/addons:ro
     expose: ["8000"]
     restart: unless-stopped
 

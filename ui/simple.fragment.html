@@ -86,8 +86,19 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 .addbtn:disabled { border-color: var(--line); }
 .ideas, #pending { display: flex; flex-wrap: wrap; gap: 10px; }
 .chip { min-height: calc(58px * var(--k)); padding: 8px 18px; font-size: calc(22px * var(--k)); font-weight: 700; background: var(--surface); border: 3px solid var(--accent); border-radius: 16px; }
-#pending button { flex: 1; min-height: calc(64px * var(--k)); font-size: calc(24px * var(--k)); font-weight: 700; background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 16px; padding: 6px 16px; }
-#pending button.no { background: var(--surface); color: var(--fg); border: 3px solid var(--line); }
+/* A question for the writer: big words, two huge answers. Saying yes or no out loud works too. */
+#pending { flex-direction: column; flex-wrap: nowrap; gap: 14px; padding: 18px; background: var(--note); color: var(--note-fg); border: 4px solid var(--accent); border-radius: 22px; }
+#pending .ask { margin: 0; font-size: calc(32px * var(--k)); font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; max-height: 32vh; overflow-y: auto; }
+#pending .answers { display: flex; flex-wrap: wrap; gap: 14px; }
+#pending .or { margin: 0; font-size: calc(21px * var(--k)); font-weight: 700; }
+#pending button { flex: 1 1 200px; min-height: calc(104px * var(--k)); font-size: calc(44px * var(--k)); font-weight: 700; background: var(--accent); color: var(--accent-fg); border: 4px solid var(--accent); border-radius: 20px; padding: 6px 16px; }
+#pending button.no { background: var(--surface); color: var(--fg); border-color: var(--fg); }
+#pending button.small { font-size: calc(30px * var(--k)); min-height: calc(84px * var(--k)); }
+.bar button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+#liveBtn { width: 100%; min-height: calc(64px * var(--k)); font-size: calc(26px * var(--k)); font-weight: 700; background: var(--surface); border: 3px solid var(--accent); border-radius: 18px; }
+#liveBtn[aria-pressed="true"] { background: var(--live); border-color: var(--live); color: var(--live-fg); }
+#liveStatus { margin: 0; text-align: center; font-size: calc(28px * var(--k)); font-weight: 700; padding: 10px; border-radius: 14px; background: var(--mine); }
+#liveStatus[data-s="capturing"] { background: var(--live); color: var(--live-fg); }
 #talk { width: 100%; min-height: calc(90px * var(--k)); display: flex; align-items: center; justify-content: center; gap: 14px; font-size: calc(36px * var(--k)); font-weight: 700; color: var(--accent-fg); background: var(--accent); border: 0; border-radius: 22px; }
 #talk svg { width: 44px; height: 44px; flex: none; }
 #talk.live { background: var(--live); color: var(--live-fg); }
@@ -118,7 +129,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   #talk { min-height: calc(76px * var(--k)); font-size: calc(30px * var(--k)); } #talk svg { width: 36px; height: 36px; }
   #msg { min-height: calc(60px * var(--k)); font-size: calc(22px * var(--k)); } #send { min-width: calc(92px * var(--k)); font-size: calc(24px * var(--k)); padding: 0 10px; }
   .chip { min-height: calc(50px * var(--k)); font-size: calc(20px * var(--k)); } .tools button { min-height: calc(46px * var(--k)); font-size: calc(18px * var(--k)); padding: 4px 10px; }
-  .pbody { padding: 8px; } #pending button { min-height: calc(56px * var(--k)); font-size: calc(20px * var(--k)); }
+  .pbody { padding: 8px; } #pending { padding: 12px; } #pending .ask { font-size: calc(24px * var(--k)); } #pending button { min-height: calc(80px * var(--k)); font-size: calc(34px * var(--k)); }
 }
 /* Looks chosen by the writer (or by the agent when they say they can't see). They come AFTER the dark-mode blocks so they win. */
 :root[data-contrast="high"] {  /* black on white, heavy lines */
@@ -205,6 +216,8 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
       <div class="pbody">
         <div id="chat" aria-live="polite" aria-label="Conversation"></div>
         <div id="pending" hidden></div>
+        <button id="liveBtn" type="button" aria-pressed="false" hidden>Start live talk</button>
+        <p id="liveStatus" role="status" data-s="idle" hidden></p>
         <button id="talk" type="button" aria-label="Talk to Book Scribe">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 11.5a7 7 0 0 0 14 0M12 18.5v3M8.5 21.5h7"/></svg>
           <span id="talkLabel">Talk</span>
@@ -437,15 +450,27 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     }
     $("chat").append(box);
   }
-  function setPending(p) {
+  const ANSWERS = {  // what each kind of question offers: [button text, what is sent, style]
+    voice: [["Keep this voice", "keep it", "small"], ["Try another", "try another voice", "small"], ["Discard", "no", "no small"]],
+    confirm_target: [["Yes, that one", "yes", ""], ["No", "no", "no"]],
+    file: [["Yes, add it", "yes", ""], ["No", "no", "no"]],
+    family: [["Yes, add them", "yes", ""], ["No", "no", "no"]],
+    wiki: [["Yes, save it", "yes", ""], ["No", "no", "no"]],
+  };
+  function setPending(p, question) {
     const box = $("pending"); box.replaceChildren(); box.hidden = !p;
     if (!p) return;
-    const labels = p.kind === "voice" ? [["Keep this voice", "keep it", ""], ["Try another", "try another voice", ""], ["Discard", "no", "no"]]
-      : p.kind === "confirm_target" ? [["Yes, that one", "yes", ""], ["No", "no", "no"]] : [["Yes, save", "yes, save it", ""], ["No", "no", "no"]];
+    const labels = ANSWERS[p.kind] || [["Yes, save", "yes, save it", ""], ["No", "no", "no"]];
+    const q = document.createElement("p"); q.className = "ask"; q.textContent = (question || "Is that right?").slice(0, 260);
+    const row = document.createElement("div"); row.className = "answers";
     for (const [label, say, cls] of labels) {
       const b = document.createElement("button");
-      b.type = "button"; b.textContent = label; if (cls) b.className = cls; b.onclick = () => send(say); box.append(b);
+      b.type = "button"; b.textContent = label; if (cls) b.className = cls; b.onclick = () => send(say); row.append(b);
     }
+    const or = document.createElement("p"); or.className = "or"; or.textContent = "You can also just say yes or no.";
+    box.setAttribute("role", "group"); box.setAttribute("aria-label", "Please answer");
+    box.append(q, row, or);
+    if (!document.activeElement || document.activeElement === document.body || document.activeElement.id === "talk") row.firstChild.focus({ preventScroll: true });
   }
   // One long conversation: the server keeps it (and a summary of the older part), so a reload or a new device picks up where we left off.
   async function restoreChat() {
@@ -476,7 +501,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 
   // --- talking back
   function stopSpeaking() {
-    state.speakToken++;
+    state.speakToken++; state.speaking = false;
     if (state.audio) { try { state.audio.pause(); } catch (_) {} }
     if ("speechSynthesis" in window) speechSynthesis.cancel();
   }
@@ -500,6 +525,10 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     if (!state.read || !text) return;
     stopSpeaking();
     const token = state.speakToken, site = state.mode === "scribe";
+    state.speaking = true; setLiveUI();
+    try { await speakSegments(text, segments, token, site); } finally { if (token === state.speakToken) { state.speaking = false; setLiveUI(); } }
+  }
+  async function speakSegments(text, segments, token, site) {
     const segs = site && segments && segments.length ? segments.filter((s) => s.text && s.text.trim()) : [{ speaker: "assistant", text }];
     let next = site ? fetchVoice(segs[0]) : null;
     for (let i = 0; i < segs.length; i++) {
@@ -524,7 +553,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     $("barLocal").hidden = state.mode !== "claude";
     $("saveBook").hidden = !state.downloads;
     if (state.mode === "claude") { loadLocalBook(); } else { await loadSiteBook(); await restoreChat(); }
-    setStatus("Ready");
+    setStatus("Ready"); setLiveUI();
   }
   function bookContext() {
     const t = state.book.map((p) => p.text).join("\n\n");
@@ -577,17 +606,18 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     const marks = hl.filter((h) => h.chapter === first.chapter).map((h) => h.id);
     await showChapter(first.chapter, first.id, true, marks);
   }
-  function showServerReply(j) {  // chat, book and spoken reply for one answer from your server
+  async function showServerReply(j) {  // chat, book and spoken reply for one answer from your server
     if (j.ui) { applyLook(j.ui, false); store.set("bs_look", JSON.stringify(currentLook())); }  // the server already saved this one
     const b = j.text ? bubble("assistant", j.text) : null;
     (j.notes || []).forEach((n) => bubble("note", n));
     if (b && j.highlights && j.highlights.length) addRefButtons(b, j.highlights);
     if (b && j.ideas && j.ideas.length) addIdeaButtons(b, j.ideas);
-    setPending(j.pending || null);
+    setPending(j.pending || null, j.text);
+    if (j.open_item && window.BS.openLibraryItem) window.BS.openLibraryItem(j.open_item.slug);
     if (j.highlights && j.highlights.length) applyHighlights(j.highlights);
     else if (j.chapter) showChapter(j.chapter, j.focus, j.changed && j.changed.length);
     state.history.push({ role: "assistant", text: j.text || "" });
-    speak(j.text, j.speech);
+    return speak(j.text, j.speech);  // resolves when the reply has been spoken (live talk waits for it)
   }
   async function send(raw) {
     const text = (raw || "").trim();
@@ -610,16 +640,17 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     state.listening = on; $("talk").classList.toggle("live", on);
     $("talkLabel").textContent = on ? "Listening. Tap to send" : "Talk"; setStatus(on ? "Listening…" : "Ready");
   }
-  async function uploadVoice(blob) {
+  async function uploadVoice(blob, opts = {}) {
     busy(true);
     try {
-      const fd = new FormData(); fd.append("audio", blob, "speech.webm"); fd.append("session_id", state.sid); fd.append("book", state.bookName || "");
+      const fd = new FormData(); fd.append("audio", blob, opts.name || "speech.webm"); fd.append("session_id", state.sid); fd.append("book", state.bookName || "");
+      if (opts.interrupted) fd.append("interrupted", "1");
       const r = await siteFetch("/api/voice", { method: "POST", body: fd });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw Object.assign(new Error("voice"), { code: "server", detail: j.detail });
       showIdeas(false); busy(false);
-      if (!j.text) { note("I did not hear anything. Tap Talk and try again."); return; }
-      bubble("me", j.user_text); state.history.push({ role: "user", text: j.user_text }); showServerReply(j);
+      if (!j.text) { if (!opts.quiet) note("I did not hear anything. Tap Talk and try again."); return; }
+      bubble("me", j.user_text); state.history.push({ role: "user", text: j.user_text }); return await showServerReply(j);
     } catch (e) { busy(false); note(explain(e)); }
   }
   async function startRecording() {
@@ -659,6 +690,88 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     if (state.mode === "scribe" && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder) return startRecording();
     if (SR) return startRecognition(SR);
     noMic();
+  }
+
+  // ================================================================ live talk =========================================
+  // The microphone stays open. When you stop talking I answer, then listen again, like a phone call. A small voice detector watches the
+  // loudness: it learns how noisy the room is, starts recording when you speak (keeping the half second before, so no first word is lost),
+  // and sends when you have been quiet for a moment. Optionally you can talk over me to interrupt (best with headphones).
+  const live = { on: false, ctx: null, stream: null, node: null, src: null, st: "idle", buf: [], pre: [], loud: 0, speech: 0, quiet: 0, floor: 0.008, rate: 44100, turn: 0, interrupted: false, barge: 0 };
+  const liveWait = () => parseInt(store.get("bs_live_wait", "1500"), 10) || 1500;
+  function setLiveUI() {
+    const s = $("liveStatus"), btn = $("liveBtn");
+    btn.hidden = state.mode !== "scribe" || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    btn.setAttribute("aria-pressed", String(live.on)); btn.textContent = live.on ? "Stop live talk" : "Start live talk";
+    s.hidden = !live.on; $("talk").disabled = live.on;
+    if (!live.on) return;
+    const msgs = { listening: "I am listening. Just talk.", capturing: "I hear you…", thinking: state.speaking ? (state.liveInterrupt ? "Speaking. Talk to interrupt me." : "Speaking…") : "Thinking…" };
+    const k = live.st === "thinking" && state.speaking ? "speaking" : live.st;
+    s.dataset.s = k; s.textContent = msgs[live.st] || "";
+  }
+  function wavBlob(chunks, rate) {  // 16 kHz mono 16-bit: small, and every speech server reads it
+    let n = 0; for (const c of chunks) n += c.length;
+    const all = new Float32Array(n); let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
+    const ratio = rate / 16000, len = Math.floor(all.length / ratio), pcm = new Int16Array(len);
+    for (let i = 0; i < len; i++) { const x = all[Math.floor(i * ratio)]; pcm[i] = Math.max(-1, Math.min(1, x)) * 0x7fff; }
+    const buf = new ArrayBuffer(44 + pcm.length * 2), v = new DataView(buf), w = (off, s) => [...s].forEach((ch, i) => v.setUint8(off + i, ch.charCodeAt(0)));
+    w(0, "RIFF"); v.setUint32(4, 36 + pcm.length * 2, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 16000, true); v.setUint32(28, 32000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, pcm.length * 2, true);
+    new Int16Array(buf, 44).set(pcm);
+    return new Blob([buf], { type: "audio/wav" });
+  }
+  async function liveEnd(speechMs) {
+    const chunks = live.buf, interrupted = live.interrupted; live.buf = []; live.interrupted = false;
+    if (speechMs < 350) { live.st = "listening"; setLiveUI(); return; }  // a cough or a click, not talking
+    live.st = "thinking"; setLiveUI();
+    const my = ++live.turn;
+    await uploadVoice(wavBlob(chunks, live.rate), { name: "speech.wav", interrupted, quiet: true });
+    if (live.on && live.turn === my && live.st === "thinking") { live.st = "listening"; live.pre = []; setLiveUI(); }
+  }
+  function liveFrame(data) {
+    if (!live.on) return;
+    const ms = (data.length / live.rate) * 1000;
+    let sum = 0; for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+    const rms = Math.sqrt(sum / data.length), thr = Math.max(0.012, live.floor * 3.5);
+    if (live.st === "thinking") {  // I am working or speaking: ignore the room, unless the writer may interrupt
+      if (state.speaking && state.liveInterrupt) {
+        live.barge = rms > Math.max(0.06, live.floor * 7) ? live.barge + ms : 0;
+        if (live.barge >= 300) { live.barge = 0; live.turn++; stopSpeaking(); live.interrupted = true; live.st = "capturing"; live.buf = [...live.pre, data]; live.speech = 300; live.quiet = 0; setLiveUI(); }
+        live.pre.push(data); if (live.pre.length > 12) live.pre.shift();
+      }
+      return;
+    }
+    if (live.st === "listening") {
+      live.pre.push(data); if (live.pre.length > 12) live.pre.shift();  // about half a second of lead-in
+      if (rms > thr) { live.loud += ms; } else { live.loud = 0; live.floor = Math.min(0.05, Math.max(0.002, live.floor * 0.95 + rms * 0.05)); }
+      if (live.loud >= 130) { live.st = "capturing"; live.buf = [...live.pre]; live.speech = live.loud; live.quiet = 0; live.loud = 0; setLiveUI(); }
+      return;
+    }
+    if (live.st === "capturing") {
+      live.buf.push(data);
+      if (rms > thr) { live.speech += ms; live.quiet = 0; } else live.quiet += ms;
+      const total = live.buf.length * ms;
+      if (live.quiet >= liveWait() || total > 60000) liveEnd(live.speech);
+    }
+  }
+  async function liveStart() {
+    if (live.on) return;
+    await ready; stopSpeaking();
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
+    catch (_) { return noMic("The microphone is blocked. Allow it in your browser, or use the Talk button."); }
+    const AC = window.AudioContext || window.webkitAudioContext, ctx = new AC();
+    if (ctx.resume) await ctx.resume();
+    const src = ctx.createMediaStreamSource(stream), node = ctx.createScriptProcessor(2048, 1, 1);
+    node.onaudioprocess = (e) => liveFrame(new Float32Array(e.inputBuffer.getChannelData(0)));
+    src.connect(node); node.connect(ctx.destination);  // the processor only runs while connected; it outputs silence
+    Object.assign(live, { on: true, ctx, stream, node, src, rate: ctx.sampleRate, st: "listening", buf: [], pre: [], loud: 0, speech: 0, quiet: 0, interrupted: false, barge: 0 });
+    setLiveUI(); setStatus("Live talk is on");
+  }
+  function liveStop() {
+    if (!live.on) return;
+    live.on = false; live.turn++; live.st = "idle";
+    try { live.node.disconnect(); live.src.disconnect(); live.stream.getTracks().forEach((t) => t.stop()); live.ctx.close(); } catch (_) {}
+    stopSpeaking(); setLiveUI(); setStatus("Ready");
   }
 
   // ================================================================ the book =========================================
@@ -775,6 +888,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   $("simpleBtn").onclick = () => applyLook({ ...currentLook(), simple: !state.look.simple, layout: !state.look.simple ? state.look.layout : "" });
   $("form").addEventListener("submit", (e) => { e.preventDefault(); send($("msg").value); });
   $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send($("msg").value); } });
+  $("liveBtn").onclick = () => (live.on ? liveStop() : liveStart());
   $("talk").onclick = toggleTalk; $("stop").onclick = stopSpeaking;
   $("read").onclick = () => { state.read = !state.read; if (!state.read) stopSpeaking(); applyRead(); };
   $("fresh").onclick = clearChat;
@@ -784,7 +898,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   window.addEventListener("resize", () => { for (const p of ["book", "chat"]) if (ui.floats[p]) placeFloat(p); });
 
   Object.assign(window.BS, {
-    state, store, bubble, note, welcome, applySize, applyRead, siteFetch, loadSiteBook, setBook, setStatus, send, applyLook, currentLook,
+    state, store, bubble, note, welcome, showServerReply, liveStop, setLiveUI, liveRunning: () => live.on, applySize, applyRead, siteFetch, loadSiteBook, setBook, setStatus, send, applyLook, currentLook,
     afterLogin: async () => { await loadSiteBook(); await restoreChat(); setStatus("Ready"); },
   });
   try { applyLook(JSON.parse(store.get("bs_look", "null")), false); } catch (_) { applySize(); }  // the login screen is already in the writer's own look

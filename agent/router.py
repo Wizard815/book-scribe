@@ -52,6 +52,7 @@ class Router:
     now: Callable[[], float] = time.monotonic
     health: dict[str, Health] = field(default_factory=dict)
     last: dict[str, Served] = field(default_factory=dict)
+    prefer: dict[str, str] = field(default_factory=dict)  # role -> "auto" | "local" | "cloud" (the writer's choice; see _ordered)
 
     def _cooling(self, p: Profile) -> bool:
         h = self.health.get(p.id)
@@ -63,6 +64,7 @@ class Router:
             raise NotConfigured(f"No {role} provider is in any tier. Open the admin menu and assign one.")
         if role == "embed":  # vector spaces differ between models; mixing them would corrupt memory
             chain = chain[:1]
+        chain = self._ordered(role, chain)
         ready = [c for c in chain if not self._cooling(c[1])]
         order = ready + [c for c in chain if c not in ready]
         errors: list[str] = []
@@ -81,6 +83,22 @@ class Router:
             self.last[role] = Served(role, tier, self.reg.labels[tier], p.id, fell_back=tier != chain[0][0] or bool(errors))
             return result
         raise AllTiersFailed(role, errors)
+
+    def _ordered(self, role: str, chain: list) -> list:
+        """The writer's local/cloud choice. The last tier is the cloud (frontier) tier; every tier before it runs on the writer's own machines.
+        local: never leave the machines (the cloud tier is not used at all, so nothing is sent to a third party).
+        cloud: the cloud tier first, local ones as the fallback. auto: tier order, cloud only when the local tiers failed."""
+        mode = self.prefer.get(role, "auto")
+        if role == "embed" or mode == "auto" or len(self.reg.labels) < 2:
+            return chain
+        cloud_tier = len(self.reg.labels) - 1
+        local = [c for c in chain if c[0] != cloud_tier]
+        cloud = [c for c in chain if c[0] == cloud_tier]
+        if mode == "local":
+            if not local:
+                raise NotConfigured(f"You chose local {role}, but no local {role} provider is set up. Ask the administrator, or choose Automatic.")
+            return local
+        return cloud + local if cloud else chain
 
     def health_snapshot(self) -> dict:
         t = self.now()

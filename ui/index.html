@@ -94,8 +94,19 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 .addbtn:disabled { border-color: var(--line); }
 .ideas, #pending { display: flex; flex-wrap: wrap; gap: 10px; }
 .chip { min-height: calc(58px * var(--k)); padding: 8px 18px; font-size: calc(22px * var(--k)); font-weight: 700; background: var(--surface); border: 3px solid var(--accent); border-radius: 16px; }
-#pending button { flex: 1; min-height: calc(64px * var(--k)); font-size: calc(24px * var(--k)); font-weight: 700; background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 16px; padding: 6px 16px; }
-#pending button.no { background: var(--surface); color: var(--fg); border: 3px solid var(--line); }
+/* A question for the writer: big words, two huge answers. Saying yes or no out loud works too. */
+#pending { flex-direction: column; flex-wrap: nowrap; gap: 14px; padding: 18px; background: var(--note); color: var(--note-fg); border: 4px solid var(--accent); border-radius: 22px; }
+#pending .ask { margin: 0; font-size: calc(32px * var(--k)); font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; max-height: 32vh; overflow-y: auto; }
+#pending .answers { display: flex; flex-wrap: wrap; gap: 14px; }
+#pending .or { margin: 0; font-size: calc(21px * var(--k)); font-weight: 700; }
+#pending button { flex: 1 1 200px; min-height: calc(104px * var(--k)); font-size: calc(44px * var(--k)); font-weight: 700; background: var(--accent); color: var(--accent-fg); border: 4px solid var(--accent); border-radius: 20px; padding: 6px 16px; }
+#pending button.no { background: var(--surface); color: var(--fg); border-color: var(--fg); }
+#pending button.small { font-size: calc(30px * var(--k)); min-height: calc(84px * var(--k)); }
+.bar button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+#liveBtn { width: 100%; min-height: calc(64px * var(--k)); font-size: calc(26px * var(--k)); font-weight: 700; background: var(--surface); border: 3px solid var(--accent); border-radius: 18px; }
+#liveBtn[aria-pressed="true"] { background: var(--live); border-color: var(--live); color: var(--live-fg); }
+#liveStatus { margin: 0; text-align: center; font-size: calc(28px * var(--k)); font-weight: 700; padding: 10px; border-radius: 14px; background: var(--mine); }
+#liveStatus[data-s="capturing"] { background: var(--live); color: var(--live-fg); }
 #talk { width: 100%; min-height: calc(90px * var(--k)); display: flex; align-items: center; justify-content: center; gap: 14px; font-size: calc(36px * var(--k)); font-weight: 700; color: var(--accent-fg); background: var(--accent); border: 0; border-radius: 22px; }
 #talk svg { width: 44px; height: 44px; flex: none; }
 #talk.live { background: var(--live); color: var(--live-fg); }
@@ -126,7 +137,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   #talk { min-height: calc(76px * var(--k)); font-size: calc(30px * var(--k)); } #talk svg { width: 36px; height: 36px; }
   #msg { min-height: calc(60px * var(--k)); font-size: calc(22px * var(--k)); } #send { min-width: calc(92px * var(--k)); font-size: calc(24px * var(--k)); padding: 0 10px; }
   .chip { min-height: calc(50px * var(--k)); font-size: calc(20px * var(--k)); } .tools button { min-height: calc(46px * var(--k)); font-size: calc(18px * var(--k)); padding: 4px 10px; }
-  .pbody { padding: 8px; } #pending button { min-height: calc(56px * var(--k)); font-size: calc(20px * var(--k)); }
+  .pbody { padding: 8px; } #pending { padding: 12px; } #pending .ask { font-size: calc(24px * var(--k)); } #pending button { min-height: calc(80px * var(--k)); font-size: calc(34px * var(--k)); }
 }
 /* Looks chosen by the writer (or by the agent when they say they can't see). They come AFTER the dark-mode blocks so they win. */
 :root[data-contrast="high"] {  /* black on white, heavy lines */
@@ -213,6 +224,8 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
       <div class="pbody">
         <div id="chat" aria-live="polite" aria-label="Conversation"></div>
         <div id="pending" hidden></div>
+        <button id="liveBtn" type="button" aria-pressed="false" hidden>Start live talk</button>
+        <p id="liveStatus" role="status" data-s="idle" hidden></p>
         <button id="talk" type="button" aria-label="Talk to Book Scribe">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 11.5a7 7 0 0 0 14 0M12 18.5v3M8.5 21.5h7"/></svg>
           <span id="talkLabel">Talk</span>
@@ -445,15 +458,27 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     }
     $("chat").append(box);
   }
-  function setPending(p) {
+  const ANSWERS = {  // what each kind of question offers: [button text, what is sent, style]
+    voice: [["Keep this voice", "keep it", "small"], ["Try another", "try another voice", "small"], ["Discard", "no", "no small"]],
+    confirm_target: [["Yes, that one", "yes", ""], ["No", "no", "no"]],
+    file: [["Yes, add it", "yes", ""], ["No", "no", "no"]],
+    family: [["Yes, add them", "yes", ""], ["No", "no", "no"]],
+    wiki: [["Yes, save it", "yes", ""], ["No", "no", "no"]],
+  };
+  function setPending(p, question) {
     const box = $("pending"); box.replaceChildren(); box.hidden = !p;
     if (!p) return;
-    const labels = p.kind === "voice" ? [["Keep this voice", "keep it", ""], ["Try another", "try another voice", ""], ["Discard", "no", "no"]]
-      : p.kind === "confirm_target" ? [["Yes, that one", "yes", ""], ["No", "no", "no"]] : [["Yes, save", "yes, save it", ""], ["No", "no", "no"]];
+    const labels = ANSWERS[p.kind] || [["Yes, save", "yes, save it", ""], ["No", "no", "no"]];
+    const q = document.createElement("p"); q.className = "ask"; q.textContent = (question || "Is that right?").slice(0, 260);
+    const row = document.createElement("div"); row.className = "answers";
     for (const [label, say, cls] of labels) {
       const b = document.createElement("button");
-      b.type = "button"; b.textContent = label; if (cls) b.className = cls; b.onclick = () => send(say); box.append(b);
+      b.type = "button"; b.textContent = label; if (cls) b.className = cls; b.onclick = () => send(say); row.append(b);
     }
+    const or = document.createElement("p"); or.className = "or"; or.textContent = "You can also just say yes or no.";
+    box.setAttribute("role", "group"); box.setAttribute("aria-label", "Please answer");
+    box.append(q, row, or);
+    if (!document.activeElement || document.activeElement === document.body || document.activeElement.id === "talk") row.firstChild.focus({ preventScroll: true });
   }
   // One long conversation: the server keeps it (and a summary of the older part), so a reload or a new device picks up where we left off.
   async function restoreChat() {
@@ -484,7 +509,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 
   // --- talking back
   function stopSpeaking() {
-    state.speakToken++;
+    state.speakToken++; state.speaking = false;
     if (state.audio) { try { state.audio.pause(); } catch (_) {} }
     if ("speechSynthesis" in window) speechSynthesis.cancel();
   }
@@ -508,6 +533,10 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     if (!state.read || !text) return;
     stopSpeaking();
     const token = state.speakToken, site = state.mode === "scribe";
+    state.speaking = true; setLiveUI();
+    try { await speakSegments(text, segments, token, site); } finally { if (token === state.speakToken) { state.speaking = false; setLiveUI(); } }
+  }
+  async function speakSegments(text, segments, token, site) {
     const segs = site && segments && segments.length ? segments.filter((s) => s.text && s.text.trim()) : [{ speaker: "assistant", text }];
     let next = site ? fetchVoice(segs[0]) : null;
     for (let i = 0; i < segs.length; i++) {
@@ -532,7 +561,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     $("barLocal").hidden = state.mode !== "claude";
     $("saveBook").hidden = !state.downloads;
     if (state.mode === "claude") { loadLocalBook(); } else { await loadSiteBook(); await restoreChat(); }
-    setStatus("Ready");
+    setStatus("Ready"); setLiveUI();
   }
   function bookContext() {
     const t = state.book.map((p) => p.text).join("\n\n");
@@ -585,17 +614,18 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     const marks = hl.filter((h) => h.chapter === first.chapter).map((h) => h.id);
     await showChapter(first.chapter, first.id, true, marks);
   }
-  function showServerReply(j) {  // chat, book and spoken reply for one answer from your server
+  async function showServerReply(j) {  // chat, book and spoken reply for one answer from your server
     if (j.ui) { applyLook(j.ui, false); store.set("bs_look", JSON.stringify(currentLook())); }  // the server already saved this one
     const b = j.text ? bubble("assistant", j.text) : null;
     (j.notes || []).forEach((n) => bubble("note", n));
     if (b && j.highlights && j.highlights.length) addRefButtons(b, j.highlights);
     if (b && j.ideas && j.ideas.length) addIdeaButtons(b, j.ideas);
-    setPending(j.pending || null);
+    setPending(j.pending || null, j.text);
+    if (j.open_item && window.BS.openLibraryItem) window.BS.openLibraryItem(j.open_item.slug);
     if (j.highlights && j.highlights.length) applyHighlights(j.highlights);
     else if (j.chapter) showChapter(j.chapter, j.focus, j.changed && j.changed.length);
     state.history.push({ role: "assistant", text: j.text || "" });
-    speak(j.text, j.speech);
+    return speak(j.text, j.speech);  // resolves when the reply has been spoken (live talk waits for it)
   }
   async function send(raw) {
     const text = (raw || "").trim();
@@ -618,16 +648,17 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     state.listening = on; $("talk").classList.toggle("live", on);
     $("talkLabel").textContent = on ? "Listening. Tap to send" : "Talk"; setStatus(on ? "Listening…" : "Ready");
   }
-  async function uploadVoice(blob) {
+  async function uploadVoice(blob, opts = {}) {
     busy(true);
     try {
-      const fd = new FormData(); fd.append("audio", blob, "speech.webm"); fd.append("session_id", state.sid); fd.append("book", state.bookName || "");
+      const fd = new FormData(); fd.append("audio", blob, opts.name || "speech.webm"); fd.append("session_id", state.sid); fd.append("book", state.bookName || "");
+      if (opts.interrupted) fd.append("interrupted", "1");
       const r = await siteFetch("/api/voice", { method: "POST", body: fd });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw Object.assign(new Error("voice"), { code: "server", detail: j.detail });
       showIdeas(false); busy(false);
-      if (!j.text) { note("I did not hear anything. Tap Talk and try again."); return; }
-      bubble("me", j.user_text); state.history.push({ role: "user", text: j.user_text }); showServerReply(j);
+      if (!j.text) { if (!opts.quiet) note("I did not hear anything. Tap Talk and try again."); return; }
+      bubble("me", j.user_text); state.history.push({ role: "user", text: j.user_text }); return await showServerReply(j);
     } catch (e) { busy(false); note(explain(e)); }
   }
   async function startRecording() {
@@ -667,6 +698,88 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     if (state.mode === "scribe" && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder) return startRecording();
     if (SR) return startRecognition(SR);
     noMic();
+  }
+
+  // ================================================================ live talk =========================================
+  // The microphone stays open. When you stop talking I answer, then listen again, like a phone call. A small voice detector watches the
+  // loudness: it learns how noisy the room is, starts recording when you speak (keeping the half second before, so no first word is lost),
+  // and sends when you have been quiet for a moment. Optionally you can talk over me to interrupt (best with headphones).
+  const live = { on: false, ctx: null, stream: null, node: null, src: null, st: "idle", buf: [], pre: [], loud: 0, speech: 0, quiet: 0, floor: 0.008, rate: 44100, turn: 0, interrupted: false, barge: 0 };
+  const liveWait = () => parseInt(store.get("bs_live_wait", "1500"), 10) || 1500;
+  function setLiveUI() {
+    const s = $("liveStatus"), btn = $("liveBtn");
+    btn.hidden = state.mode !== "scribe" || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    btn.setAttribute("aria-pressed", String(live.on)); btn.textContent = live.on ? "Stop live talk" : "Start live talk";
+    s.hidden = !live.on; $("talk").disabled = live.on;
+    if (!live.on) return;
+    const msgs = { listening: "I am listening. Just talk.", capturing: "I hear you…", thinking: state.speaking ? (state.liveInterrupt ? "Speaking. Talk to interrupt me." : "Speaking…") : "Thinking…" };
+    const k = live.st === "thinking" && state.speaking ? "speaking" : live.st;
+    s.dataset.s = k; s.textContent = msgs[live.st] || "";
+  }
+  function wavBlob(chunks, rate) {  // 16 kHz mono 16-bit: small, and every speech server reads it
+    let n = 0; for (const c of chunks) n += c.length;
+    const all = new Float32Array(n); let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
+    const ratio = rate / 16000, len = Math.floor(all.length / ratio), pcm = new Int16Array(len);
+    for (let i = 0; i < len; i++) { const x = all[Math.floor(i * ratio)]; pcm[i] = Math.max(-1, Math.min(1, x)) * 0x7fff; }
+    const buf = new ArrayBuffer(44 + pcm.length * 2), v = new DataView(buf), w = (off, s) => [...s].forEach((ch, i) => v.setUint8(off + i, ch.charCodeAt(0)));
+    w(0, "RIFF"); v.setUint32(4, 36 + pcm.length * 2, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 16000, true); v.setUint32(28, 32000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, pcm.length * 2, true);
+    new Int16Array(buf, 44).set(pcm);
+    return new Blob([buf], { type: "audio/wav" });
+  }
+  async function liveEnd(speechMs) {
+    const chunks = live.buf, interrupted = live.interrupted; live.buf = []; live.interrupted = false;
+    if (speechMs < 350) { live.st = "listening"; setLiveUI(); return; }  // a cough or a click, not talking
+    live.st = "thinking"; setLiveUI();
+    const my = ++live.turn;
+    await uploadVoice(wavBlob(chunks, live.rate), { name: "speech.wav", interrupted, quiet: true });
+    if (live.on && live.turn === my && live.st === "thinking") { live.st = "listening"; live.pre = []; setLiveUI(); }
+  }
+  function liveFrame(data) {
+    if (!live.on) return;
+    const ms = (data.length / live.rate) * 1000;
+    let sum = 0; for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+    const rms = Math.sqrt(sum / data.length), thr = Math.max(0.012, live.floor * 3.5);
+    if (live.st === "thinking") {  // I am working or speaking: ignore the room, unless the writer may interrupt
+      if (state.speaking && state.liveInterrupt) {
+        live.barge = rms > Math.max(0.06, live.floor * 7) ? live.barge + ms : 0;
+        if (live.barge >= 300) { live.barge = 0; live.turn++; stopSpeaking(); live.interrupted = true; live.st = "capturing"; live.buf = [...live.pre, data]; live.speech = 300; live.quiet = 0; setLiveUI(); }
+        live.pre.push(data); if (live.pre.length > 12) live.pre.shift();
+      }
+      return;
+    }
+    if (live.st === "listening") {
+      live.pre.push(data); if (live.pre.length > 12) live.pre.shift();  // about half a second of lead-in
+      if (rms > thr) { live.loud += ms; } else { live.loud = 0; live.floor = Math.min(0.05, Math.max(0.002, live.floor * 0.95 + rms * 0.05)); }
+      if (live.loud >= 130) { live.st = "capturing"; live.buf = [...live.pre]; live.speech = live.loud; live.quiet = 0; live.loud = 0; setLiveUI(); }
+      return;
+    }
+    if (live.st === "capturing") {
+      live.buf.push(data);
+      if (rms > thr) { live.speech += ms; live.quiet = 0; } else live.quiet += ms;
+      const total = live.buf.length * ms;
+      if (live.quiet >= liveWait() || total > 60000) liveEnd(live.speech);
+    }
+  }
+  async function liveStart() {
+    if (live.on) return;
+    await ready; stopSpeaking();
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
+    catch (_) { return noMic("The microphone is blocked. Allow it in your browser, or use the Talk button."); }
+    const AC = window.AudioContext || window.webkitAudioContext, ctx = new AC();
+    if (ctx.resume) await ctx.resume();
+    const src = ctx.createMediaStreamSource(stream), node = ctx.createScriptProcessor(2048, 1, 1);
+    node.onaudioprocess = (e) => liveFrame(new Float32Array(e.inputBuffer.getChannelData(0)));
+    src.connect(node); node.connect(ctx.destination);  // the processor only runs while connected; it outputs silence
+    Object.assign(live, { on: true, ctx, stream, node, src, rate: ctx.sampleRate, st: "listening", buf: [], pre: [], loud: 0, speech: 0, quiet: 0, interrupted: false, barge: 0 });
+    setLiveUI(); setStatus("Live talk is on");
+  }
+  function liveStop() {
+    if (!live.on) return;
+    live.on = false; live.turn++; live.st = "idle";
+    try { live.node.disconnect(); live.src.disconnect(); live.stream.getTracks().forEach((t) => t.stop()); live.ctx.close(); } catch (_) {}
+    stopSpeaking(); setLiveUI(); setStatus("Ready");
   }
 
   // ================================================================ the book =========================================
@@ -783,6 +896,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   $("simpleBtn").onclick = () => applyLook({ ...currentLook(), simple: !state.look.simple, layout: !state.look.simple ? state.look.layout : "" });
   $("form").addEventListener("submit", (e) => { e.preventDefault(); send($("msg").value); });
   $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send($("msg").value); } });
+  $("liveBtn").onclick = () => (live.on ? liveStop() : liveStart());
   $("talk").onclick = toggleTalk; $("stop").onclick = stopSpeaking;
   $("read").onclick = () => { state.read = !state.read; if (!state.read) stopSpeaking(); applyRead(); };
   $("fresh").onclick = clearChat;
@@ -792,7 +906,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   window.addEventListener("resize", () => { for (const p of ["book", "chat"]) if (ui.floats[p]) placeFloat(p); });
 
   Object.assign(window.BS, {
-    state, store, bubble, note, welcome, applySize, applyRead, siteFetch, loadSiteBook, setBook, setStatus, send, applyLook, currentLook,
+    state, store, bubble, note, welcome, showServerReply, liveStop, setLiveUI, liveRunning: () => live.on, applySize, applyRead, siteFetch, loadSiteBook, setBook, setStatus, send, applyLook, currentLook,
     afterLogin: async () => { await loadSiteBook(); await restoreChat(); setStatus("Ready"); },
   });
   try { applyLook(JSON.parse(store.get("bs_look", "null")), false); } catch (_) { applySize(); }  // the login screen is already in the writer's own look
@@ -829,6 +943,9 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 .entry .meta { font-size: 18px; color: var(--muted); flex: 1 1 100%; }
 .idea { border: 2px solid var(--line); border-radius: 14px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
 .idea .txt { font-size: 26px; flex: 1 1 260px; overflow-wrap: anywhere; }
+.bigrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 8px 0; }
+.bigrow button { min-height: 110px !important; font-size: 30px !important; text-align: center; }
+.folder { font-size: 24px; font-weight: 700; background: var(--bg); border: 2px dashed var(--line); border-radius: 12px; padding: 12px 16px; margin: 0; overflow-wrap: anywhere; user-select: all; }
 .lib-item { border: 2px solid var(--line); border-radius: 14px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
 .lib-item .name { font-size: 26px; font-weight: 700; flex: 1 1 240px; overflow-wrap: anywhere; }
 .lib-item .meta { font-size: 19px; color: var(--muted); flex: 1 1 100%; }
@@ -866,6 +983,26 @@ body.dragging #dropBanner { display: flex; }
     <div id="ideaOpts" class="row"></div>
     <div class="row"><button type="button" id="ideaGo" class="primary">Give me ideas</button></div>
     <div id="ideaList" style="display:flex;flex-direction:column;gap:10px;margin-top:10px"></div>
+  </div>
+</div>
+
+<div id="importView" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="impTitle">
+  <div class="panel">
+    <div class="sbar"><h2 id="impTitle">Import</h2><button type="button" id="impClose" class="primary">Close</button></div>
+    <p class="hint">Bring something into your book: notes, an old draft, a PDF, a photo, a recording, a family tree. I will read it and remember it.</p>
+    <div class="bigrow">
+      <button type="button" id="impChoose" class="primary">Choose files from this computer</button>
+      <button type="button" id="impPhoto">Take a photo</button>
+      <button type="button" id="impFind">Find a file I just downloaded</button>
+      <button type="button" id="impInbox">Check my inbox folder</button>
+    </div>
+    <div class="sect">Or drop files in your inbox folder</div>
+    <p class="hint">Put files in this folder on your computer and I will notice them and ask if you want them added:</p>
+    <p id="impFolder" class="folder"></p>
+    <p id="impShared" class="hint"></p>
+    <div id="impWaiting" style="display:flex;flex-direction:column;gap:10px"></div>
+    <p id="impMsg" role="status" class="ok"></p>
+    <p class="hint">You can also drag files onto this page from anywhere. Files up to 200 MB.</p>
   </div>
 </div>
 
@@ -959,8 +1096,9 @@ body.dragging #dropBanner { display: flex; }
 
   function mountTools() {
     const box = $("siteTools"); box.hidden = false; box.replaceChildren();
+    const imp = h("button", { type: "button", id: "importBtn", className: "primary", textContent: "Import" }); imp.onclick = openImport;
     const s = h("button", { type: "button", textContent: "Settings" }); s.onclick = () => openSettings();
-    box.append(s);
+    box.append(imp, s);
     const tools = document.querySelector(".tools");
     if (tools && !document.getElementById("libBtn")) {
       const f = h("button", { type: "button", id: "addFileBtn", textContent: "Add file" }); f.onclick = () => $("libFile").click();
@@ -1133,8 +1271,46 @@ body.dragging #dropBanner { display: flex; }
   }
   async function tabVoices() {
     if (!book()) return [h("p", { className: "hint", textContent: "Open a book first." })];
-    const [v, bible] = await Promise.all([call("GET", `/api/books/${enc(book())}/voices`), call("GET", `/api/books/${enc(book())}/bible`)]);
-    const out = [h("p", { className: "hint", textContent: "Each character has their own voice. To change one, tell the chat: “let me hear Mr. Bennet”, then say deeper, slower, or try another." })];
+    const [v, bible, roles, prefs] = await Promise.all([call("GET", `/api/books/${enc(book())}/voices`), call("GET", `/api/books/${enc(book())}/bible`), call("GET", `/api/books/${enc(book())}/voice-roles`), call("GET", "/api/settings")]);
+    const note = h("p", { className: "ok", role: "status" });
+    const save = async (body, again) => { try { await call("PUT", "/api/settings", body); BS.serverPrefs = { ...(BS.serverPrefs || {}), ...body }; if ("live_interrupt" in body) { BS.state.liveInterrupt = body.live_interrupt === "on"; BS.setLiveUI(); } msg(note, "Saved."); if (again) render("voices"); } catch (e) { msg(note, e.message, true); } };
+    const pick = (id, label, opts, cur, apply) => { const sel = h("select", { id }, ...opts.map(([val, l]) => h("option", { value: val, textContent: l }))); sel.value = String(cur); sel.onchange = () => apply(sel.value); return [h("label", { for: id, textContent: label }), sel]; };
+    const SPEEDS = [["0.8", "Slow"], ["0.9", "A little slow"], ["1", "Normal"], ["1.1", "A little fast"], ["1.25", "Fast"]];
+    const closest = (x) => String(SPEEDS.map(([s]) => Number(s)).reduce((a, b) => (Math.abs(b - x) < Math.abs(a - x) ? b : a)));
+    const roleRow = (key, label, speaker, sample) => {
+      const r = roles.roles[key];
+      const vs = h("select", { id: "rv_" + key, "aria-label": label + " voice" }, h("option", { value: "", textContent: r.voice ? r.voice + " (current)" : "Chosen for me" }), ...roles.pool.filter((x) => x.name !== r.voice).map((x) => h("option", { value: x.name, textContent: x.name + (x.tags.length ? " (" + x.tags.join(", ") + ")" : "") })));
+      const sp = h("select", { id: "rs_" + key, "aria-label": label + " speed" }, ...SPEEDS.map(([val, l]) => h("option", { value: val, textContent: l }))); sp.value = closest(r.speed || 1);
+      const upd = async () => { try { await call("PUT", `/api/books/${enc(book())}/voice-roles/${key}`, { voice: vs.value || null, speed: Number(sp.value) }); msg(note, "Saved."); } catch (e) { msg(note, e.message, true); } };
+      vs.onchange = sp.onchange = upd;
+      const hearBtn = h("button", { type: "button", textContent: "Hear it" }); hearBtn.onclick = () => hear(speaker, sample);
+      return h("div", { className: "form" }, h("div", { className: "sect", textContent: label, style: "margin:0" }), h("label", { for: "rv_" + key, textContent: "Voice" }), vs, h("label", { for: "rs_" + key, textContent: "Speed" }), sp, h("div", { className: "row" }, hearBtn));
+    };
+    const mode = prefs.voice_mode;
+    const top = [
+      h("div", { className: "sect", textContent: "How many voices?" }),
+      ...pick("vMode", "Who speaks", [["same", "One voice for everything"], ["separate", "Three voices: me, a woman reader and a man reader"], ["characters", "Me, a narrator, and a different voice for every character"]], mode, (val) => save({ voice_mode: val }, true)),
+      !roles.pool.length ? h("p", { className: "err", textContent: "No list of voices has been set up yet, so I cannot offer a choice. The administrator adds them under Text-to-speech." }) : h("p", { className: "hint", textContent: `Voices come from ${roles.tier || "the voice server"} (${roles.provider}). Pick one, then press Hear it.` }),
+      roleRow("agent", mode === "same" ? "The voice for everything" : "Me, the agent (the voice that talks with you)", "assistant", "Hello. This is how I sound when we talk."),
+    ];
+    if (mode === "separate") {
+      top.push(roleRow("female", "The woman reader", "reader:female", "The evening was quiet, and the road ran white beneath the moon."),
+        roleRow("male", "The man reader", "reader:male", "The evening was quiet, and the road ran white beneath the moon."),
+        ...pick("vNarr", "The story's narration is read by", [["female", "The woman reader"], ["male", "The man reader"]], prefs.narrator_reader, (val) => save({ narrator_reader: val })),
+        h("p", { className: "hint", textContent: "Women in the story are read by the woman reader and men by the man reader. A character you have chosen a special voice for keeps it." }));
+    }
+    top.push(
+      h("div", { className: "sect", textContent: "Where the work is done" }),
+      h("p", { className: "hint", textContent: "Automatic tries your own machines first and only uses the cloud if they do not answer. “On my computers only” never sends anything to the cloud. “Cloud” is usually smarter or faster but sends your words to another company." }),
+      ...["chat_engine|Thinking and writing", "listen_engine|Listening to you", "voice_engine|Making my voice"].flatMap((spec) => { const [k, l] = spec.split("|"); return pick("e_" + k, l, [["auto", "Automatic"], ["local", "On my computers only"], ["cloud", "Cloud"]], prefs[k], (val) => save({ [k]: val })); }),
+      h("div", { className: "sect", textContent: "Live talk" }),
+      h("p", { className: "hint", textContent: "Press Start live talk on the main screen and just talk. I answer when you stop, then listen again." }),
+      ...pick("liveWait", "How long I wait after you stop talking", [["1000", "Short"], ["1500", "Normal"], ["2200", "Long, I pause a lot"]], BS.store.get("bs_live_wait", "1500"), (val) => { BS.store.set("bs_live_wait", val); msg(note, "Saved."); }),
+      ...pick("liveInt", "Talking over me", [["off", "Wait for me to finish (best without headphones)"], ["on", "Let me interrupt (use headphones)"]], prefs.live_interrupt, (val) => save({ live_interrupt: val })),
+      note);
+    const out = [...top];
+    if (mode !== "characters") return out;
+    out.push(h("div", { className: "sect", textContent: "Characters" }), h("p", { className: "hint", textContent: "Each character has their own voice. To change one, tell the chat: “let me hear Mr. Bennet”, then say deeper, slower, or try another." }));
     if (!v.pool.length) out.push(h("p", { className: "ok", textContent: "No list of voices has been set up yet, so everyone sounds the same. The admin adds the voices on the admin page, under Text-to-speech." }));
     const names = ["narrator", "assistant", ...bible.characters.map((c) => c.name)];
     const label = { narrator: "The narrator (the story's own voice)", assistant: "Me (Book Scribe)" };
@@ -1221,6 +1397,7 @@ body.dragging #dropBanner { display: flex; }
       const r = await fetch("/api/settings"); if (!r.ok) return;
       const s = await r.json();
       BS.serverPrefs = s;
+      BS.state.liveInterrupt = s.live_interrupt === "on"; BS.setLiveUI && BS.setLiveUI();
       if (s.look) { BS.applyLook(s.look, false); BS.store.set("bs_look", JSON.stringify(BS.currentLook())); }
     } catch (_) {}
   }
@@ -1263,6 +1440,41 @@ body.dragging #dropBanner { display: flex; }
   $("ideasClose").onclick = () => ($("ideasView").hidden = true);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("ideasView").hidden) $("ideasView").hidden = true; });
 
+  // ---- Import: one big button for getting things in ------------------------------------------------------------------------------------------
+  async function openImport() {
+    $("importView").hidden = false; msg($("impMsg"), "");
+    try {
+      const j = await call("GET", `/api/books/${enc(book())}/inbox`);
+      $("impFolder").textContent = j.folder;
+      $("impShared").textContent = j.shared_folders.length ? `I can also look for downloaded files in: ${j.shared_folders.join(", ")}.` : "No other folders are shared with me, so to find a download, choose it or drop it in the folder above.";
+      $("impWaiting").replaceChildren(...j.files.map((f) => {
+        const add = h("button", { type: "button", className: "primary", textContent: "Add" });
+        add.onclick = async () => { try { msg($("impMsg"), `Adding ${f.name}…`); const m = await call("POST", `/api/books/${enc(book())}/inbox/add`, { name: f.name }); BS.bubble("assistant", m.message); closeImport(); BS.openLibraryItem(m.slug); } catch (e) { msg($("impMsg"), e.message, true); } };
+        return h("div", { className: "lib-item" }, h("span", { className: "name", textContent: f.name }), h("span", { className: "meta", textContent: "waiting in the inbox folder" }), add);
+      }));
+    } catch (e) { msg($("impMsg"), e.message, true); }
+    setTimeout(() => $("impChoose").focus(), 50);
+  }
+  const closeImport = () => ($("importView").hidden = true);
+  $("impClose").onclick = closeImport;
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("importView").hidden) closeImport(); });
+  $("impChoose").onclick = () => $("libFile").click();
+  $("impPhoto").onclick = () => $("libCam").click();
+  $("impFind").onclick = () => { closeImport(); BS.send("I just downloaded a new file, can you find it and open it"); };
+  $("impInbox").onclick = async () => {
+    try {
+      const r = await BS.siteFetch(`/api/books/${enc(book())}/inbox/check`, { method: "POST" }); const j = await r.json();
+      closeImport();
+      if (j.text) BS.showServerReply(j); else BS.bubble("assistant", "There is nothing new in your inbox folder.");
+    } catch (_) {}
+  };
+  // every few seconds, ask whether something new landed in the inbox folder (the agent asks about it once, and never during another question)
+  setInterval(async () => {
+    if (document.hidden || !book() || BS.state.busy || !$("pending").hidden || !$("loginView").hidden || BS.state.speaking) return;
+    try { const r = await fetch(`/api/books/${enc(book())}/inbox/check`, { method: "POST" }); if (!r.ok) return; const j = await r.json(); if (j.text) BS.showServerReply(j); } catch (_) {}
+  }, 10000);
+  BS.openLibraryItem = async (slug) => { $("libView").hidden = false; $("libList").hidden = true; closeImport(); await openItem(slug, 1); };
+
   // ---- Library: add any file, find anything by meaning ---------------------------------------------------------------------------------------
   const KIND = { document: "Document", family_tree: "Family tree", database: "Database", image: "Picture", scan: "Scanned pages", audio: "Recording", text: "Text" };
   const setLibMsg = (t, bad) => msg($("libMsg"), t, bad);
@@ -1271,7 +1483,7 @@ body.dragging #dropBanner { display: flex; }
     if (!list.length || !book()) return;
     if (!BS.state.bookName) return;
     const note = list.length === 1 ? `Adding ${list[0].name}. Pictures and long files can take a minute.` : `Adding ${list.length} files. Pictures and long files can take a minute.`;
-    setLibMsg(note); BS.setStatus("Adding…");
+    setLibMsg(note); msg($("impMsg"), note); BS.setStatus("Adding…");
     const fd = new FormData(); list.forEach((f) => fd.append("files", f, f.name));
     try {
       const r = await BS.siteFetch(`/api/books/${enc(book())}/library`, { method: "POST", body: fd });
@@ -1279,7 +1491,8 @@ body.dragging #dropBanner { display: flex; }
       if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : "I could not add that. Please try again.");
       for (const it of j.items) BS.bubble("assistant", it.message);  // the one chat is where everything is reported
       setLibMsg(j.items.map((i) => i.message).join(" "), j.items.every((i) => i.error));
-      BS.setStatus("Ready");
+      BS.setStatus("Ready"); closeImport();
+      if (j.items.length === 1 && j.items[0].slug) BS.openLibraryItem(j.items[0].slug);
       if (!$("libView").hidden && $("libDetail").hidden) drawLibrary();
     } catch (e) { setLibMsg(e.message, true); BS.setStatus("Ready"); if (e.code !== "auth") BS.note(e.message); }
   }
@@ -1355,6 +1568,34 @@ body.dragging #dropBanner { display: flex; }
         nav.append(prev, h("span", { className: "hint", textContent: `Part ${j.part} of ${j.parts}` }), next); kids.push(nav);
       }
       if (j.people) {
+        let rootId = null, rootName = "";
+        const rootLine = h("p", { className: "hint", textContent: "The story is about: everyone in the tree (oldest first)." });
+        const sel = (id, label, def) => { const s = h("select", { id }, ...[0, 1, 2, 3, 4, 5, 6].map((n) => h("option", { value: n, textContent: n === 0 ? "None" : n === 1 ? "1 generation" : n + " generations" }))); s.value = String(def); return [h("label", { for: id, textContent: label }), s]; };
+        const [lb, back] = sel("fiBack", "How far back (parents, grandparents…)", 2), [lf, fwd] = sel("fiFwd", "How far forward (children, grandchildren…)", 2);
+        const priv = h("input", { type: "checkbox", id: "fiPriv", checked: true }); priv.style = "width:32px;height:32px";
+        const result = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+        const body = () => ({ root_id: rootId, ancestors: Number(back.value), descendants: Number(fwd.value), siblings: true, privacy: priv.checked ? "alias" : "real" });
+        const preview = h("button", { type: "button", textContent: "Show me what would be added" });
+        preview.onclick = async () => {
+          result.replaceChildren(h("p", { className: "hint", textContent: "Working it out…" }));
+          try {
+            const s = await call("POST", `/api/books/${enc(book())}/library/${enc(slug)}/wiki-plan`, body());
+            const go = h("button", { type: "button", className: "primary", textContent: "Add to the story wiki" });
+            go.onclick = async () => {
+              go.disabled = true;
+              try { const r = await call("POST", `/api/books/${enc(book())}/library/${enc(slug)}/wiki-import`, body());
+                const m = `Added ${r.characters_added} characters${r.characters_extended ? `, extended ${r.characters_extended} that were already there` : ""}, ${r.places_added} places and ${r.timeline_entries} dates to the story wiki.`;
+                result.replaceChildren(h("p", { className: "ok", textContent: m })); BS.bubble("assistant", m); } catch (e) { go.disabled = false; msg(info, e.message, true); }
+            };
+            result.replaceChildren(
+              h("p", { className: "ok", textContent: `${s.people} people (${s.new} new, ${s.existing} already in the wiki), ${s.places} ${s.places === 1 ? "place" : "places"}, ${s.timeline_entries} dates for a family timeline.` + (s.aliased ? ` ${s.aliased} living relatives get made-up names, so no real name or birthday goes into your book.` : "") + (s.truncated ? " The list was cut to keep the wiki quick; narrow the generations to choose who is included." : "") }),
+              h("p", { className: "hint", textContent: "Includes: " + s.names.slice(0, 25).map((n) => n.name).join(", ") + (s.names.length > 25 ? "…" : "") }),
+              s.sample ? h("div", { className: "lib-text", textContent: "A sample page:\n\n" + s.sample.replace(/\n\n\*\(.*\)\*$/s, "") }) : null, go);
+          } catch (e) { result.replaceChildren(h("p", { className: "err", textContent: e.message })); }
+        };
+        kids.push(h("div", { className: "sect", textContent: "Bring this family into your story wiki" }),
+          h("p", { className: "hint", textContent: "Choose the person your story is about (tap Start from here below), then how many generations. People become characters, places become world pages, and dates become a family timeline. Nothing is added until you press the blue button after the preview." }),
+          h("div", { className: "form" }, rootLine, lb, back, lf, fwd, h("label", { for: "fiPriv", style: "display:flex;gap:12px;align-items:center" }, priv, "Give living relatives made-up names (recommended)"), preview, result));
         kids.push(h("div", { className: "sect", textContent: "People in this tree" }), h("p", { className: "hint", textContent: "Tap Use as character to bring someone into your story wiki. You can ask me about anyone here." }));
         const filter = h("input", { type: "text", "aria-label": "Find a person", placeholder: "Type a name to find someone" });
         const list = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
@@ -1362,9 +1603,11 @@ body.dragging #dropBanner { display: flex; }
           const q = filter.value.trim().toLowerCase();
           const shown = j.people.filter((x) => !q || x.name.toLowerCase().includes(q)).slice(0, 40);
           list.replaceChildren(...shown.map((x) => {
+            const start = h("button", { type: "button", textContent: "Start from here" });
+            start.onclick = () => { rootId = x.id; rootName = x.name; document.querySelector("#libDetail .form .hint").textContent = `The story is about: ${x.name}.`; window.scrollTo(0, 0); document.getElementById("libDetail").scrollIntoView(); };
             const b = h("button", { type: "button", textContent: "Use as character" });
             b.onclick = async () => { try { const r = await call("POST", `/api/books/${enc(book())}/library/${enc(slug)}/character`, { person_id: x.id }); msg(info, `Added ${r.name} to the story wiki.`); BS.bubble("assistant", `I added ${r.name} to the story wiki as a character, with what the family tree says about them.`); } catch (e) { msg(info, e.message, true); } };
-            return h("div", { className: "lib-item" }, h("span", { className: "name", textContent: x.label }), b);
+            return h("div", { className: "lib-item" }, h("span", { className: "name", textContent: x.label }), start, b);
           }));
         };
         filter.oninput = draw; draw(); kids.push(filter, list);

@@ -352,6 +352,103 @@ def raw_database_text(raw: bytes, max_rows: int = 4000) -> str:
             con.close()
 
 
+def _con(raw: bytes, d: str):
+    path = Path(d) / "tree.sqlite"
+    path.write_bytes(raw)
+    con = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
+    con.text_factory = lambda b: b.decode("utf-8", errors="replace")
+    return con
+
+
+def _pick(cols: list[str], *patterns: str) -> str | None:
+    for pat in patterns:
+        for c in cols:
+            if re.fullmatch(pat, c, re.I):
+                return c
+    return None
+
+
+def read_ftm_tables(raw: bytes) -> Tree | None:
+    """Best-effort reader for a Family Tree Maker (or similar) SQLite file whose tables are recognised by their names and columns.
+    NOT verified against a real FTM 2022 / 2026 file (the layout is undocumented): it only returns a tree when it finds people with names
+    and at least one family link, and the caller tells the writer to compare with a GEDCOM export."""
+    with tempfile.TemporaryDirectory() as d:
+        con = _con(raw, d)
+        try:
+            tabs = {r[0].lower(): r[0] for r in con.execute("select name from sqlite_master where type='table'")}
+            cols = {l: [r[1] for r in con.execute(f'pragma table_info("{n}")')] for l, n in tabs.items()}
+            ptab = next((t for t in ("person", "persons", "individual", "individuals", "people") if t in tabs), None)
+            if not ptab:
+                return None
+            pid = _pick(cols[ptab], r"id", r"person_?id", r"pid", r"rowid") or cols[ptab][0]
+            tree = Tree(source="Family Tree Maker (best effort)")
+
+            def rows(t, want):
+                cl = cols[t]
+                sel = ", ".join(f'"{c}"' for c in want if c)
+                return con.execute(f'select {sel} from "{tabs[t]}" limit 200000').fetchall()
+
+            given = _pick(cols[ptab], r"given(_?name)?", r"first(_?name)?", r"forename")
+            sur = _pick(cols[ptab], r"sur(name)?", r"last(_?name)?", r"family(_?name)?")
+            full = _pick(cols[ptab], r"(full_?)?name", r"display_?name")
+            sex = _pick(cols[ptab], r"gender", r"sex")
+            ntab = None
+            if not (given or sur or full):  # names live in their own table
+                ntab = next((t for t in cols if "name" in t and _pick(cols[t], r"person_?id", r"owner_?id", r"person")), None)
+            for r in rows(ptab, [pid, given, sur, full, sex]):
+                it = iter(r)
+                i, g, s, f, x = next(it), next(it) if given else None, next(it) if sur else None, next(it) if full else None, next(it) if sex else None
+                name = " ".join(str(v).strip() for v in (g, s) if v) or (str(f).strip() if f else "")
+                gx = str(x or "").strip().lower()[:1]
+                tree.people[str(i)] = Person(id=str(i), name=name, sex={"m": "male", "f": "female"}.get(gx, ""))
+            if ntab:
+                fk = _pick(cols[ntab], r"person_?id", r"owner_?id", r"person")
+                g2 = _pick(cols[ntab], r"given(_?name)?", r"first(_?name)?", r"forename")
+                s2 = _pick(cols[ntab], r"sur(name)?", r"last(_?name)?", r"family(_?name)?")
+                f2 = _pick(cols[ntab], r"(full_?)?name", r"display_?name", r"text")
+                for r in rows(ntab, [fk, g2, s2, f2]):
+                    it = iter(r)
+                    k, g, s, f = next(it), next(it) if g2 else None, next(it) if s2 else None, next(it) if f2 else None
+                    p = tree.people.get(str(k))
+                    if p and not p.name:
+                        p.name = " ".join(str(v).strip() for v in (g, s) if v) or (str(f).strip() if f else "")
+            named = sum(1 for p in tree.people.values() if p.name)
+            # families: a table with two partner columns, and children linked by family or parent
+            ftab = next((t for t in cols if re.fullmatch(r"(relationship|relationships|family|families|couple|couples|marriage|marriages|union|unions)", t)), None)
+            fam_ok = False
+            if ftab:
+                fid = _pick(cols[ftab], r"id", r"family_?id", r"relationship_?id") or cols[ftab][0]
+                a = _pick(cols[ftab], r"(husband|person1|partner1|spouse1|man|father)(_?id)?", r"person_?1_?id")
+                b = _pick(cols[ftab], r"(wife|person2|partner2|spouse2|woman|mother)(_?id)?", r"person_?2_?id")
+                if a and b:
+                    for r in rows(ftab, [fid, a, b]):
+                        tree.families[str(r[0])] = Family(id=str(r[0]), husb=str(r[1] or ""), wife=str(r[2] or ""))
+                    fam_ok = bool(tree.families)
+                    ctab = next((t for t in cols if re.fullmatch(r"(child|children|childrelationship|childrelationships|childof|parentchild|family_?child|family_?children)", t)), None)
+                    if ctab:
+                        cf = _pick(cols[ctab], r"(relationship|family|couple|parent)_?id", r"family", r"relationship")
+                        cc = _pick(cols[ctab], r"(child|person)_?id", r"child", r"person")
+                        if cf and cc:
+                            for r in rows(ctab, [cf, cc]):
+                                f = tree.families.get(str(r[0]))
+                                if f and str(r[1]) in tree.people:
+                                    f.children.append(str(r[1]))
+            for f in tree.families.values():
+                for pid_ in (f.husb, f.wife):
+                    if pid_ in tree.people:
+                        tree.people[pid_].fams.append(f.id)
+                for c in f.children:
+                    if c in tree.people:
+                        tree.people[c].famc.append(f.id)
+            if named < 1 or not (fam_ok and any(f.children for f in tree.families.values())):
+                return None
+            return tree
+        except sqlite3.Error:
+            return None
+        finally:
+            con.close()
+
+
 def inner_file(raw: bytes) -> tuple[str, bytes] | None:
     """Family Tree Maker backups (.ftmb) and GEDCOM 7 packages (.gdz) are zip files: find the tree inside."""
     try:
@@ -378,6 +475,9 @@ def read_tree(raw: bytes, filename: str) -> tuple[Tree | None, str]:
         t = parse_gramps(raw)
         return t, t.to_text()
     if raw[:15] == b"SQLite format 3" or low.endswith((".ftm", ".sqlite", ".db")):
+        tree = read_ftm_tables(raw)
+        if tree:
+            return tree, tree.to_text()
         return None, raw_database_text(raw)
     t = parse_gedcom(decode_text(raw))
     return t, t.to_text()

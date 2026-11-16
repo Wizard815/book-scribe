@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import bible_import
 import skills as skills_mod
 import uisettings
 from harness import Ctx, Tool, Toolbox
@@ -219,6 +220,61 @@ def build(agent) -> Toolbox:
         ctx.sess.pending = Pending(kind="wiki", text=note.strip()[:1200], chapter=ctx.sess.chapter, data={"kind": kind, "name": name.strip()[:80]})
         return "Proposed. In your reply, say in one sentence what you would add and ask the writer if you should save it. It is saved only if they say yes."
 
+    def _found_text(sess) -> str:
+        from inbox import ago, human_size
+        import time
+        return "\n".join(f"{f.id}. {f.name} ({human_size(f.size)}, in {f.where}, {ago(time.time() - f.mtime)})" for f in sess.found)
+
+    async def find_files(ctx: Ctx, query="", days=None):
+        finder = agent._finder(book(ctx))
+        try:
+            d = float(days) if days else None
+        except (TypeError, ValueError):
+            d = None
+        found = finder.search(query, within_days=d, limit=5)
+        if not found:
+            return "No matching file in the inbox folder" + (" or the shared folders." if len(finder.roots) > 1 else ". No other folders are shared with Book Scribe; the writer can drop the file in the inbox folder or press Import.")
+        ctx.sess.found, ctx.sess.found_i = found, 0
+        return _found_text(ctx.sess) + "\nNow call propose_file with the id of the best match. Never add a file without the writer confirming it."
+
+    async def propose_file(ctx: Ctx, id="1"):
+        sess = ctx.sess
+        if sess.pending:
+            return "A question is already waiting for the writer's answer. Do not propose another."
+        i = next((n for n, f in enumerate(sess.found) if f.id == str(id)), None)
+        if i is None:
+            return "No such file id. Use find_files first."
+        sess.found_i = i
+        what = agent._set_found_pending(sess)
+        return f"Proposed {what}. In your reply, ask the writer in one short sentence whether this is the right file. If yes it is added to the library and opened; if no the next match is offered."
+
+    async def check_inbox(ctx: Ctx):
+        files = agent.inbox.files(book(ctx))
+        return [{"name": f["name"]} for f in files] or "The inbox folder is empty."
+
+    async def open_library_item(ctx: Ctx, title=""):
+        m = _find_item(ctx, title)
+        if not m:
+            return "No file in the library has that title. Use list_library."
+        ctx.open_item = {"slug": m["slug"], "title": m["title"]}
+        return f"Opening {m['title']} on the writer's screen."
+
+    async def propose_family_import(ctx: Ctx, name="", ancestors=2, descendants=2, privacy="alias"):
+        from agent import Pending
+
+        sess = ctx.sess
+        if sess.pending:
+            return "A question is already waiting for the writer's answer. Do not propose another."
+        for slug, tree in (agent.library.trees(book(ctx)) if agent.library else []):
+            hit = tree.find(name, 1)
+            if hit:
+                pl = bible_import.prepare(store, agent.library, book(ctx), slug, hit[0].id, _int(ancestors, 2, 0, 6), _int(descendants, 2, 0, 6), True, "real" if privacy == "real" else "alias")
+                s = pl.summary()
+                sess.pending = Pending(kind="family", text=f"{s['people']} people around {hit[0].name}", chapter=sess.chapter, data={"plan": pl})
+                return (f"Proposed: {s['new']} new characters ({s['existing']} already in the wiki), {s['places']} places and {s['timeline_entries']} timeline entries, around {hit[0].name}"
+                        + (f"; {s['aliased']} living relatives get made-up names" if s["aliased"] else "") + ". Tell the writer this in one or two sentences and ask if you should add it to the wiki.")
+        return "That person is not in any family tree in the library."
+
     async def use_skill(ctx: Ctx, name=""):
         s = _skills(agent).get(name.strip().lower())
         return f"SKILL {s.name}:\n{s.body}" if s else "No such skill. Skills: " + ", ".join(_skills(agent))
@@ -250,6 +306,14 @@ def build(agent) -> Toolbox:
         T("wiki_read", "Read one story wiki page in full.", {"name": "the page name"}, wiki_read, required=("name",)),
         T("propose_wiki_note", "Offer to add a note to the story wiki. The writer must say yes before it is saved.",
           {"kind": "characters|threads|world", "name": "page name", "note": "the facts to add, plain words"}, propose_wiki_note, required=("kind", "name", "note")),
+        T("find_files", "Look for a file the writer means (such as one they just downloaded) in the inbox folder and the folders shared with Book Scribe. Only names and dates are listed.",
+          {"query": "words from the request, e.g. 'pdf family history'", "days": "only files from the last N days (optional)"}, find_files, required=("query",)),
+        T("propose_file", "After find_files: ask the writer to confirm one file by id. It is only added (and opened) after they say yes.", {"id": "the id from find_files"}, propose_file, required=("id",)),
+        T("check_inbox", "List the files waiting in the inbox folder.", {}, check_inbox),
+        T("open_library_item", "Open a library file on the writer's screen.", {"title": "the file's title"}, open_library_item, required=("title",)),
+        T("propose_family_import", "Offer to bring a person and their relatives from a family tree into the story wiki as characters, places and a timeline. Only done after the writer says yes.",
+          {"name": "the person the story is about", "ancestors": "generations back (0-6)", "descendants": "generations forward (0-6)", "privacy": "alias (living people get made-up names, the default) | real"},
+          propose_family_import, required=("name",)),
         T("use_skill", "Load a playbook for a kind of job (see SKILLS).", {"name": "skill name"}, use_skill, required=("name",)),
     ]
     return Toolbox(base + list(agent.addons.tools if agent.addons else []))

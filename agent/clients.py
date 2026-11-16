@@ -47,12 +47,15 @@ class LLM(_Base):
 class STT(_Base):
     role = "stt"
 
-    async def transcribe(self, audio: bytes, filename: str = "audio.webm", content_type: str = "audio/webm") -> str:
+    async def transcribe(self, audio: bytes, filename: str = "audio.webm", content_type: str = "audio/webm", hint: str = "") -> str:
+        """`hint` is a short list of words the speech model should expect (character and place names): it makes it spell them right."""
         async def go(p: Profile) -> str:
+            data = {"model": p.model or "whisper-1", "response_format": "json"}
+            if hint:
+                data["prompt"] = hint[:600]
             r = await self.http.post(
                 f"{p.base_url}/v1/audio/transcriptions", headers=headers(p), timeout=timeout_for("stt", p),
-                files={"file": (filename, audio, content_type)},
-                data={"model": p.model or "whisper-1", "response_format": "json"})
+                files={"file": (filename, audio, content_type)}, data=data)
             r.raise_for_status()
             return (r.json().get("text") or "").strip()
 

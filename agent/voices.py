@@ -28,6 +28,7 @@ from intent import norm
 from providers import Profile, Registry
 
 ASSISTANT, NARRATOR = "assistant", "narrator"
+READER = {"female": "reader:female", "male": "reader:male"}  # the two readers who voice the book when the writer chooses three voices
 SPEED_MIN, SPEED_MAX = 0.6, 1.6
 GENDERS = ("male", "female", "neutral")
 PITCHES = ("low", "mid", "high")
@@ -144,6 +145,7 @@ class VoiceBook:
         self.store, self.reg = store, reg
         self._lock = threading.Lock()
         self._drafts: dict[str, tuple[str, dict]] = {}
+        self.settings = lambda: {}  # -> {"mode": "same"|"separate"|"characters", "narrator": "female"|"male"}; set by main from the writer's preferences
 
     # --- persistence ---------------------------------------------------
     def _path(self, book: str) -> Path:
@@ -177,6 +179,8 @@ class VoiceBook:
         return name.strip()
 
     def _initial(self, book: str, speaker: str) -> dict:
+        if speaker in READER.values():
+            return new_profile({"gender": speaker.split(":")[1], "pitch": "mid"}, "clear, warm reader")
         if speaker == NARRATOR:
             return new_profile({"gender": "neutral", "pitch": "mid"}, "calm, clear storyteller")
         if speaker == ASSISTANT:
@@ -239,9 +243,32 @@ class VoiceBook:
         prof["assigned"][p.id] = self._pick(book, speaker, prof, p, {k: v for k, v in taken.items() if v})
         return prof["assigned"][p.id]
 
+    def effective(self, book: str, speaker: str) -> str:
+        """Whose voice really speaks, given the writer's choice of how many voices there are.
+        same: everything is the agent's voice. separate: the agent, a female reader and a male reader (a character the writer has approved
+        a voice for keeps it). characters: the agent, a narrator, and every character with a voice of their own (the original behaviour)."""
+        speaker = self.canonical(book, speaker)
+        cfg = self.settings() or {}
+        mode = cfg.get("mode") or "characters"
+        if mode == "same":
+            return ASSISTANT
+        if mode == "separate" and speaker != ASSISTANT and speaker not in READER.values():
+            own = self.profile(book, speaker, create=False)
+            if own and not own.get("auto", True):
+                return speaker
+            if speaker == NARRATOR:
+                return READER[cfg.get("narrator") or "female"]
+            ent = self.store.bible(book).characters().get(speaker)
+            gender = (own or {}).get("traits", {}).get("gender") or guess_traits(speaker, ent.state if ent else None, ent.body if ent else "")["gender"]
+            if gender in READER:
+                return READER[gender]
+        return speaker
+
     def resolve(self, book: str, speaker: str, p: Profile, draft: str | None = None) -> Resolved:
         """The voice/speed/style to send to provider `p`. Remembers an automatic choice so it stays put."""
         speaker = self.canonical(book, speaker)
+        if not draft:
+            speaker = self.effective(book, speaker)
         if draft and draft in self._drafts and self._drafts[draft][0] == speaker:
             prof = self._drafts[draft][1]  # an audition: choices are remembered for the draft only, so repeat plays sound identical
             return Resolved(self._voice_for(book, speaker, prof, p), float(prof.get("speed", 1.0)), prof.get("style", ""))
