@@ -318,9 +318,10 @@ class BookStore:
             before_id = existing[0].id if existing else None
         elif isinstance(where, tuple):
             k = where[1]
-            if not 1 <= k <= len(self.paragraphs(book, to_chapter)):
+            texts = [p for p in self.paragraphs(book, to_chapter) if not p.image]
+            if not 1 <= k <= len(texts):
                 raise BookError(f"There is no paragraph {k} in chapter {to_chapter}.")
-            anchor = self.paragraphs(book, to_chapter)[k - 1]
+            anchor = texts[k - 1]
             if anchor.id == paragraph_id:
                 raise BookError("That is the paragraph you are moving.")
             if where[0] == "before":
@@ -422,10 +423,11 @@ class BookStore:
         log.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
         return {"chapter": last["chapter"], "what": (last.get("gkind") or "move") if last.get("group") else last["what"], "paragraph": last.get("paragraph", "")}
 
-    def nth_paragraph(self, book: str, chapter: int, n: int, scene: int | None = None) -> Paragraph | None:
-        """n-th paragraph of a chapter (1-based, -1 = last), optionally within one scene. None if out of range."""
+    def nth_paragraph(self, book: str, chapter: int, n: int, scene: int | None = None, picture: bool = False) -> Paragraph | None:
+        """n-th paragraph of a chapter (1-based, -1 = last), optionally within one scene. None if out of range.
+        The way a writer counts: pictures are NOT counted ("paragraph 2" is the second piece of writing); with picture=True only pictures are, "the picture"."""
         try:
-            paras = [p for p in self.paragraphs(book, chapter) if scene is None or p.scene == scene]
+            paras = [p for p in self.paragraphs(book, chapter) if (scene is None or p.scene == scene) and bool(p.image) == picture]
         except BookError:
             return None
         if not paras or n == 0 or abs(n) > len(paras):

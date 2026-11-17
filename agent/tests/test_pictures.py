@@ -119,8 +119,8 @@ async def test_making_a_picture_shows_it_asks_and_only_a_yes_puts_it_in_the_book
     r = await ag.handle("s", "yes")
     assert "The picture is in chapter 1" in r.text and store.paragraphs("demo", 1)[-1].image[0] == "The hand of the lake" and r.changed
     name = store.paragraphs("demo", 1)[-1].image[1]; assert ag.images.path("demo", name).is_file()
-    r = await ag.handle("s", "read paragraph 4"); assert r.text == "Picture: The hand of the lake"
-    r = await ag.handle("s", "rewrite paragraph 4 to be sadder"); assert "is a picture" in r.text and r.pending is None
+    r = await ag.handle("s", "read the picture in chapter 1"); assert r.text == "Picture: The hand of the lake"
+    r = await ag.handle("s", "rewrite the picture in chapter 1 to be sadder"); assert "is a picture" in r.text and r.pending is None
     r = await ag.handle("s", "undo that"); assert not any(p.image for p in store.paragraphs("demo", 1))
 
 
@@ -761,3 +761,64 @@ def test_swedish_names_exist_and_are_found_by_the_word_swedish():
     import ideas
     assert "swedish" in ideas.CULTURES and intent.ideas_request("give me three Swedish names")["opts"]["culture"] == "swedish"
     assert ideas.cultures_for("a farm near Lindsborg, Kansas, to Swedish parents") == ["swedish"]
+
+
+# ---- round 9: numbering that skips pictures, wiki requests, mixed names, warnings, "no" going back to where the writing is --------------
+def test_a_wiki_request_is_not_taken_for_an_edit_of_a_paragraph():
+    for t in ("make wiki pages for father Olof, the farm, Camp Doniphan and Charpentry", "I want story notes saved for the farm and the camp", "make a character page for Freja"):
+        assert not intent.is_edit(t), t
+    assert intent.is_edit("make paragraph 2 sadder") and intent.is_edit("make the first paragraph of chapter 2 sadder")
+
+
+def test_a_handful_of_names_includes_women_and_men():
+    import ideas
+    for seed in range(8):
+        names = ideas.Ideas(seed=seed).generate("name", 3, culture="swedish")
+        female = set(ideas.D.NAMES["swedish"]["female"]); male = set(ideas.D.NAMES["swedish"]["male"])
+        firsts = [n.split()[0] for n in names]
+        assert any(f in female for f in firsts) and any(f in male for f in firsts), names
+
+
+@pytest.mark.asyncio
+async def test_paragraph_numbers_skip_pictures_and_the_picture_has_its_own_words(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    for t in ("Alpha paragraph here.", "Bravo paragraph here.", "Charlie paragraph here."):
+        store.append_paragraph("demo", 2, t)
+    name = ag.images.stage("demo", png(), "pic"); ag.images.accept("demo", name)
+    store.insert_paragraph("demo", 2, imgs.markdown("A pic", name), before_id=store.paragraphs("demo", 2)[1].id)  # alpha, PICTURE, bravo, charlie
+    r = await ag.handle("s", "delete paragraph 2 of chapter 2")
+    assert r.pending["kind"] == "delete" and "Bravo" in r.text and "chapter 2, paragraph 2" in r.text  # bravo is the 2nd piece of writing, the picture is not counted
+    await ag.handle("s", "no")
+    r = await ag.handle("s", "delete the picture in chapter 2")
+    assert r.pending["kind"] == "delete" and "the picture in chapter 2" in r.text
+    assert store.nth_paragraph("demo", 2, 3).text.startswith("Charlie") and store.nth_paragraph("demo", 2, 1, picture=True).image
+
+
+@pytest.mark.asyncio
+async def test_a_picture_goes_after_the_nth_piece_of_writing_not_the_nth_paragraph(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2); store.create_chapter("demo", 3)
+    for t in ("Alpha.", "Bravo.", "Charlie."):
+        store.append_paragraph("demo", 3, t)
+    for where, expect in ((0, 0), (2, 2), (9, 3)):
+        n = ag.images.stage("demo", png(), "p"); ag.images.accept("demo", n)
+        para = ag._place_image(ag.session("s"), 3, n, "cap", where)
+        ids = [p.id for p in store.paragraphs("demo", 3)]
+        assert ids.index(para.id) == expect, (where, ids)
+        store.delete_paragraph("demo", para.id)
+
+
+@pytest.mark.asyncio
+async def test_a_flagged_draft_says_it_may_not_be_what_was_asked_and_a_no_goes_back_to_the_writing_chapter(books):
+    ag, store, llm = make(books)
+    for t in ("a first paragraph text here for the book.", "b second paragraph text here for the book.", "c third paragraph text here for the book.", "d fourth paragraph text here for the book."):
+        store.append_paragraph("demo", 1, t)
+    store.create_chapter("demo", 2)
+    store.append_paragraph("demo", 2, "Chapter two has a paragraph here to be rewritten later.")
+    sess = ag.session("s"); sess.work = 2; sess.chapter = 2
+    llm.replies = ["Chapter two now reads a little sadder, with the window shut."]
+    r = await ag.handle("s", "make paragraph 1 of chapter 1 sadder")
+    assert r.pending and sess.chapter == 1
+    r = await ag.handle("s", "no")
+    assert sess.chapter == 2 and "back in chapter 2" in r.text
