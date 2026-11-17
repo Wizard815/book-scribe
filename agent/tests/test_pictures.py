@@ -868,7 +868,5 @@ async def test_yes_but_leave_one_out_leaves_it_out_of_the_wiki_batch(books):
     batch = [{"kind": "characters", "name": n, "note": "A person."} for n in ("Nils Lund", "Erik Holmberg", "Freja Lund")]
     sess = ag.session("s"); sess.pending = Pending("wiki", "", 1, data={"batch": batch}, ask="Save these 3 notes to the wiki: Nils Lund, Erik Holmberg, Freja Lund?")
     r = await ag.handle("s", "Yes, but leave Erik out")
-    assert "left out Erik Holmberg" in r.text and [b["name"] for b in sess.pending.data["batch"]] == ["Nils Lund", "Freja Lund"]
-    await ag.handle("s", "yes")
-    names = " ".join(str(x) for x in store.bible_names("demo")) if hasattr(store, "bible_names") else ""
-    assert "Erik" not in names
+    names = " ".join(store.bible("demo").characters())
+    assert "left out Erik Holmberg" in r.text and "Nils Lund" in names and "Freja Lund" in names and "Erik" not in names and sess.pending is None  # saved at once: one answer

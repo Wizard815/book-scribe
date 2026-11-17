@@ -135,7 +135,12 @@ class Ideas:
                 o = {**opts, "gender": g}
                 if fits and o.get("culture", "any") == "any":
                     o["culture"] = self.rng.choice(fits)
-                out.append(self._fresh(lambda o=o: self.name(**o) if kind == "name" else self.character(**o)))
+                for _try in range(6):  # different surnames in one list, so they do not all sound alike
+                    one = self._fresh(lambda o=o: self.name(**o) if kind == "name" else self.character(**o))
+                    sur = re.split(r"[ ,]", one.strip())[1:2]
+                    if not sur or all(sur[0] not in prev for prev in out):
+                        break
+                out.append(one)
             return out
         if fits and kind in ("name", "character") and opts.get("culture", "any") == "any":  # the book's own setting beats pure chance
             make_fit = {"name": lambda: self.name(self.rng.choice(fits), opts.get("gender", "any")), "character": lambda: self.character(self.rng.choice(fits), opts.get("gender", "any"))}[kind]

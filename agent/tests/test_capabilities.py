@@ -172,3 +172,35 @@ def test_take_that_part_out_is_an_edit_not_new_writing():
     for t in ("take that part out", "take the clerk part out", "cut that out", "leave out the clerk"):
         assert intent.is_edit(t), t
     assert not intent.is_draft("take that part out")
+
+
+@pytest.mark.asyncio
+async def test_a_picture_keeps_what_was_said_about_it_so_it_can_be_described_again(books):
+    ag, store, llm = make(books)
+    llm.replies = ['[[tool: make_picture {"prompt": "a red barn in a wheat field", "caption": "The barn"}]]', "A red barn stands alone in a golden wheat field under a pale sky."]
+    await ag.handle("s", "make me a picture of the barn")
+    await ag.handle("s", "yes")
+    ag.session("s").work = 1
+    r = await ag.handle("s", "describe the barn picture")
+    assert "red barn" in r.text and "golden wheat" in r.text and not store.paragraphs("demo", 1)[-1].text.startswith("It is")
+
+
+@pytest.mark.asyncio
+async def test_goodbye_never_gets_an_empty_answer(books):
+    ag, store, llm = make(books)
+    llm.replies = ["   "]
+    r = await ag.handle("s", "goodbye")
+    assert "Goodbye" in r.text
+
+
+@pytest.mark.asyncio
+async def test_bring_it_back_reads_the_paragraph_again(books):
+    ag, store, llm = make(books)
+    A = "The first draft is about the walk down to the lake. The cold wind came in with the evening, and the road ahead of him was quiet."
+    llm.replies = [f'[[tool: propose_append {{"text": "{A}"}}]]', "Here."]
+    await ag.handle("s", "next paragraph, the walk down")
+    llm.replies = ["Okay."]
+    await ag.handle("s", "delete paragraph 1 of chapter 1")
+    await ag.handle("s", "no")
+    r = await ag.handle("s", "bring it back")
+    assert A in r.text
