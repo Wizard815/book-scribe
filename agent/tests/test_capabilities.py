@@ -353,3 +353,49 @@ def test_a_remembered_description_drops_old_placement_talk(books):
     st = imgs.ImageStore(__import__("book_store").BookStore(books))
     st.note("demo", "x.jpg", "A grey ship at a dock. I placed it in chapter 5 after the first paragraph. Should I put it in?")
     assert st.note("demo", "x.jpg") == "A grey ship at a dock."
+
+
+@pytest.mark.asyncio
+async def test_the_chapter_on_screen_beats_the_chapter_the_model_guessed_for_a_picture(books):
+    ag, store, llm = make(books)
+    for n in (2, 3):
+        store.create_chapter("demo", n); store.append_paragraph("demo", n, "Alpha here for the book.")
+    llm.replies = ['[[tool: make_picture {"prompt": "a station", "caption": "A station", "chapter": 2}]]', "A station."]
+    r = await ag.handle("s", "make me a picture of a station", viewing=3)
+    assert "chapter 3" in r.pending["ask"]
+
+
+@pytest.mark.asyncio
+async def test_ask_me_first_with_a_draft_waiting_changes_the_setting_and_keeps_the_draft(books):
+    ag, store, llm = make(books)
+    ag.prefs = __import__("prefs").Prefs(ag.s.state_dir)
+    await ag.handle("s", "save as you go")
+    A = "The first draft is about the walk down to the lake. The cold wind came in with the evening, and the road ahead of him was quiet."
+    ag.session("s").pending = __import__("agent").Pending("append", A, 1)
+    r = await ag.handle("s", "ask me first from now on")
+    assert ag.prefs.get("auto_save") == "off" and ag.session("s").pending is not None and "still waiting" in r.text
+
+
+@pytest.mark.asyncio
+async def test_no_put_it_first_moves_a_waiting_paragraph_without_dropping_it(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    for t in ("Alpha is here for the book.", "Bravo is here for the book."):
+        store.append_paragraph("demo", 2, t)
+    NEW = "The new paragraph is about the supper table. His mother counted out the plates by the lamp for the whole family."
+    llm.replies = [f'[[tool: propose_append {{"text": "{NEW}", "chapter": 2}}]]', "Here."]
+    r = await ag.handle("s", "next paragraph for chapter 2, the supper table")
+    assert r.pending
+    r = await ag.handle("s", "no, put it first")
+    assert "very start of chapter 2" in r.text and r.pending is not None
+    await ag.handle("s", "yes")
+    assert store.paragraphs("demo", 2)[0].text.startswith("The new paragraph") and len(store.paragraphs("demo", 2)) == 3
+
+
+@pytest.mark.asyncio
+async def test_describe_it_with_a_text_draft_waiting_does_not_describe_some_other_picture(books):
+    ag, store, llm = make(books)
+    n = ag.images.stage("demo", png(), "pic"); ag.images.accept("demo", n); store.append_image("demo", 1, n, "A barn")
+    ag.session("s").pending = __import__("agent").Pending("append", "A draft paragraph about the supper table and the lamp, for the book.", 1)
+    r = await ag.handle("s", "describe it")
+    assert "paragraph waiting" in r.text and "barn" not in r.text.lower()

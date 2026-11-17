@@ -572,8 +572,8 @@ def is_creative_ask(text: str) -> bool:
     return bool(_CREATIVE.search(norm(text)))
 
 
-_POS_START = re.compile(r"\b(?:(?:at|to|in) the (?:very )?(?:start|beginning|top|front|opening)(?: of (?:the |this )?(?:chapter|page|story)(?: \d+)?)?|before (?:the )?(?:first|1) (?:paragraph|one)|first thing(?: in the chapter)?|on top|(?:at|as) the first)\b")
-_POS_END = re.compile(r"\b(?:(?:at|to|in) the (?:very )?(?:end|bottom|back)(?: of (?:the |this )?(?:chapter|page|story)(?: \d+)?)?|after (?:the )?last (?:paragraph|one))\b")
+_POS_START = re.compile(r"\b(?:(?:at|to|in) the (?:very )?(?:start|beginning|top|front|opening)(?: of (?:the |this )?(?:chapter|page|story)(?: \d+)?)?|before (?:the )?(?:first|1) (?:paragraph|one)|first thing(?: in the chapter)?|on top|(?:at|as) the first|(?:put|place|move|make|have) (?:it|that|this|them) (?:go )?(?:first|up top|at the top))\b")
+_POS_END = re.compile(r"\b(?:(?:at|to|in) the (?:very )?(?:end|bottom|back)(?: of (?:the |this )?(?:chapter|page|story)(?: \d+)?)?|after (?:the )?last (?:paragraph|one)|(?:put|place|move|make|have) (?:it|that|this|them) (?:go )?(?:last|at the bottom))\b")
 _POS_AFTER = re.compile(r"\bafter (?:the )?(?:paragraph|para|part) (\d+)\b|\bafter (?:the )?(\d+)(?:st|nd|rd|th)? (?:paragraph|para)\b")
 _POS_BEFORE = re.compile(r"\bbefore (?:the )?(?:paragraph|para|part) (\d+)\b|\bbefore (?:the )?(\d+)(?:st|nd|rd|th)? (?:paragraph|para)\b")
 _POS_BETWEEN = re.compile(r"\bbetween (?:paragraphs? )?(?:the )?(\d+)(?:st|nd|rd|th)?(?: paragraph)? and (?:paragraph )?(?:the )?(\d+)\b")

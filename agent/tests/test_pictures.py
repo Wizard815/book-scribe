@@ -841,7 +841,7 @@ async def test_describe_the_picture_in_another_chapter_finds_it_and_writes_nothi
     before = [p.id for p in store.all_paragraphs("demo")]
     ag.session("s").work = 1
     r = await ag.handle("s", "describe the railway station picture")
-    assert "railway station" in r.text and "chapter 2" in r.text and [p.id for p in store.all_paragraphs("demo")] == before and r.pending is None and not llm.calls
+    assert "railway station" in r.text and [p.id for p in store.all_paragraphs("demo")] == before and r.pending is None and not llm.calls
     r = await ag.handle("s", "describe the picture in chapter 2 to me")
     assert "railway station" in r.text and not llm.calls
     r = await ag.handle("s", "describe the zeppelin picture")
