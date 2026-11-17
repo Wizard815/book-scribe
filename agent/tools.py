@@ -115,6 +115,9 @@ def build(agent) -> Toolbox:
         look = dict(ctx.ui) if ctx.ui else agent._look()  # build on this turn's earlier change, not the saved look
         if setting == "size":
             look["size"] = look["size"] + 1 if value == "bigger" else look["size"] - 1 if value == "smaller" else _int(value, look["size"], 0, uisettings.SIZE_MAX)
+        elif setting == "zoom":
+            v = str(value).lower().strip().rstrip("%")
+            look["zoom"] = uisettings.step_zoom(look["zoom"], 1 if v == "bigger" else -1 if v == "smaller" else 0) if v in ("bigger", "smaller") else _int(v, look["zoom"], 25, 900)
         elif setting in ("contrast", "theme", "layout", "bold", "simple", "spacing", "rate"):
             look[setting] = {"true": True, "false": False}.get(str(value).lower(), value)
             if setting in ("spacing",):
@@ -125,7 +128,7 @@ def build(agent) -> Toolbox:
                 except (TypeError, ValueError):
                     return "rate must be a number from 0.6 to 1.5."
         else:
-            return "setting must be one of: size, contrast, bold, spacing, simple, rate, theme, layout."
+            return "setting must be one of: zoom, size, contrast, bold, spacing, simple, rate, theme, layout."
         ctx.ui = uisettings.clean(look)
         return "The screen has been changed."
 
@@ -527,7 +530,7 @@ def build(agent) -> Toolbox:
         T("show_passage", "Light up passages on the writer's screen while you talk about them. Use whenever you point at part of the book.",
           {"ids": "list of paragraph ids from search_book", "chapter": "number", "paragraph": "number"}, show_passage),
         T("set_ui", "Change how the screen looks if the writer says they cannot see well. Only when asked or clearly struggling.",
-          {"setting": "size|contrast|bold|spacing|simple|rate|theme|layout", "value": "size: 0-7, bigger or smaller; contrast: normal|high|dark; bold/simple: true|false; spacing: 0-2; rate: 0.6-1.5; theme: auto|light|dark; layout: side|stack|chat|book"},
+          {"setting": "zoom|size|contrast|bold|spacing|simple|rate|theme|layout", "value": "zoom (the book page words, in percent, 100 normal to 500): 100-500, bigger or smaller; size (everything): 0-7, bigger or smaller; contrast: normal|high|dark; bold/simple: true|false; spacing: 0-2; rate: 0.6-1.5; theme: auto|light|dark; layout: side|stack|chat|book"},
           set_ui, required=("setting", "value")),
         T("brainstorm", "Get several genuinely different ideas on a topic at once (costs extra time; use sparingly).", {"topic": "what to brainstorm", "n": "2-4"}, brainstorm, required=("topic",)),
         T("recall", "Search EVERYTHING the writer ever said in this long conversation (by meaning). Use when they ask 'what did I say about...' or you suspect a forgotten idea or description.",

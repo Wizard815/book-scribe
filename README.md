@@ -362,6 +362,12 @@ a paragraph aloud splits it into narration and dialogue and speaks each part in 
   on screen), change the screen, brainstorm. Read-only: only the confirm-before-save flows can change the book.
 * **Big-print help.** Say "I can't see this" or "bigger": text size (8 steps), contrast (including yellow on black), bold,
   spacing and a simplified screen change at once, and are remembered on the server for that writer.
+* **The book is read in pages.** Like a printed book: pages the size of the book pane (a two-page spread on a wide screen, one page on a
+  narrow one), turned with Next / Previous page, the arrow keys or a swipe, flowing on into the next chapter. The page has its own zoom,
+  **100% to 500%** (100, 125, 150, 200, 250, 300, 400, 500): the Text - / Text + buttons, or just say "make the book text bigger", "zoom in",
+  "set the book to 300 percent", "zoom back to normal". Bigger words make more pages; nothing else on the screen moves. A picture never takes
+  more than 40% of a page, whatever the zoom, so it frames the words instead of pushing them off. (Plain "make the words bigger" still means the
+  whole screen.) Designed for a 1920x1080 screen and up; smaller screens fold to one page.
 * **Settings for the writer:** how surprising the ideas are (off / low / high) and how strict the style check is (off / gentle / strict).
 * **Bible embeddings.** Story-bible entries are embedded as well as paragraphs, so "the old man who carries the luggage" finds the
   porter's entry. The admin page shows both counts.

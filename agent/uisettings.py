@@ -2,6 +2,7 @@
 
 The look is a small record kept on the server (so it follows the writer to any device) and applied by the page:
 
+    zoom      100..500  percent: the words on the book's pages (100 normal, up to 500: bigger words, so more pages)
     size      0..7   word size steps (18, 22, 26, 32, 40, 52, 64, 80 px); 2 is the everyday default
     contrast  normal | high (black on white, strong lines) | dark (yellow on black)
     bold      heavier letters
@@ -20,11 +21,21 @@ import re
 
 from intent import norm
 
-DEFAULT = {"size": 2, "contrast": "normal", "bold": False, "spacing": 0, "simple": False, "rate": 1.0, "theme": "auto", "layout": ""}
+DEFAULT = {"zoom": 100, "size": 2, "contrast": "normal", "bold": False, "spacing": 0, "simple": False, "rate": 1.0, "theme": "auto", "layout": ""}
 SIZE_MAX = 7
+ZOOMS = (100, 125, 150, 200, 250, 300, 400, 500)  # the book page's own zoom, in percent: 100 is normal, 500 is five times the words and five times the pages
 CONTRASTS = ("normal", "high", "dark")
 THEMES = ("auto", "light", "dark")
 LAYOUTS = ("", "side", "stack", "chat", "book")
+
+
+def nearest_zoom(v: float) -> int:
+    return min(ZOOMS, key=lambda z: abs(z - v))
+
+
+def step_zoom(cur: int, steps: int) -> int:
+    i = ZOOMS.index(nearest_zoom(cur)) + steps
+    return ZOOMS[max(0, min(len(ZOOMS) - 1, i))]
 
 
 def clean(look: dict | None) -> dict:
@@ -32,6 +43,8 @@ def clean(look: dict | None) -> dict:
     d, out = look or {}, dict(DEFAULT)
     if isinstance(d.get("size"), (int, float)) and not isinstance(d.get("size"), bool):
         out["size"] = max(0, min(SIZE_MAX, int(d["size"])))
+    if isinstance(d.get("zoom"), (int, float)) and not isinstance(d.get("zoom"), bool):
+        out["zoom"] = nearest_zoom(d["zoom"])
     if d.get("contrast") in CONTRASTS:
         out["contrast"] = d["contrast"]
     if d.get("theme") in THEMES:
@@ -84,6 +97,38 @@ _LAYOUT = [
 ]
 
 
+_BOOKISH = re.compile(r"\b(?:book|page|pages|story|chapter|chapters|reading|manuscript)\b")
+_ZOOM_WORDS = re.compile(r"\b(?:zoom|text|words?|font|print|letters?|type|size|bigger|smaller|larger|magnif\w*)\b")
+_ZOOM_PCT = re.compile(r"\b(\d{2,3})\s*(?:%|percent|per cent)")
+_ZOOM_RESET = re.compile(r"\bzoom (?:back|reset|normal)\b|\b(?:normal|regular|usual|default) (?:zoom|page size|page zoom)\b|\breset (?:the )?zoom\b")
+_NOT_ZOOM_PCT = re.compile(r"\b(?:sure|certain|agree|right|confident|done|finished)\b")
+
+
+def _book_zoom(n: str, cur: int, raw: str = "") -> tuple[int, str] | None:
+    """The book page's zoom: "make the book text bigger", "zoom in", "200 percent", "zoom back to normal". None if this is not about it."""
+    if _ZOOM_RESET.search(n):
+        return 100, "the book is back to 100 percent"
+    m = _ZOOM_PCT.search(raw.lower() or n)
+    if m and (_ZOOM_WORDS.search(n) or _BOOKISH.search(n)) and not _NOT_ZOOM_PCT.search(n) and 25 <= int(m.group(1)) <= 900:
+        z = nearest_zoom(int(m.group(1)))
+        return z, f"the book is at {z} percent"
+    zoomish = re.search(r"\bzoom(?: in| out)?\b", n) and not re.search(r"\bzoom (?:call|meeting|link)\b", n)
+    bookish = _BOOKISH.search(n) and _ZOOM_WORDS.search(n)
+    if not (zoomish or bookish):
+        return None
+    out = re.search(r"\bzoom out\b", n) or _SMALLER.search(n)
+    up = re.search(r"\bzoom in\b", n) or _BIGGER.search(n) or re.search(r"\bzoom\b", n) and not out
+    if _BIGGEST.search(n) and not out:
+        z = ZOOMS[-1]
+    elif up and not out:
+        z = step_zoom(cur, 2 if _MUCH.search(n) else 1)
+    elif out and not (up and not _SMALLER.search(n)):
+        z = step_zoom(cur, -2 if _MUCH.search(n) else -1)
+    else:
+        return None
+    return z, f"the book is at {z} percent"
+
+
 def _has_ui_target(n: str, words: int) -> bool:
     return bool(re.search(rf"\b{_UI_NOUN}\b", n)) or words <= 3
 
@@ -99,6 +144,12 @@ def parse(text: str, look: dict | None) -> tuple[dict, str] | None:
     def size(delta: int | None = None, to: int | None = None):
         new["size"] = max(0, min(SIZE_MAX, (to if to is not None else new["size"] + delta)))
 
+    bz = _book_zoom(n, cur["zoom"], text)
+    if bz is not None:
+        if bz[0] == cur["zoom"]:
+            return cur, f"The book is already at {cur['zoom']} percent, as far as it goes." if bz[0] in (ZOOMS[0], ZOOMS[-1]) and not _ZOOM_PCT.search(text.lower()) else f"The book is already at {cur['zoom']} percent."
+        new["zoom"] = bz[0]
+        return new, f"Done: {bz[1]}. Pages are {'longer' if bz[0] < cur['zoom'] else 'shorter'} and there are {'fewer' if bz[0] < cur['zoom'] else 'more'} of them."
     if _RESET.search(n) or (n in ("back to normal", "normal", "go back to normal")):
         return clean(None), "Back to normal."
     if _CANT_SEE.search(n) and not _CANT_SEE_NOT_UI.search(n) and not _BIGGER.search(n) and not _SMALLER.search(n):

@@ -42,6 +42,7 @@ button:focus-visible, textarea:focus-visible, #divider:focus-visible, .para:focu
 .top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; }
 h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 #status { margin: 0 0 0 auto; font-size: 18px; color: var(--muted); font-weight: 700; }
+@media (min-width: 761px) and (max-width: 2100px) { .glabel { display: none; } .bar { gap: 6px 10px; } .bar button { min-height: calc(46px * var(--k)); font-size: calc(18px * var(--k)); padding: 4px 13px; } }
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; flex: 1 1 100%; order: 3; }
 .group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .glabel { font-size: 18px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
@@ -110,14 +111,25 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 .tools button[aria-pressed="true"] { border-color: var(--accent); }
 
 /* book */
+.bookbars { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; }
+#barPage { flex: 1 1 100%; }
+#barPage button, #barSite button { min-height: calc(46px * var(--k)); }
 .bookbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .bookbar button { min-height: calc(52px * var(--k)); padding: 4px 16px; font-size: calc(19px * var(--k)); font-weight: 700; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; }
 #chapterLabel { font-size: 20px; font-weight: 700; color: var(--muted); padding: 0 6px; }
-#book { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px 40px; }
-.para { margin: 0 0 1em; padding: 8px 12px; border-left: 6px solid transparent; border-radius: 8px; font-size: min(var(--fs), 13vw); line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; }
-figure.para { margin: 0 0 1em; text-align: center; cursor: pointer; }
-figure.para img { max-width: 100%; max-height: 62vh; border-radius: 10px; border: 2px solid var(--line); background: var(--surface); }
-figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); font-style: italic; margin-top: 6px; }
+/* The book is read in PAGES, like a printed book. #book is a one-column (two on a wide screen) strip cut into page-sized columns; the page buttons
+   slide along it. --zoom (1 to 5) makes the words bigger, which makes more pages: 100% is normal, 500% is five times the size of the words.
+   A picture is never taller than 40% of a page (--ph is the page height, set by the script), so it frames the words instead of taking the page. */
+#bookWrap { --zoom: 1; flex: 1; min-height: 0; display: flex; padding: 18px 30px; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; box-shadow: 0 2px 10px var(--shadow); outline-offset: 3px; }
+#book { flex: 1; min-width: 0; height: 100%; overflow: hidden; position: relative; column-fill: auto; column-gap: 48px; }
+#book.one { column-count: auto; }
+#pgLabel { font-size: 20px; font-weight: 700; color: var(--muted); padding: 0 8px; min-width: 9.5em; text-align: center; }
+.bookbar .sep { flex: 1 1 8px; }
+#zmLabel { font-size: 20px; font-weight: 700; color: var(--muted); min-width: 3.4em; text-align: center; }
+.para { margin: 0 0 .8em; padding: 4px 10px; border-left: 6px solid transparent; border-radius: 8px; font-size: calc(min(var(--fs), 13vw) * var(--zoom)); line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; orphans: 2; widows: 2; }
+figure.para { margin: .3em 0 .9em; padding: 0; text-align: center; cursor: pointer; break-inside: avoid; }
+figure.para img { display: block; margin: 0 auto; max-width: 100%; max-height: calc(var(--ph, 600px) * .4); width: auto; height: auto; object-fit: contain; border-radius: 6px; border: 2px solid var(--line); background: var(--surface); }
+figure.para figcaption { font-size: calc(var(--fs) * .72 * var(--zoom)); color: var(--muted); font-style: italic; margin-top: 4px; line-height: 1.3; }
 .chatpic { display: block; max-width: 100%; max-height: 34vh; margin: 6px 0 10px; border-radius: 10px; border: 2px solid var(--line); }
 .para.mark { background: var(--mark); border-left-color: var(--accent); }
 .para textarea { width: 100%; min-height: 140px; font: inherit; font-size: min(var(--fs), 13vw); color: var(--fg); background: var(--surface); border: 3px solid var(--accent); border-radius: 12px; padding: 10px; resize: vertical; }
@@ -218,6 +230,7 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
         <button type="button" class="detach" data-pane="book" aria-label="Detach the book into its own window">Detach</button>
       </div>
       <div class="pbody">
+        <div class="bookbars">
         <div class="bookbar" id="barSite" hidden>
           <button type="button" id="prevCh">Earlier chapter</button>
           <span id="chapterLabel">Chapter</span>
@@ -228,7 +241,17 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
           <button type="button" id="saveBook" hidden>Save as file</button>
           <button type="button" id="clearBook">Clear book</button>
         </div>
-        <div id="book" aria-live="polite"></div>
+        <div class="bookbar" id="barPage">
+          <button type="button" id="pgPrev">Previous page</button>
+          <span id="pgLabel" role="status">Page 1 of 1</span>
+          <button type="button" id="pgNext">Next page</button>
+          <span class="sep"></span>
+          <button type="button" id="zmOut" aria-label="Smaller words in the book">Text −</button>
+          <span id="zmLabel" role="status">100%</span>
+          <button type="button" id="zmIn" aria-label="Bigger words in the book">Text +</button>
+        </div>
+        </div>
+        <div id="bookWrap" tabindex="0" aria-label="The book. Left and right arrow keys turn the page."><div id="book" aria-live="polite"></div></div>
       </div>
       <div class="grip" data-grip="book" aria-hidden="true"></div>
     </section>
@@ -295,7 +318,7 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
   const state = {
     mode: null, sample: null, downloads: null, history: [], busy: false, listening: false, rec: null, recog: null, chunks: [],
     read: store.get("bs_read", "1") === "1", size: clamp(parseInt(store.get("bs_size", "2"), 10) || 2, 0, 7),
-    look: { contrast: "normal", bold: false, spacing: 0, simple: false, rate: 1, theme: "auto", layout: "" }, rate: 1,
+    look: { zoom: 100, contrast: "normal", bold: false, spacing: 0, simple: false, rate: 1, theme: "auto", layout: "" }, rate: 1,
     speakToken: 0, audio: null, sid: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, ""),
     book: [], bookName: null, chapters: [], chapter: null,
   };
@@ -303,7 +326,7 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
 
   // ================================================================ layout: dock, split, detach =====================
   // A phone opens on one part at a time; wider screens open side by side.
-  const ui = Object.assign({ layout: window.matchMedia("(max-width: 760px)").matches ? "chat" : "side", split: 55, floats: { book: null, chat: null } }, (() => { try { return JSON.parse(store.get("bs_ui", "{}")); } catch (_) { return {}; } })());
+  const ui = Object.assign({ layout: window.matchMedia("(max-width: 760px)").matches ? "chat" : "side", split: window.innerWidth >= 1700 ? 62 : 55, floats: { book: null, chat: null } }, (() => { try { return JSON.parse(store.get("bs_ui", "{}")); } catch (_) { return {}; } })());
   ui.floats = Object.assign({ book: null, chat: null }, ui.floats || {});
   let zTop = 30;
   const panes = { book: $("paneBook"), chat: $("paneChat") };
@@ -454,6 +477,8 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
     if (!l) return;
     if (typeof l.size === "number") state.size = clamp(Math.round(l.size), 0, SIZES.length - 1);
     const prev = state.look.layout;
+    const ZM = [100, 125, 150, 200, 250, 300, 400, 500];
+    state.look.zoom = ZM.reduce((a, z) => (Math.abs(z - (l.zoom || 100)) < Math.abs(a - (l.zoom || 100)) ? z : a), 100);
     Object.assign(state.look, { contrast: l.contrast || "normal", bold: !!l.bold, spacing: l.spacing || 0, simple: !!l.simple, rate: l.rate || 1, theme: l.theme || "auto", layout: l.layout || "" });
     state.rate = state.look.rate;
     const root = document.documentElement;
@@ -464,6 +489,9 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
     state.look.theme === "auto" ? root.removeAttribute("data-theme") : root.setAttribute("data-theme", state.look.theme);
     $("simpleBtn").setAttribute("aria-pressed", String(state.look.simple));
     applySize();
+    $("bookWrap").style.setProperty("--zoom", String(state.look.zoom / 100)); $("zmLabel").textContent = state.look.zoom + "%";
+    $("zmOut").disabled = state.look.zoom <= 100; $("zmIn").disabled = state.look.zoom >= 500;
+    layoutBook(true);
     if (state.look.layout && state.look.layout !== prev) setLayout(state.look.layout);
     if (remember) { store.set("bs_look", JSON.stringify(currentLook())); if (window.BS && window.BS.onLookChange) window.BS.onLookChange(currentLook()); }
   }
@@ -825,14 +853,14 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
   }
   function addToBook(text) {
     state.book.push({ text: text.trim() }); saveLocalBook(); renderLocalBook();
-    const box = $("book"); box.scrollTop = box.scrollHeight; setStatus("Added to the book");
+    const box = $("book"); afterBookRender(box.lastElementChild); setStatus("Added to the book");
   }
   function renderLocalBook() {
     const box = $("book"); box.replaceChildren();
     if (!state.book.length) {
       const p = document.createElement("p"); p.id = "bookEmpty";
       p.textContent = "Your book is empty. Ask Book Scribe for an idea, then press Add to book under the answer you like. Tap a paragraph to change it.";
-      box.append(p); return;
+      box.append(p); afterBookRender(null); return;
     }
     state.book.forEach((p, i) => {
       const d = document.createElement("p");
@@ -841,6 +869,7 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
       d.onclick = open; d.onkeydown = (e) => { if (e.key === "Enter") open(); };
       box.append(d);
     });
+    afterBookRender(null);
   }
   function editLocal(i, node) {
     const wrap = document.createElement("div"); wrap.className = "para";
@@ -892,8 +921,48 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
     state.history = []; state.sid = state.sid.slice(0, 20) + Date.now().toString(36);
     await loadSiteBook(); if (!(await restoreChat())) welcome();
   }
+  // --- pages: the book strip is cut into columns as wide as the page; "view" is the page (or the two pages of a spread) on show
+  const pager = { view: 0, views: 1, cols: 1, step: 0, atEnd: false };
+  function layoutBook(keep) {
+    const box = $("book"), w = box.clientWidth, h = box.clientHeight;
+    if (!w || !h) return;
+    const keepFrac = keep && pager.views > 1 ? pager.view / pager.views : 0;
+    const gap = 48, zoom = state.look.zoom || 100;
+    const cols = w >= 1000 && zoom <= 200 ? 2 : 1;  // a wide screen shows a two-page spread, like an open book, until the words get big
+    const colW = Math.floor((w - gap * (cols - 1)) / cols);
+    box.style.columnWidth = colW + "px"; box.style.columnGap = gap + "px";
+    $("bookWrap").style.setProperty("--ph", h + "px");
+    pager.cols = cols; pager.step = w + gap;
+    const columns = Math.max(1, Math.round((box.scrollWidth + gap) / (colW + gap)));
+    pager.views = Math.max(1, Math.ceil(columns / cols));
+    pager.view = Math.min(pager.views - 1, keepFrac ? Math.round(keepFrac * pager.views) : pager.view);
+    showView();
+  }
+  function showView() {
+    const box = $("book");
+    box.scrollLeft = pager.view * pager.step;
+    const first = pager.view * pager.cols + 1;
+    const pages = pager.views * pager.cols;
+    const last = Math.min(pager.view * pager.cols + pager.cols, pages);
+    $("pgLabel").textContent = pager.cols > 1 && last > first ? `Pages ${first}-${last} of ${pages}` : `Page ${first} of ${pages}`;
+    $("pgPrev").disabled = pager.view === 0 && state.chapters.indexOf(state.chapter) <= 0;
+    $("pgNext").disabled = pager.view >= pager.views - 1 && state.chapters.indexOf(state.chapter) >= state.chapters.length - 1;
+  }
+  function turnPage(d) {
+    const v = pager.view + d;
+    if (v >= 0 && v < pager.views) { pager.view = v; showView(); return; }
+    if (state.mode === "scribe") { pager.atEnd = d < 0; stepChapter(d); }  // past the last page: on into the next chapter
+  }
+  function viewOf(el) { return Math.max(0, Math.min(pager.views - 1, Math.floor(el.offsetLeft / pager.step))); }
+  function goToPara(el) { pager.view = viewOf(el); showView(); }
+  function afterBookRender(focusEl) {
+    layoutBook(false);
+    $("book").querySelectorAll("img").forEach((im) => { if (!im.complete) im.addEventListener("load", () => layoutBook(true), { once: true }); });
+    if (focusEl) goToPara(focusEl); else { pager.view = pager.atEnd ? pager.views - 1 : 0; showView(); }
+    pager.atEnd = false;
+  }
   function siteMessage(t) {
-    const p = document.createElement("p"); p.id = "bookEmpty"; p.textContent = t; $("book").replaceChildren(p);
+    const p = document.createElement("p"); p.id = "bookEmpty"; p.textContent = t; $("book").replaceChildren(p); afterBookRender(null);
     $("chapterLabel").textContent = "No chapter"; $("prevCh").disabled = $("nextCh").disabled = true;
   }
   async function showChapter(n, focus, flash, marks) {
@@ -911,7 +980,7 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
         if (p.image) {  // a picture is its own paragraph: the picture, its caption, and tap to hear the caption
           const fig = document.createElement("figure"), img = document.createElement("img"), cap = document.createElement("figcaption");
           fig.className = "para fig" + (p.id === focus || mi >= 0 ? " mark" : ""); fig.id = "p_" + p.id; fig.tabIndex = 0;
-          img.src = p.image.url; img.alt = "Picture: " + p.image.caption; img.loading = "lazy"; cap.textContent = p.image.caption;
+          img.src = p.image.url; img.alt = "Picture: " + p.image.caption; cap.textContent = p.image.caption;
           fig.append(img, cap);
           const hearPic = () => speak("A picture. " + p.image.caption, [{ speaker: "narrator", text: "A picture. " + p.image.caption }]);
           fig.onclick = hearPic; fig.onkeydown = (e) => { if (e.key === "Enter") hearPic(); };
@@ -926,7 +995,7 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
         box.append(el);
       }
       const f = focus && document.getElementById("p_" + focus);
-      if (f) f.scrollIntoView({ block: "center", behavior: flash ? "smooth" : "auto" }); else box.scrollTop = 0;
+      afterBookRender(f);
     } catch (_) { siteMessage("I could not open that chapter."); }
   }
   function stepChapter(d) { const i = state.chapters.indexOf(state.chapter); const n = state.chapters[i + d]; if (n) showChapter(n); }
@@ -946,6 +1015,21 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
   $("talk").onclick = toggleTalk; $("stop").onclick = stopSpeaking;
   $("read").onclick = () => { state.read = !state.read; if (!state.read) stopSpeaking(); applyRead(); };
   $("fresh").onclick = clearChat;
+  $("pgPrev").onclick = () => turnPage(-1); $("pgNext").onclick = () => turnPage(1);
+  const zoomTo = (z) => applyLook({ ...currentLook(), zoom: z });
+  const ZSTEPS = [100, 125, 150, 200, 250, 300, 400, 500];
+  $("zmIn").onclick = () => zoomTo(ZSTEPS[Math.min(ZSTEPS.length - 1, ZSTEPS.indexOf(state.look.zoom) + 1)]);
+  $("zmOut").onclick = () => zoomTo(ZSTEPS[Math.max(0, ZSTEPS.indexOf(state.look.zoom) - 1)]);
+  $("zmLabel").onclick = () => zoomTo(100);
+  $("bookWrap").addEventListener("keydown", (e) => {
+    if (e.target.tagName === "TEXTAREA") return;
+    if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); turnPage(1); }
+    else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); turnPage(-1); }
+  });
+  let swipeX = null;  // a swipe left or right turns the page on a touch screen
+  $("bookWrap").addEventListener("touchstart", (e) => { swipeX = e.touches.length === 1 ? e.touches[0].clientX : null; }, { passive: true });
+  $("bookWrap").addEventListener("touchend", (e) => { if (swipeX !== null) { const dx = e.changedTouches[0].clientX - swipeX; if (Math.abs(dx) > 60) turnPage(dx < 0 ? 1 : -1); } swipeX = null; }, { passive: true });
+  if (window.ResizeObserver) new ResizeObserver(() => layoutBook(true)).observe($("book"));
   $("prevCh").onclick = () => stepChapter(-1); $("nextCh").onclick = () => stepChapter(1);
   $("copyBook").onclick = copyBook; $("saveBook").onclick = saveBook; $("clearBook").onclick = clearBook;
   narrowQ.addEventListener("change", applyUI);
