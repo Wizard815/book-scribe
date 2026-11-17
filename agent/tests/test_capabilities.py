@@ -204,3 +204,39 @@ async def test_bring_it_back_reads_the_paragraph_again(books):
     await ag.handle("s", "no")
     r = await ag.handle("s", "bring it back")
     assert A in r.text
+
+
+def test_the_last_sentence_of_the_first_paragraph_is_paragraph_one():
+    import intent
+    assert intent.parse_ref("take the last sentence of the first paragraph out").para == 1
+    assert intent.parse_ref("change the last paragraph").para == -1
+    assert intent.parse_ref("read the first line of chapter 2").para == 1 and intent.parse_ref("make the first sentence of paragraph 3 shorter").para == 3
+
+
+@pytest.mark.asyncio
+async def test_hello_while_a_draft_waits_says_which_draft_it_is(books):
+    ag, store, llm = make(books)
+    A = "The first draft is about the walk down to the lake. The cold wind came in with the evening, and the road ahead of him was quiet."
+    llm.replies = [f'[[tool: propose_append {{"text": "{A}"}}]]', "Here."]
+    await ag.handle("s", "next paragraph, the walk down")
+    llm.replies = ["Hello there."]
+    r = await ag.handle("s", "hello")
+    assert "It begins: The first draft is about the walk" in r.text
+
+
+@pytest.mark.asyncio
+async def test_a_wordy_wikipedia_query_is_retried_with_shorter_words():
+    import httpx
+    import web as webmod
+    calls = []
+
+    def handler(req):
+        q = dict(req.url.params)
+        calls.append(q.get("search") or q.get("titles"))
+        if q.get("action") == "opensearch":
+            return httpx.Response(200, json=[q["search"], ["Spanish flu"] if q["search"] == "1918 flu" else [], [], []])
+        return httpx.Response(200, json={"query": {"pages": {"1": {"title": "Spanish flu", "extract": "The 1918 influenza pandemic killed millions."}}}})
+
+    w = webmod.Web(wikipedia_url="https://wiki.test", http=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    got = await w.wikipedia("1918 flu in the army camps")
+    assert got and got["title"] == "Spanish flu" and len(calls) >= 2

@@ -97,8 +97,15 @@ class Web:
         if not self.can_wikipedia:
             raise WebError("Wikipedia lookup is not set up.")
         api = f"{self.wikipedia_url}/w/api.php"
-        found = await self._json(api, {"action": "opensearch", "search": query[:120], "limit": 1, "namespace": 0, "format": "json", "redirects": "resolve"})
-        titles = found[1] if isinstance(found, list) and len(found) > 1 else []
+        titles: list = []
+        toks = [w for w in re.findall(r"[A-Za-z0-9'-]+", query) if w.lower() not in {"the", "a", "an", "in", "of", "on", "at", "for", "and", "during", "about", "to"}]
+        for q in dict.fromkeys([query[:120], " ".join(toks[:3]), " ".join(toks[:2]), " ".join(toks[-2:])]):  # a long, wordy query finds nothing: try shorter ones
+            if not q.strip():
+                continue
+            found = await self._json(api, {"action": "opensearch", "search": q, "limit": 1, "namespace": 0, "format": "json", "redirects": "resolve"})
+            titles = found[1] if isinstance(found, list) and len(found) > 1 else []
+            if titles:
+                break
         if not titles:
             return None
         data = await self._json(api, {"action": "query", "prop": "extracts", "explaintext": 1, "exsectionformat": "plain", "titles": titles[0], "redirects": 1, "format": "json"})

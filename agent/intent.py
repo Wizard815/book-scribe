@@ -151,7 +151,8 @@ def parse_ref(text: str) -> Ref:
         r.scene = int(m.group(1))
     if m := re.search(rf"\b{_PARA_WORD} (\d+)\b", n):
         r.para = int(m.group(1))
-    elif m := re.search(rf"\b({_ORD}) (?:{_PARA_WORD})\b", n):
+    elif m := (re.search(rf"\b({_ORD}) (?:paragraph|para|section|part|bit)\b", n) or re.search(rf"\b({_ORD}) (?:line|sentence)\b", n)):
+        # "the last sentence of the first paragraph" is paragraph 1: a paragraph word wins over a sentence or line word
         w = m.group(1).replace("very ", "")
         r.para = -1 if w in ("last", "final", "closing", "end") else ORDINALS.get(w, 1)
     elif re.search(r"\b(opening|beginning|first) (line|sentence|words)\b", n) or re.search(r"\bthe (very )?(start|beginning) of\b", n):

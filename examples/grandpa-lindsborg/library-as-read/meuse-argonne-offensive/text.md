@@ -1,0 +1,3 @@
+Source: http://127.0.0.1:9104/wiki/Meuse-Argonne_Offensive
+
+The Meuse-Argonne Offensive was a major part of the final Allied offensive of the First World War, fought from 26 September to 11 November 1918. It was the largest operation in American military history to that date, involving about 1.2 million American soldiers, and cost about 26,000 American dead and over 95,000 wounded. The ground was heavily fortified and cut by woods, ravines and the Argonne forest. The 35th Division, made up largely of National Guard soldiers from Missouri and Kansas, attacked on the first day, 26 September 1918, towards Exermont and Charpentry and suffered heavy losses.
