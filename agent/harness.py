@@ -36,6 +36,7 @@ class Ctx:
     warning: str = ""  # a continuity problem found in the paragraph the model proposed (spoken to the writer)
     continuity_tried: bool = False
     voice_tried: bool = False
+    ground_tried: bool = False
     drafted: str = ""  # a paragraph the model proposed for the book through propose_append
     open_item: dict | None = None  # a library file to open on the writer's screen: {"slug", "title"}
     calls: list[str] = field(default_factory=list)  # tool names used, for the admin trace
