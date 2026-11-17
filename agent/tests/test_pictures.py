@@ -4,6 +4,7 @@ import json
 import zipfile
 
 import httpx
+import intent
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -677,3 +678,51 @@ async def test_regression_last_three_answers_remarks_and_formats(books):
     assert p is not None and p.kind == "wiki" and "A" not in store.bible("demo").characters() and "Revised" not in r.text and "still holding this for you" in r.text  # answered; the question is still waiting
     r = await ag.handle("s", "Yes, save that"); assert "Saved to the wiki" in r.text and ag.session("s").pending is None
     r = await ag.handle("s", "yes but make the second sentence shorter and add the lantern near the end please")  # nothing pending now: ordinary talk
+
+
+# ---- round 7 (Everett's story): lost paragraphs, "describe the photograph", contradictory replies --------------------------------------
+PROSE = ("Near the village the fighting grew loud, and the noise was beyond anything Everett had imagined. Guns thundered from every side and the air was full of smoke. "
+         "He could not hear the orders shouted a few feet away, so he kept close to the man beside him. They went forward together in short rushes, dropped flat and got up again.")
+
+
+def test_yes_with_a_compliment_is_a_yes_and_not_a_request_to_redo_it():
+    for t in ("Yes, that's better.", "yes that is much nicer", "Yes, lovely.", "yes, that's much better, thank you"):
+        assert intent.confirmation(t) == ("yes", ""), t
+
+
+def test_one_more_and_the_part_where_ask_for_new_writing_but_one_more_time_does_not():
+    for t in ("One more, the fighting near Exermont, and the noise.", "Now the part where he reaches the shell hole", "and then the scene where they sail"):
+        assert intent.draft_first(t), t
+    assert not intent.is_draft("one more time please")
+
+
+@pytest.mark.asyncio
+async def test_prose_the_model_wrote_into_the_chat_is_asked_for_again_properly_and_never_lost(books):
+    ag, store, llm = make(books)
+    store.append_paragraph("demo", 1, "The first paragraph is here.")
+    ag.session("s").work = 1
+    llm.replies = [PROSE, f'[[tool: propose_append {{"text": "{PROSE}"}}]]', "Here it is."]
+    r = await ag.handle("s", "continue with the fighting near Exermont and the noise")
+    assert r.pending and r.pending["kind"] == "append" and PROSE in r.text  # it is a proposal the writer can say yes to, not text that vanishes
+
+
+@pytest.mark.asyncio
+async def test_save_as_you_go_never_says_both_waiting_for_your_answer_and_saved(books):
+    ag, store, llm = make(books)
+    ag.prefs = __import__("prefs").Prefs(ag.s.state_dir)
+    await ag.handle("s", "save as you go")
+    llm.replies = [f'[[tool: propose_append {{"text": "{PARA}"}}]]', "The paragraph is ready for your yes or no, and once it's saved I will move it."]
+    r = await ag.handle("s", "next paragraph, the walk down")
+    assert "I saved this to chapter 1" in r.text and "yes or no" not in r.text and r.pending is None
+
+
+@pytest.mark.asyncio
+async def test_describe_the_photograph_describes_the_library_photo_and_never_writes_a_paragraph(books):
+    ag, store, llm = make(books)
+    before = len(store.all_paragraphs("demo"))
+    assert intent.describe_request("Describe the photograph to me again, please. Just describe it, don't write anything.")
+    ag.library.add("demo", "everett.jpg", png(), "everett photo", "image", "", status="unread", notes=["I cannot see pictures yet."])
+    r = await ag.handle("s", "describe the photograph to me")
+    assert "cannot see pictures" in r.text and r.pending is None and not llm.calls and len(store.all_paragraphs("demo")) == before
+    ag.library.add("demo", "farm.jpg", png(10, 10, (1, 2, 3)), "farm photo", "image", "A red barn on a wheat field under a pale sky.", status="read")
+    assert "red barn" in (await ag.handle("s", "describe the photo")).text

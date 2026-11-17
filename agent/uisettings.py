@@ -112,7 +112,10 @@ def _book_zoom(n: str, cur: int, raw: str = "") -> tuple[int, str] | None:
     if m and (_ZOOM_WORDS.search(n) or _BOOKISH.search(n)) and not _NOT_ZOOM_PCT.search(n) and 25 <= int(m.group(1)) <= 900:
         z = nearest_zoom(int(m.group(1)))
         return z, f"the book is at {z} percent"
-    zoomish = re.search(r"\bzoom(?: in| out)?\b", n) and not re.search(r"\bzoom (?:call|meeting|link)\b", n)
+    whole = re.search(r"\b(?:screen|everything|buttons?|chat|whole|display|menu|controls?|the app)\b", n)
+    picture = re.search(r"\b(?:picture|pictures|photo|photos|photograph|image|images|map|illustration|drawing)\b", n)
+    plain = (_BIGGER.search(n) or _SMALLER.search(n)) and (re.search(rf"\b{_UI_NOUN}\b", n) or len(n.split()) <= 3) and not whole and not picture and not _CANT_SEE.search(n)  # "make the words bigger": the page is what is being read
+    zoomish = plain or re.search(r"\bzoom(?: in| out)?\b", n) and not re.search(r"\bzoom (?:call|meeting|link)\b", n)
     bookish = _BOOKISH.search(n) and _ZOOM_WORDS.search(n)
     if not (zoomish or bookish):
         return None
@@ -161,9 +164,9 @@ def parse(text: str, look: dict | None) -> tuple[dict, str] | None:
         size(to=DEFAULT["size"]); said.append("back to the usual size")
     elif _BIGGER.search(n) and _has_ui_target(n, words) and not _SMALLER.search(n):
         step = 3 if _MUCH.search(n) else 1
-        size(+step); said.append("much bigger" if step > 1 else "bigger")
+        size(+step); said.append("everything on the screen is much bigger" if step > 1 else "everything on the screen is bigger")
     elif _SMALLER.search(n) and _has_ui_target(n, words):
-        size(-(2 if _MUCH.search(n) else 1)); said.append("smaller")
+        size(-(2 if _MUCH.search(n) else 1)); said.append("everything on the screen is smaller")
     if _NORMAL_CONTRAST.search(n):
         new["contrast"] = "normal"; said.append("normal colours")
     elif _DARK_HC.search(n):

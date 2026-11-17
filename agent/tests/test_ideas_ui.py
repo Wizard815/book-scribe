@@ -99,10 +99,10 @@ def test_story_talk_is_not_mistaken_for_a_screen_request(said):
 
 
 def test_size_steps_and_limits():
-    assert look("bigger")["size"] == 3 and look("much bigger")["size"] == 5 and look("make the text a lot bigger")["size"] == 5
-    assert look("biggest text")["size"] == uisettings.SIZE_MAX and look("smaller", {**D, "size": 0})["size"] == 0
-    assert look("bigger", {**D, "size": 7}) is not None  # at the top it says so rather than erroring
-    assert uisettings.parse("bigger", {**D, "size": 7})[1] == "That is already as far as it goes."
+    assert look("make everything bigger")["size"] == 3 and look("make everything much bigger")["size"] == 5 and look("make the screen a lot bigger")["size"] == 5
+    assert look("biggest text")["size"] == uisettings.SIZE_MAX and look("make everything smaller", {**D, "size": 0})["size"] == 0
+    assert look("make everything bigger", {**D, "size": 7}) is not None  # at the top it says so rather than erroring
+    assert uisettings.parse("make everything bigger", {**D, "size": 7})[1] == "That is already as far as it goes."
     assert look("normal size", {**D, "size": 6})["size"] == 2
 
 
@@ -167,8 +167,9 @@ def test_book_zoom_takes_a_percentage_and_snaps_to_a_level():
     assert zoom("join the zoom call") is None
 
 
-def test_plain_bigger_words_still_means_the_whole_screen():
-    assert zoom("make the words bigger") == (100, 3)
+def test_plain_bigger_words_means_the_book_page_and_only_screen_or_everything_means_the_whole_screen():
+    assert zoom("make the words bigger") == (125, 2) and zoom("that's too big", 200) == (150, 2) and zoom("make it bigger") == (125, 2)
+    assert zoom("make the buttons bigger") == (100, 3) and zoom("make everything bigger") == (100, 3) and zoom("make the screen smaller", 100) == (100, 1)
 
 
 def test_zoom_is_validated_and_set_by_the_model_tool_too():
