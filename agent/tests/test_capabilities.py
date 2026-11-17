@@ -131,3 +131,44 @@ async def test_no_make_it_a_bigger_ship_is_about_the_story_not_the_screen(books)
     llm.replies = ["Okay."]
     r = await ag.handle("s", "yes, make one")
     assert "chapter 1 picture" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_a_new_draft_puts_the_old_one_aside_out_loud_and_bring_it_back_swaps_them(books):
+    ag, store, llm = make(books)
+    A = "The first draft is about the walk down to the lake. The cold wind came in with the evening, and the road ahead of him was quiet."
+    B = "The second draft is about the supper table. His mother counted out the plates by the lamp for the whole family."
+    llm.replies = [f'[[tool: propose_append {{"text": "{A}"}}]]', "Here."]
+    r = await ag.handle("s", "next paragraph, the walk down")
+    assert r.pending and A in r.text
+    llm.replies = [f'[[tool: propose_append {{"text": "{B}"}}]]', "And here."]
+    r = await ag.handle("s", "now the part where they eat supper")
+    assert B in r.text and ("put aside the paragraph" in r.text or "dropped the paragraph" in r.text) and "say no" not in r.text.lower()
+    assert ag.session("s").pending.text == B
+    r = await ag.handle("s", "bring it back")
+    assert A in r.text or ag.session("s").pending.text == A
+    assert ag.session("s").pending.text == A and ag.session("s").last_dropped.text == B
+    await ag.handle("s", "yes")
+    assert A in store.read_chapter_raw("demo", 1) and B not in store.read_chapter_raw("demo", 1)
+
+
+@pytest.mark.asyncio
+async def test_put_a_picture_of_the_barn_in_chapter_2_after_paragraph_1_makes_a_picture(books):
+    import intent
+    assert intent.move_request("put a picture of the barn in chapter 2 after paragraph 1") is None
+    assert intent.picture_request("put a picture of the barn in chapter 2 after paragraph 1")
+    assert intent.move_request("move the picture in chapter 2 after paragraph 1") is not None
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    for t in ("Alpha is here.", "Bravo is here."):
+        store.append_paragraph("demo", 2, t)
+    llm.replies = ['[[tool: make_picture {"prompt": "a red barn", "caption": "The barn", "chapter": 2}]]', "A red barn."]
+    r = await ag.handle("s", "put a picture of the barn in chapter 2 after paragraph 1")
+    assert r.pending and r.pending["kind"] == "picture" and "after paragraph 1" in r.pending["ask"]
+
+
+def test_take_that_part_out_is_an_edit_not_new_writing():
+    import intent
+    for t in ("take that part out", "take the clerk part out", "cut that out", "leave out the clerk"):
+        assert intent.is_edit(t), t
+    assert not intent.is_draft("take that part out")

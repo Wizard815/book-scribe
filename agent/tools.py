@@ -384,7 +384,7 @@ def build(agent) -> Toolbox:
             return "Give the whole paragraph in text (at least a sentence or two)."
         if len(re.findall(r"[.!?][\"”’)]*(?:\s|$)", text)) < 2 and len(text) < 170:
             return "That is only one short sentence. Write a full paragraph of four to seven sentences (unless the writer asked for something short), then propose it again."
-        if sess.pending:
+        if sess.pending and not agent._supersede(sess):
             return "A proposal is already waiting for the writer's answer. Do not propose another."
         issue = await agent.check_continuity(sess, text, sess.last_user)
         if issue and not ctx.continuity_tried:
