@@ -489,3 +489,28 @@ async def test_sentences_the_documents_never_mention_are_pointed_out(books):
     flowery = "The village shimmered beneath wandering clouds while merchants hurried between cobbled courtyards carrying baskets overflowing with ripe peaches. Every cathedral bell echoed gloriously across the sleepy valley."
     out = ag.ungrounded(ag.session("s"), flowery)
     assert "not in your documents" in out
+
+
+@pytest.mark.asyncio
+async def test_a_revised_draft_made_while_another_waits_is_what_yes_saves(books):
+    ag, store, llm = make(books)
+    A = "The first draft is about the old photograph. It is stiff and brown, and the young man in it is trying not to smile for the camera."
+    B = "The second draft is about the photograph too. He stands in a studio in his uniform and hat, and he is trying hard not to smile."
+    llm.replies = [f'[[tool: propose_append {{"text": "{A}"}}]]', "Here."]
+    await ag.handle("s", "next paragraph, the photograph")
+    llm.replies = [f'[[tool: propose_append {{"text": "{B}"}}]]', "A shorter one."]
+    r = await ag.handle("s", "where does the brown colour come from? only use what is in my papers, make it short")
+    assert ag.session("s").pending is not None and ag.session("s").pending.text == B
+    await ag.handle("s", "yes")
+    raw = store.read_chapter_raw("demo", 1)
+    assert B in raw and A not in raw
+
+
+@pytest.mark.asyncio
+async def test_describe_the_picture_in_a_chapter_with_two_pictures_says_both(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2); store.append_paragraph("demo", 2, "Alpha is here for the book.")
+    for cap in ("A railway station", "A wheat field"):
+        n = ag.images.stage("demo", png(color=(len(cap), 50, 90)), cap); ag.images.accept("demo", n); store.append_image("demo", 2, n, cap)
+    r = await ag.handle("s", "describe the picture in chapter 2 to me")
+    assert "2 pictures" in r.text and "railway station" in r.text and "wheat field" in r.text
