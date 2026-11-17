@@ -56,6 +56,7 @@ class ChatIn(BaseModel):
     text: str
     session_id: str | None = None
     book: str | None = None
+    viewing: int | None = Field(default=None, ge=1, le=9999)  # the chapter the page is showing, so "put a picture here" means what the writer sees
 
 
 class WikiPlanIn(BaseModel):
@@ -393,7 +394,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         sid = body.session_id or uuid.uuid4().hex
         if body.book:
             book_or_400(body.book)
-        reply = await agent.handle(sid, body.text, body.book, via="typed")
+        reply = await agent.handle(sid, body.text, body.book, via="typed", viewing=body.viewing)
         return {"session_id": sid, "user_text": body.text, **asdict(reply), "served_by": router.served("chat")}
 
     @app.post("/api/transcribe", dependencies=[Depends(writer)])
@@ -401,13 +402,13 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         return {"text": await stt.transcribe(await audio.read(), audio.filename or "audio.webm", audio.content_type or "audio/webm")}
 
     @app.post("/api/voice", dependencies=[Depends(writer)])
-    async def voice(audio: UploadFile = File(...), session_id: str = Form(""), book: str = Form(""), interrupted: str = Form("")):
+    async def voice(audio: UploadFile = File(...), session_id: str = Form(""), book: str = Form(""), interrupted: str = Form(""), viewing: str = Form("")):
         """Mic → whisper → agent in one round trip (fewest taps for the writer)."""
         text = await stt.transcribe(await audio.read(), audio.filename or "audio.webm", audio.content_type or "audio/webm", hint=agent.stt_hint(book or None))
         sid = session_id or uuid.uuid4().hex
         if book:
             book_or_400(book)
-        reply = await agent.handle(sid, text, book or None, via="voice", interrupted=bool(interrupted))
+        reply = await agent.handle(sid, text, book or None, via="voice", interrupted=bool(interrupted), viewing=int(viewing) if viewing.isdigit() else None)
         return {"session_id": sid, "user_text": text, **asdict(reply), "served_by": router.served("stt", "chat")}
 
     @app.post("/api/tts", dependencies=[Depends(writer)])
