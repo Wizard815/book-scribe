@@ -348,6 +348,8 @@ class Agent:
                     r = self._reply(sess, "I'm here.")  # never ask the model: it can mix up which draft is waiting
                 else:
                     r = await self._converse(sess, text)
+                    if sess.pending is not None and sess.pending is not keep and sess.pending.kind in ("append", "edit", "picture"):
+                        return r  # the model made a NEWER proposal (a revised draft): that is what a "yes" now answers, never the older one that was waiting
                 sess.pending = keep
                 r.pending = {"kind": keep.kind, "text": keep.text, "paragraph_id": keep.paragraph_id, "ask": keep.ask}
                 if keep.ask and keep.kind != "page":
@@ -819,6 +821,15 @@ class Agent:
             r = self._reply(sess, short + " Say yes to put it in the book, or no for a different one.")
             r.picture = self.images.info(sess.book, d["candidate"], d.get("caption", ""), candidate=True)
             return r
+        rf = intent.parse_ref(text) if text else None
+        if rf and rf.chapter and not re.search(r"[a-z]{4,}", re.sub(r"\b(?:describe|picture|photo|photograph|image|chapter|please|again|tell|about|what|that|this|illustration)\b", " ", intent.norm(text))):
+            inch = [p for p in self.store.all_paragraphs(sess.book) if p.image and p.chapter == rf.chapter]
+            if len(inch) > 1:  # "describe the picture in chapter 2" when there are two: say all of them
+                parts = []
+                for k, p_ in enumerate(inch, 1):
+                    kept = self.images.note(sess.book, p_.image[1]) if len(p_.image) > 1 else ""
+                    parts.append(f"Picture {k}, {p_.image[0]}." + (f" {' '.join(re.split(r'(?<=[.!?])\s+', kept)[:2])}" if kept else ""))
+                return self._reply(sess, f"Chapter {rf.chapter} has {len(inch)} pictures. " + " ".join(parts))
         named = self._find_picture(sess, text) if text else None
         if named:
             sess.chapter, sess.focus = named.chapter, named.id
