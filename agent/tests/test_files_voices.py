@@ -553,7 +553,7 @@ async def test_yes_to_a_draft_that_was_shown_without_a_proposal_still_saves_it(b
 @pytest.mark.asyncio
 async def test_the_model_drafts_through_propose_append_and_the_writer_sees_and_hears_it(books):
     ag, store, llm = make(books)
-    para = "The sword hung against his hip and knocked at his knee with every step, once, twice, as if it wanted his attention and had no other way to ask."
+    para = "The sword hung against his hip and knocked at his knee with every step, once, twice, as if it wanted his attention. He let it knock, and walked on."
     llm.replies = [f'[[tool: propose_append {{"text": "{para}", "chapter": 1}}]]', "Here you go."]
     r = await ag.handle("s", "next paragraph, the walk to the lake")
     assert para in r.text and "Should I add it to chapter 1?" in r.text and r.pending["kind"] == "append" and r.pending["ask"] == "Add this paragraph to chapter 1?"
@@ -610,7 +610,7 @@ async def test_small_talk_while_a_note_is_waiting_keeps_it_and_reminds_out_loud(
     for chatter in ["um, the thing with the water", "hello", "goodbye", "what is the weather like in Cornwall?"]:
         llm.replies = ["Of course."]
         r = await ag.handle("s", chatter)
-        assert s.pending is not None and r.pending["ask"] == "Save these 2 notes to the wiki?" and "still holding this for you" in r.text and r.speech[-1]["text"].startswith("I am still holding")
+        assert s.pending is not None and r.pending["ask"] == "Save these 2 notes to the wiki: Sir Cadan, Dozmary Pool?" and "still holding this for you" in r.text and r.speech[-1]["text"].startswith("I am still holding")
     r = await ag.handle("s", "yes")  # one yes saves both
     assert "Sir Cadan" in r.text and "Dozmary Pool" in r.text and "Sir Cadan" in store.bible("demo").characters() and "Dozmary Pool" in store.bible("demo").entries("world")
     # a real new job does put it aside, and says so
@@ -640,4 +640,4 @@ async def test_undo_says_what_it_really_undid_and_drafts_are_told_the_whole_book
     llm.replies = ["x"]
     await ag.handle("s", "tell me what you think of the pace here, honestly, in a few words")
     sysmsg = llm.calls[-1][0]["content"]
-    assert "THE BOOK SO FAR" in sysmsg and "ch1 p1: Mira stepped onto the platform" in sysmsg
+    assert "THE BOOK SO FAR" in sysmsg and "chapter 1 paragraph 1: Mira stepped onto the platform" in sysmsg

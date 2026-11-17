@@ -32,6 +32,8 @@ class Ctx:
     ideas: list[str] = field(default_factory=list)  # generated options the UI can show as tap-to-use buttons
     notes: list[str] = field(default_factory=list)  # short notices for the writer ("I looked up Excalibur on Wikipedia.")
     picture: dict | None = None  # a picture the model has made or found and proposed for the book: {"candidate", "caption", "chapter"}
+    warning: str = ""  # a continuity problem found in the paragraph the model proposed (spoken to the writer)
+    continuity_tried: bool = False
     drafted: str = ""  # a paragraph the model proposed for the book through propose_append
     open_item: dict | None = None  # a library file to open on the writer's screen: {"slug", "title"}
     calls: list[str] = field(default_factory=list)  # tool names used, for the admin trace

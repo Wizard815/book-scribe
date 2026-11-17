@@ -256,6 +256,8 @@ body.dragging #dropBanner { display: flex; }
       ...choice("prefSurprise", "Random inspiration", [["off", "None"], ["low", "A little"], ["high", "A lot"]], prefs.surprise, (v) => putPrefs({ surprise: v })),
       h("p", { className: "hint", textContent: "Style checks: how hard the helper is pushed to avoid clichés, long sentences and passive voice. Long sentences are judged against your own book." }),
       ...choice("prefStrict", "Style checks", [["off", "Off: leave my voice alone"], ["gentle", "Gentle: clichés and markdown only"], ["strict", "Strict: sentences, passive voice, telling"]], prefs.strictness, (v) => putPrefs({ strictness: v })),
+      h("p", { className: "hint", textContent: "How I save what I write: asking each time is safest. “Save as I go” saves each paragraph at once and reads it to you; you can always say undo. You can also just say “save as you go” or “ask me first”." }),
+      ...choice("prefAuto", "Saving what I write", [["off", "Ask me first, every time"], ["on", "Save as I go (say undo to take it back)"]], prefs.auto_save || "off", (v) => putPrefs({ auto_save: v })),
       h("div", { className: "sect", textContent: "About me" }),
       h("p", { className: "hint", textContent: "Optional. Your age helps me match the style of the words I suggest. I never mention it." }),
       h("label", { for: "prefAge", textContent: "Your age" }), age,

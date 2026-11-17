@@ -111,6 +111,8 @@ class PrefsIn(BaseModel):
     voice_mode: str | None = Field(default=None, max_length=10)   # same | separate: one voice for everything, or agent + female reader + male reader
     narrator_reader: str | None = Field(default=None, max_length=8)  # female | male: which reader narrates
     live_interrupt: str | None = Field(default=None, max_length=4)   # on | off: may the writer cut the agent off by speaking (headphones)
+    auto_save: str | None = Field(default=None, max_length=3)       # on | off: save each paragraph I write at once (undoable) instead of asking first
+    continuity: str | None = Field(default=None, max_length=3)      # on | off: check each new paragraph against the book so far
     web_lookup: str | None = Field(default=None, max_length=4)       # on | off: may the agent look things up on the web (only if the administrator set it up)
 
 
@@ -542,7 +544,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         d = prefs.all()
         d.update(look=agent._look(), surprise=d["surprise"] or "low", strictness=d["strictness"] or "gentle", default_book=s.default_book,
                  chat_engine=d["chat_engine"] or "auto", listen_engine=d["listen_engine"] or "auto", voice_engine=d["voice_engine"] or "auto",
-                 voice_mode=d["voice_mode"] or "characters", narrator_reader=d["narrator_reader"] or "female", live_interrupt=d["live_interrupt"] or "off", web_lookup=d["web_lookup"] or "on",
+                 voice_mode=d["voice_mode"] or "characters", narrator_reader=d["narrator_reader"] or "female", live_interrupt=d["live_interrupt"] or "off", web_lookup=d["web_lookup"] or "on", auto_save=d["auto_save"] or "off", continuity=d["continuity"] or "on",
                  web={"search": agent.web.can_search, "wikipedia": agent.web.can_wikipedia} if agent.web else {"search": False, "wikipedia": False})
         return d
 

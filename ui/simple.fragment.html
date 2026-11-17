@@ -647,6 +647,9 @@ figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); 
     (j.notes || []).forEach((n) => bubble("note", n));
     if (b && j.highlights && j.highlights.length) addRefButtons(b, j.highlights);
     if (b && j.ideas && j.ideas.length) addIdeaButtons(b, j.ideas);
+    if (j.download) {  // "save my book as a file": the page starts the download
+      const a = document.createElement("a"); a.href = j.download.url; a.download = ""; document.body.append(a); a.click(); a.remove();
+    }
     if (b && j.picture) {  // a picture waiting for yes or no: shown inside the answer
       const img = document.createElement("img"); img.className = "chatpic"; img.src = j.picture.url; img.alt = "Picture: " + j.picture.caption;
       b.el.insertBefore(img, b.body);

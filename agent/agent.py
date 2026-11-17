@@ -110,6 +110,7 @@ class Reply:
     ideas: list[str] = field(default_factory=list)  # random options the page shows as tap-to-use buttons
     open_item: dict | None = None  # a library file for the page to open: {"slug", "title"}
     picture: dict | None = None  # a picture waiting for the writer's yes or no: {"url", "caption"}
+    download: dict | None = None  # a file for the page to save: {"url", "label"}
 
 
 class Agent:
@@ -234,7 +235,15 @@ class Agent:
                 return self._reply(sess, "Okay, I'll wait. Say yes to save it, or tell me what to change.")
             if kind == "yes" and not rest:
                 return await self._accept(sess)
+            if kind == "yes" and rest and (intent.is_question(rest) or text.strip().endswith("?")) and sess.pending.kind in ("edit", "append", "wiki", "picture", "delete", "move"):
+                done = await self._accept(sess)  # "yes, and who was Kay's father?": save it, then answer
+                r2 = await self._converse(sess, rest)
+                done.text = f"{done.text} {r2.text}".strip()
+                done.speech = (done.speech or []) + (r2.speech or [])
+                return done
             if kind == "no" and not rest:
+                if sess.pending.kind == "picture":
+                    self.images.discard(sess.book, (sess.pending.data or {}).get("candidate", ""))
                 self.memory.add(f"Writer rejected a proposed {sess.pending.kind}: '{sess.pending.text[:120]}'", "preference")
                 sess.pending = None
                 return self._reply(sess, "Okay, dropped it. What would you like instead?")
@@ -292,6 +301,13 @@ class Agent:
             return self._undo_reply(sess)
         if (n := intent.new_chapter(text)) is not None:
             return self._new_chapter_reply(sess, n)
+        if (fmt := intent.export_request(text)) is not None:
+            return self._export_reply(sess, fmt)
+        if (mode := intent.autosave_mode(text)) is not None:
+            if self.prefs:
+                self.prefs.update({"auto_save": mode})
+            return self._reply(sess, "Okay. From now on I will save each paragraph I write straight away and read it to you. Say undo to take one back, or change paragraph and the number. Say ask me first to go back to asking."
+                               if mode == "on" else "Okay. I will ask you before I save anything I write.")
         if (tc := intent.title_chapter(text)) is not None:
             return self._title_reply(sess, tc[0], tc[1])
         if (ref := intent.delete_request(text)) is not None:
@@ -374,8 +390,24 @@ class Agent:
             return ""
         if not paras:
             return ""
-        lines = [f"ch{p.chapter} p{i}: {' '.join(imgs.plain(p.text).split()[:14])}…" for i, p in enumerate(paras, 1)][-limit:]
+        seen: dict[int, int] = {}
+        lines = []
+        for p in paras:  # numbered inside each chapter, the way the writer says it ("paragraph 3 of chapter 2")
+            seen[p.chapter] = seen.get(p.chapter, 0) + 1
+            lines.append(f"chapter {p.chapter} paragraph {seen[p.chapter]}: {' '.join(imgs.plain(p.text).split()[:14])}…")
+        lines = lines[-limit:]
         return "THE BOOK SO FAR (one line per saved paragraph; continue forward, do not retell a scene that is already here):\n" + "\n".join(lines)
+
+    async def _autosave(self, sess: Session, text: str, lead: str = "", warn: str = "") -> Reply:
+        """"Save as you go": the paragraph is saved at once, read to the writer, and can still be undone with one word."""
+        ch = sess.pending.chapter if sess.pending else sess.chapter
+        r = self._commit(sess)
+        if not r.changed:
+            return r
+        said_lead, tail = f"{lead}I saved this to chapter {ch}:", f"{warn} Say undo to take it back.".strip()
+        r.text = f"{said_lead} {text} {tail}"
+        r.speech = await self._speech_text(sess, text, said_lead, tail)
+        return r
 
     def _book_state(self, sess: Session) -> str:
         nums = self.store.chapter_numbers(sess.book)
@@ -395,7 +427,8 @@ class Agent:
             if p.kind == "wiki":
                 d = p.data or {}
                 if d.get("batch"):
-                    return f"Save these {len(d['batch'])} notes to the wiki?"
+                    names = ", ".join(b["name"] for b in d["batch"][:10])
+                    return f"Save these {len(d['batch'])} notes to the wiki: {names}?"
                 return "Save this to the book's premise?" if d.get("kind") == "premise" else f"Save this note under {d.get('name', 'the wiki')}?"
             if p.kind == "picture":
                 return f"Put this picture in chapter {p.chapter}?"
@@ -473,7 +506,9 @@ class Agent:
             else:
                 new = self.store.move_paragraph(sess.book, p.paragraph_id, (p.data or {})["to"], (p.data or {}).get("where", "end"))
                 sess.chapter, sess.focus = new.chapter, new.id
-                text, changed = f"Moved to the end of chapter {new.chapter}. Say undo to put it back.", [new.id]
+                w = (p.data or {}).get("where", "end")
+                place = {"end": f"the end of chapter {new.chapter}", "start": f"the start of chapter {new.chapter}"}.get(w) if isinstance(w, str) else f"{w[0]} paragraph {w[1]} of chapter {new.chapter}"
+                text, changed = f"Moved to {place}. Say undo to put it back.", [new.id]
         except BookError as e:
             return self._reply(sess, f"I couldn't do that: {e}")
         self.kg.refresh(sess.book)
@@ -500,6 +535,36 @@ class Agent:
                 return self._reply(sess, f"It is a picture with the caption: {para.image[0]}.")
         return None
 
+    def _export_reply(self, sess: Session, fmt: str) -> Reply:
+        label = {"html": "web page file (open it and print it to make a PDF)", "epub": "e-book file", "md": "plain text folder (a zip file)"}[fmt]
+        r = self._reply(sess, f"I am saving your whole book as a {label}, with its pictures. It will appear in your downloads.")
+        r.download = {"url": f"/api/books/{sess.book}/export?format={fmt}", "label": label}
+        return r
+
+    async def check_continuity(self, sess: Session, text: str) -> str:
+        """Does a new paragraph contradict, or retell, something already in the book? -> a short reason, or "" when it is fine (or cannot be checked)."""
+        if self._pref("continuity", "on") == "off" or len(self.store.all_paragraphs(sess.book)) < 4:
+            return ""
+        try:
+            self.kg.refresh(sess.book)
+            hits = [h.para for h in self.kg.search(text, limit=5)]
+            recent = self.store.all_paragraphs(sess.book)[-2:]
+            seen, parts = set(), []
+            for p in hits + recent:
+                if p.id not in seen and not p.image:
+                    seen.add(p.id)
+                    parts.append(f"(chapter {p.chapter}) {p.text[:500]}")
+            bible = self.store.bible(sess.book).context_for(text, budget=1500)
+            out = await asyncio.wait_for(self.llm.chat([
+                {"role": "system", "content": "You are a strict continuity editor for a novel. Answer in one line."},
+                {"role": "user", "content": "PARTS OF THE BOOK SO FAR:\n" + "\n".join(parts) + f"\n\nWIKI FACTS:\n{bible}\n\nNEW PARAGRAPH:\n{text}\n\n"
+                 "Does the new paragraph contradict a fact above (who knows or did what, descriptions, the order of events) or retell an event that was already told? "
+                 "Reply exactly OK, or CONFLICT: and one short sentence naming the contradiction."}], temperature=0, max_tokens=90), 60)
+        except Exception:
+            return ""
+        out = (out or "").strip()
+        return out.split(":", 1)[1].strip()[:240] if out.upper().startswith("CONFLICT") and ":" in out else ""
+
     def _title_reply(self, sess: Session, n: int | None, title: str) -> Reply:
         n = n or sess.chapter
         if n not in self.store.chapter_numbers(sess.book):
@@ -511,7 +576,7 @@ class Agent:
         sess.chapter = n
         return self._reply(sess, f"Chapter {n} is now called {t}.")
 
-    def propose_picture(self, sess: Session, ctx, data: bytes, caption: str, chapter: int | None, hint: str = "") -> str:
+    async def propose_picture(self, sess: Session, ctx, data: bytes, caption: str, chapter: int | None, hint: str = "", describe: bool = False) -> str:
         """Check a picture, keep it as a candidate, and ask the writer. -> a plain message for the model."""
         if sess.pending:
             return "A proposal is already waiting for the writer's answer. Do not propose another."
@@ -527,8 +592,16 @@ class Agent:
         sess.chapter = ch
         sess.pending = Pending("picture", cap, ch, data={"candidate": name, "caption": cap})
         ctx.picture = {"candidate": name, "caption": cap, "chapter": ch}
+        seen = ""
+        if describe and self.llm:  # a picture that was found, not made: let a vision model look at it, so it can be described to the writer
+            try:
+                seen = await asyncio.wait_for(ingest.describe_picture(self.llm, self.images.path(sess.book, name, candidate=True).read_bytes()), 90)
+            except Exception:
+                seen = ""
+        sess.pending.data["describe"] = seen
+        how = (f" A vision model says the picture shows: {seen}" if seen else " You cannot see this picture and no vision model could: say so honestly and describe only what its title and caption tell you.") if describe else ""
         return ("Proposed. The app shows the picture to the writer and asks yes or no by itself. In your reply, DESCRIBE the picture in one or two plain sentences "
-                "(the writer may not look at the screen) and do not ask about saving.")
+                "(the writer may not look at the screen) and do not ask about saving." + how)
 
     def _commit_picture(self, sess: Session) -> Reply:
         p, sess.pending = sess.pending, None
@@ -1000,7 +1073,10 @@ class Agent:
             tail = f"Should I add it to chapter {sess.pending.chapter}?" if sess.pending.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.pending.chapter} with it?"
             lead = (out.strip() + " ") if out.strip() and len(out.strip()) <= 220 and out.strip() != "I'm not sure what to say to that. Could you tell me a little more?" else ""
             sess.history.append({"role": "assistant", "content": "[proposed a new paragraph]"})
-            reply = self._reply(sess, f"{lead}Here's a draft: {ctx.drafted} {tail}", await self._speech_text(sess, ctx.drafted, f"{lead}Here's a draft:", tail))
+            warn = f" A warning: {ctx.warning}" if ctx.warning else ""
+            if self._pref("auto_save", "off") == "on":
+                return self._attach(sess, await self._autosave(sess, ctx.drafted, lead, warn), ctx, "", text)
+            reply = self._reply(sess, f"{lead}Here's a draft: {ctx.drafted}{warn} {tail}", await self._speech_text(sess, ctx.drafted, f"{lead}Here's a draft:", f"{warn} {tail}".strip()))
             return self._attach(sess, reply, ctx, "", text)
         sess.history.append({"role": "assistant", "content": out})
         return self._attach(sess, self._reply(sess, out), ctx, out, text)
@@ -1056,13 +1132,21 @@ class Agent:
         sess.pending = Pending("append", new, sess.chapter)
         self._remember(sess, text, "[proposed a new paragraph]")
         tail = f"Should I add it to chapter {sess.chapter}?" if sess.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.chapter} with it?"
-        reply = self._reply(sess, f"Here's a draft: {new} {tail}", await self._speech_text(sess, new, "Here's a draft:", tail))
+        issue = ctx.warning if ctx.drafted else await self.check_continuity(sess, new)  # a paragraph proposed through the tool was already checked there
+        warn = f" A warning: {issue}" if issue else ""
+        if self._pref("auto_save", "off") == "on":
+            return self._attach(sess, await self._autosave(sess, new, "", warn), ctx, "", text)
+        reply = self._reply(sess, f"Here's a draft: {new}{warn} {tail}", await self._speech_text(sess, new, "Here's a draft:", f"{warn} {tail}".strip()))
         reply.notes += [f"Style note: {i}" for i in issues]
         return self._attach(sess, reply, ctx, "", text)
 
     async def _revise(self, sess: Session, instruction: str) -> Reply:
         """The writer answered a proposal with changes ("yes but shorter", "no, make it longer"): redo it, don't save or drop."""
         p = sess.pending
+        if p.kind == "picture":  # "no, make it an empty lake": drop that picture for good and ask the model for a different one
+            self.images.discard(sess.book, (p.data or {}).get("candidate", ""))
+            sess.pending = None
+            return await self._converse(sess, f"I do not want that picture. {instruction}")
         if p.kind in ("family", "page"):
             sess.pending = None
             return self._reply(sess, "Okay, I won't add it yet. Ask me again with the person and how many generations you want.")

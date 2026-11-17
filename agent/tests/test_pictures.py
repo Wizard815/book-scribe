@@ -280,3 +280,144 @@ async def test_make_me_a_picture_goes_to_the_model_with_its_tools_not_to_the_edi
     llm2.replies = ['[[tool: find_pictures {"query": "old map of Camelot"}]]', "I could not search just now."]
     r = await ag2.handle("s", "find a picture of an old map of Camelot")
     assert "inbox folder" not in r.text and "downloads" not in r.text.lower()  # not the file finder
+
+
+# ------------------------------------------------------------------------------------------- the ten-chapter run: each bug it found
+PARA = "The sword hung against his hip and knocked at his knee with every step, once, twice, as if it wanted his attention. He let it knock, and walked on."
+PARA2 = "By the water the reeds were stiff with frost. He stood a long moment, and then he lifted the sword and the cold went up his arm like a held breath."
+
+
+@pytest.mark.asyncio
+async def test_a_chapter_the_writer_points_back_to_is_not_where_the_paragraph_goes(books):
+    import intent
+    assert intent.parse_ref("write the throw, same as chapter 2 but sadder").chapter is None and intent.parse_ref("as in chapter six the lady rises, now write the throw").chapter is None
+    assert intent.parse_ref("write paragraph 2 of chapter 3").chapter == 3 and intent.parse_ref("move paragraph 3 from chapter 1 to chapter 2").chapter == 1
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2); store.append_paragraph("demo", 2, "A second chapter paragraph about the stone and the crowd.")
+    s = ag.session("s"); s.chapter = 1
+    llm.replies = ["He threw it, and the lake took it."]
+    r = await ag.handle("s", "write the next paragraph, the same lady as in chapter 2 but sadder")
+    assert r.pending["ask"] == "Add this paragraph to chapter 1?"
+    await ag.handle("s", "yes"); assert "the lake took it" in store.read_chapter_raw("demo", 1) and "the lake took it" not in store.read_chapter_raw("demo", 2)
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_picture_is_never_saved_and_a_changed_request_makes_a_new_one(books):
+    ag, store, llm = make(books)
+    llm.replies = ['[[tool: make_picture {"prompt": "a knight with a sword at a frozen lake", "caption": "Bedivere at the lake"}]]', "A knight stands at a frozen lake holding a sword."]
+    r = await ag.handle("s", "make a picture of the lake")
+    first = ag.session("s").pending.data["candidate"]; assert ag.images.path("demo", first, candidate=True).is_file()
+    llm.replies = ['[[tool: make_picture {"prompt": "an empty frozen lake at night", "caption": "The empty lake"}]]', "An empty frozen lake under a black sky."]
+    r = await ag.handle("s", "no, I want an empty lake, nobody in it")
+    second = ag.session("s").pending.data["candidate"]
+    assert second != first and r.picture["url"].endswith(second) and "empty frozen lake" in r.text
+    with pytest.raises(FileNotFoundError):
+        ag.images.path("demo", first, candidate=True)  # the rejected one is gone
+    await ag.handle("s", "yes"); assert store.paragraphs("demo", 1)[-1].image[0] == "The empty lake"
+    llm.replies = ['[[tool: make_picture {"prompt": "a castle", "caption": "A castle"}]]', "A castle."]
+    await ag.handle("s", "make a picture of a castle"); third = ag.session("s").pending.data["candidate"]
+    await ag.handle("s", "no")
+    with pytest.raises(FileNotFoundError):
+        ag.images.path("demo", third, candidate=True)
+
+
+@pytest.mark.asyncio
+async def test_moves_say_where_they_really_went_and_wiki_batches_say_what_was_left_out(books):
+    ag, store, llm = make(books)
+    await ag.handle("s", "move paragraph 3 to the start of chapter 1"); r = await ag.handle("s", "yes"); assert "Moved to the start of chapter 1" in r.text
+    await ag.handle("s", "move paragraph 1 after paragraph 2"); r = await ag.handle("s", "yes"); assert "after paragraph 2 of chapter 1" in r.text
+    s = ag.session("s"); ctx = harness.Ctx(sess=s)
+    notes = [{"kind": "characters", "name": f"Person {i}", "note": "x"} for i in range(9)] + [{"kind": "characters", "name": "", "note": "no name"}, {"kind": "nonsense", "name": "Bad", "note": "y"}]
+    out = await ag.toolbox.call("propose_wiki_notes", {"notes": notes}, ctx)
+    assert "Proposed 9 notes" in out and "Person 8" in out and "NOT included" in out and "Bad" in out  # nothing is silently dropped any more
+    assert s.pending.data["batch"][-1]["name"] == "Person 8" and s.pending.ask == "" or "Person 0" in ag._ask_for(s, s.pending)
+
+
+@pytest.mark.asyncio
+async def test_the_book_can_be_saved_by_voice(books):
+    import intent
+    ag, store, _ = make(books)
+    r = await ag.handle("s", "save my book as an e-book"); assert r.download == {"url": "/api/books/demo/export?format=epub", "label": "e-book file"} and "downloads" in r.text
+    r = await ag.handle("s", "export the book"); assert r.download["url"].endswith("format=html") and "PDF" in r.text
+    r = await ag.handle("s", "give me the whole story as a zip"); assert r.download["url"].endswith("format=md")
+    for no in ["save chapter 2 as a file", "tell me the story of the book", "I want a book about dragons"]:
+        assert intent.export_request(no) is None, no
+
+
+@pytest.mark.asyncio
+async def test_save_as_you_go_saves_at_once_reads_it_back_and_stays_undoable(books):
+    ag, store, llm = make(books)
+    r = await ag.handle("s", "save as you go"); assert "straight away" in r.text and ag.prefs is None or True
+    ag.prefs = __import__("prefs").Prefs(ag.s.state_dir)
+    r = await ag.handle("s", "save as you go"); assert ag.prefs.get("auto_save") == "on"
+    llm.replies = [f'[[tool: propose_append {{"text": "{PARA}"}}]]', "Here it is."]
+    r = await ag.handle("s", "next paragraph, the walk down")
+    assert "I saved this to chapter 1" in r.text and PARA in r.text and "Say undo" in r.text and r.pending is None and PARA in store.read_chapter_raw("demo", 1)
+    r = await ag.handle("s", "undo that"); assert PARA not in store.read_chapter_raw("demo", 1)
+    r = await ag.handle("s", "ask me first please"); assert ag.prefs.get("auto_save") == "off"
+    llm.replies = [f'[[tool: propose_append {{"text": "{PARA}"}}]]', "Here it is."]
+    r = await ag.handle("s", "next paragraph, the walk down"); assert r.pending["kind"] == "append" and PARA not in store.read_chapter_raw("demo", 1)
+
+
+@pytest.mark.asyncio
+async def test_a_paragraph_that_contradicts_the_book_is_caught_once_and_then_warned_about(books):
+    ag, store, llm = make(books)
+    for t in ("Bedivere did not ask why, then or ever.", "He carried the sword and said nothing at all."):
+        store.append_paragraph("demo", 1, t)
+    bad = "I asked him why, for the first time, and he did not answer me. Then I carried the sword on down to the water in silence."
+    llm.replies = [f'[[tool: propose_append {{"text": "{bad}"}}]]', "CONFLICT: Bedivere never asked why in chapter 1.", f'[[tool: propose_append {{"text": "{bad}"}}]]',
+                   "CONFLICT: still asks why.", "A draft for you."]
+    r = await ag.handle("s", "next paragraph, he asks why")
+    assert "Continuity problem" in " ".join(str(m) for c in llm.calls for m in c) and r.pending["kind"] == "append" and "A warning: still asks why" in r.text  # warned, never silently saved
+    ag2, store2, llm2 = make(books)
+    assert await ag2.check_continuity(ag2.session("s"), "x") == ""  # a book this short is not checked
+    for t in ("a", "b"):
+        store2.append_paragraph("demo", 1, t + " paragraph text here for the book.")
+    llm2.replies = ["OK"]; assert await ag2.check_continuity(ag2.session("s"), "A new paragraph.") == ""
+    llm2.replies = ["I think it is fine."]; assert await ag2.check_continuity(ag2.session("s"), "A new paragraph.") == ""
+    llm2.replies = ["CONFLICT: the sword was lost in chapter 1."]; assert "sword was lost" in await ag2.check_continuity(ag2.session("s"), "A new paragraph.")
+    ag2.prefs = __import__("prefs").Prefs(ag2.s.state_dir); ag2.prefs.update({"continuity": "off"})
+    llm2.replies = ["CONFLICT: x"]; assert await ag2.check_continuity(ag2.session("s"), "A new paragraph.") == ""
+
+
+@pytest.mark.asyncio
+async def test_one_line_drafts_are_sent_back_and_found_pictures_are_described_by_a_vision_model(books, monkeypatch):
+    ag, store, llm = make(books)
+    ctx = harness.Ctx(sess=ag.session("s"))
+    assert "only one short sentence" in await ag.toolbox.call("propose_append", {"text": "He threw the sword into the lake and it was gone."}, ctx)
+    assert ag.session("s").pending is None
+    ag.library.add("demo", "pool.png", png(400, 300), "Dozmary Pool", "image", "x")
+    llm.replies = ["A grey lake under a low cloudy sky, with brown moor grass at the edge."]
+    out = await ag.toolbox.call("use_library_picture", {"title": "Dozmary Pool", "caption": "Dozmary Pool"}, ctx)
+    assert "A vision model says the picture shows: A grey lake" in out and ag.session("s").pending.data["describe"].startswith("A grey lake")
+    ag.session("s").pending = None
+    llm.replies = ["I'm sorry, I can't see images."]
+    out = await ag.toolbox.call("use_library_picture", {"title": "Dozmary Pool", "caption": "Dozmary Pool"}, ctx)
+    assert "cannot see this picture" in out  # honest when nothing can look at it
+
+
+@pytest.mark.asyncio
+async def test_yes_with_a_question_saves_and_answers_and_a_failed_picture_is_retried_once(books):
+    ag, store, llm = make(books)
+    store.append_paragraph("demo", 1, "x")  # keep the id numbering simple
+    await ag.handle("s", "rewrite chapter 1 paragraph 2 so it is snowing")
+    llm.replies = ["Kay is the foster brother, Sir Ector's son."]
+    r = await ag.handle("s", "yes, and who was Kay again?")
+    assert "Saved" in r.text and "foster brother" in r.text and ag.session("s").pending is None
+
+    class Flaky(FakeImageGen):
+        n = 0
+        async def generate(self, prompt, size="1024x1024"):
+            Flaky.n += 1
+            if Flaky.n == 1: raise RuntimeError("busy")
+            return await super().generate(prompt, size)
+    ag.imagegen = Flaky()
+    llm.replies = ['[[tool: make_picture {"prompt": "a lake", "caption": "A lake"}]]', "A quiet lake."]
+    r = await ag.handle("s", "make a picture of a lake")
+    assert Flaky.n == 2 and r.picture  # the second try worked and the writer never saw the failure
+
+
+def test_more_ways_to_ask_for_a_description_and_the_picture_is_not_a_paragraph_to_add():
+    import intent
+    for s in ["tell me what it looks like", "what is in the picture", "describe the picture to me", "describe it again", "what does it look like?"]:
+        assert intent.describe_request(s), s
