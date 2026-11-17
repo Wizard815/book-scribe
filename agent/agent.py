@@ -241,6 +241,8 @@ class Agent:
                 return done
         if sess.pending:
             kind, rest = intent.confirmation(text)
+            if kind == "yes" and len(rest.split()) > 8 and not intent._CHANGE.search(rest) and sess.pending.kind != "confirm_target":
+                kind = None  # a long remark that merely starts with "right" or "yes" is conversation, not an answer and not a change request
             if kind == "hold":
                 return self._reply(sess, "Okay, I'll wait. Say yes to save it, or tell me what to change.")
             if kind == "yes" and not rest:

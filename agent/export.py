@@ -16,9 +16,16 @@ import images as imgs
 
 
 def book_title(store, book: str) -> str:
-    m = re.search(r"^\s*(?:\*\*)?Title(?:\*\*)?\s*[:\-]\s*(.+?)(?:\.\s|$)", store.bible(book).read("premise"), re.M | re.I)
-    t = m.group(1).strip().strip("\"'“”") if m else ""
-    return t or book.replace("-", " ").replace("_", " ").title()
+    """The title the writer gave, found in the premise ("Title: ...", "The book is called ...", "The title is ..."), else the book's name."""
+    prem = store.bible(book).read("premise")
+    word = r"(?:[\"“]([^\"”\n]{2,100})[\"”]|([^\n]+?)(?:\.\s|\.?$))"  # a quoted title, or the words up to the end of the sentence
+    for rx in (rf"^\s*(?:\*\*)?Title(?:\*\*)?\s*[:\-]\s*{word}", rf"\b(?:called|titled|entitled|named)\s+{word}", rf"\btitle (?:is|will be|should be)\s+{word}"):
+        m = re.search(rx, prem, re.M | re.I)
+        if m:
+            t = (m.group(1) or m.group(2) or "").strip().strip("\"'“”")
+            if 2 <= len(t) <= 100:
+                return t
+    return book.replace("-", " ").replace("_", " ").title()
 
 
 def _chapters(store, book: str):

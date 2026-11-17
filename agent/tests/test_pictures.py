@@ -649,3 +649,31 @@ async def test_a_picture_proposal_always_comes_with_a_description_and_a_long_rem
     llm.replies = ["Noted."]
     r = await ag.handle("s", "Right. The ten chapters are one the walk to the lake, two the boy in the courtyard, three Merlin looks twice")
     assert "Saved to the wiki" not in r.text and "A" not in [n for n in store.bible("demo").characters() if n == "A"]  # a long remark starting with "Right" is not a yes
+
+
+def test_the_books_title_is_found_in_the_premise_however_it_was_worded(books):
+    store = BookStore(books)
+    for prem, want in [("# Premise\n\nThe book is called The Sword That Was Returned.\n\nTold by Bedivere.", "The Sword That Was Returned"), ("Title: The Sword That Was Returned. A retelling.", "The Sword That Was Returned"),
+                       ('The title is "Lake of Glass" and it is short.', "Lake of Glass"), ("# Premise\n\nA story about knights.", "Demo")]:
+        store.bible("demo").write_doc("premise", prem)
+        assert export.book_title(store, "demo") == want, prem
+
+
+@pytest.mark.asyncio
+async def test_regression_last_three_answers_remarks_and_formats(books):
+    import intent
+    assert intent.confirmation("Yes, save that") == ("yes", "") and intent.confirmation("yes save this") == ("yes", "")
+    for s, want in [("Now save it as an e-book", "epub"), ("save it as a web page", "html"), ("download it as a PDF", "html"), ("save it as an epub", "epub")]:
+        assert intent.export_request(s) == want, s
+    for s in ["I read an epub yesterday and liked it", "save chapter 2 as a pdf", "tell me about web pages"]:
+        assert intent.export_request(s) is None, s
+    ag, store, llm = make(books)
+    ctx = harness.Ctx(sess=ag.session("s"))
+    await ag.toolbox.call("propose_wiki_notes", {"notes": [{"kind": "premise", "name": "", "note": "Title: X. Told by Bedivere."}, {"kind": "characters", "name": "A", "note": "x"}]}, ctx)
+    llm.replies = ["Lovely, chapter two it is."]
+    n_before = len(llm.calls)
+    r = await ag.handle("s", "Right. Chapter two will be about the boy Arthur in the courtyard and the sword in the stone, and chapter three is Merlin.")
+    p = ag.session("s").pending
+    assert p is not None and p.kind == "wiki" and "A" not in store.bible("demo").characters() and "Revised" not in r.text and "still holding this for you" in r.text  # answered; the question is still waiting
+    r = await ag.handle("s", "Yes, save that"); assert "Saved to the wiki" in r.text and ag.session("s").pending is None
+    r = await ag.handle("s", "yes but make the second sentence shorter and add the lantern near the end please")  # nothing pending now: ordinary talk
