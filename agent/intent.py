@@ -291,7 +291,7 @@ _CULTURES = [
     ("irish", "irish"), ("scottish", "scottish"), ("scots", "scottish"), ("french", "french"), ("german", "german"), ("italian", "italian"), ("spanish", "spanish"),
     ("russian", "russian"), ("polish", "polish"), ("greek", "greek"), ("japanese", "japanese"), ("chinese", "chinese"), ("korean", "korean"), ("indian", "indian"),
     ("arabic", "arabic"), ("nigerian", "west_african"), ("ghanaian", "west_african"), ("african", "west_african"), ("norse", "norse"), ("viking", "norse"),
-    ("welsh", "welsh"), ("english", "english"), ("british", "english"), ("elvish", "fantasy_elvish"), ("elf", "fantasy_elvish"), ("dwarf", "fantasy_dwarvish"),
+    ("swedish", "swedish"), ("scandinavian", "swedish"), ("welsh", "welsh"), ("english", "english"), ("british", "english"), ("elvish", "fantasy_elvish"), ("elf", "fantasy_elvish"), ("dwarf", "fantasy_dwarvish"),
     ("dwarvish", "fantasy_dwarvish"), ("orc", "fantasy_harsh"), ("goblin", "fantasy_harsh"),
 ]
 
@@ -550,3 +550,27 @@ _CREATIVE = re.compile(r"\b(?:ideas?|suggest|suggestions?|what if|stuck|brainsto
 def is_creative_ask(text: str) -> bool:
     """The writer wants *new material*, not an edit: worth giving the model random sparks."""
     return bool(_CREATIVE.search(norm(text)))
+
+
+_POS_START = re.compile(r"\b(?:(?:at|to|in) the (?:very )?(?:start|beginning|top|front|opening)(?: of (?:the |this )?(?:chapter|page|story)(?: \d+)?)?|before (?:the )?(?:first|1) (?:paragraph|one)|first thing(?: in the chapter)?|on top|(?:at|as) the first)\b")
+_POS_END = re.compile(r"\b(?:(?:at|to|in) the (?:very )?(?:end|bottom|back)(?: of (?:the |this )?(?:chapter|page|story)(?: \d+)?)?|after (?:the )?last (?:paragraph|one))\b")
+_POS_AFTER = re.compile(r"\bafter (?:the )?(?:paragraph|para|part) (\d+)\b|\bafter (?:the )?(\d+)(?:st|nd|rd|th)? (?:paragraph|para)\b")
+_POS_BEFORE = re.compile(r"\bbefore (?:the )?(?:paragraph|para|part) (\d+)\b|\bbefore (?:the )?(\d+)(?:st|nd|rd|th)? (?:paragraph|para)\b")
+_POS_BETWEEN = re.compile(r"\bbetween (?:paragraphs? )?(?:the )?(\d+)(?:st|nd|rd|th)?(?: paragraph)? and (?:paragraph )?(?:the )?(\d+)\b")
+
+
+def picture_position(text: str) -> int | None:
+    """Where in the chapter a picture should go, as the number of paragraphs that come BEFORE it: 0 = the very start, -1 = the end, 3 = after paragraph 3.
+    None when the writer said nothing about it (the end of the chapter is the default). "put it at the start of chapter 1", "after paragraph 2", "before paragraph 3"."""
+    n = norm(text)
+    if (m := _POS_BETWEEN.search(n)):
+        return min(int(m.group(1)), int(m.group(2)))
+    if (m := _POS_AFTER.search(n)):
+        return int(m.group(1) or m.group(2))
+    if (m := _POS_BEFORE.search(n)):
+        return max(0, int(m.group(1) or m.group(2)) - 1)
+    if _POS_START.search(n):
+        return 0
+    if _POS_END.search(n):
+        return -1
+    return None

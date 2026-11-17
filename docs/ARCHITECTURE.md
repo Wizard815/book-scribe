@@ -88,7 +88,7 @@ only in the library (`aliases.json`).
 
 | Tool | What it does |
 |---|---|
-| `random_ideas`, `roll_sparks` | Real randomness for names (17 cultures + fantasy), places, characters, problems, twists, titles... |
+| `random_ideas`, `roll_sparks` | Real randomness for names (18 cultures + fantasy), places, characters, problems, twists, titles... |
 | `search_book`, `read_passage`, `bible_lookup`, `book_info` | Look things up instead of guessing |
 | `show_passage` | Light up a passage on the writer's screen |
 | `set_ui` | Make words bigger, raise contrast, simplify the screen |

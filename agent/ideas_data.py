@@ -83,6 +83,11 @@ NAMES = {
         "male": "Chidi Olumide Kwame Kofi Emeka Tunde Femi Kwabena Obinna Seun Yaw Babatunde".split(),
         "family": "Okonkwo Adeyemi Mensah Boateng Nwosu Balogun Owusu Eze Adebayo Asante Okafor Danso".split(),
     },
+    "swedish": {
+        "female": "Karin Linnea Astrid Ingeborg Greta Maja Sigrid Elsa Britta Signe Hilda Freja".split(),
+        "male": "Anders Nils Gustaf Erik Lars Olof Henrik Axel Sven Per Carl Johan".split(),
+        "family": "Lindqvist Sjoberg Andersson Johansson Nilsson Larsson Eriksson Lundgren Bergstrom Holmberg Ekstrom Wallin".split(),
+    },
     "norse": {
         "female": "Astrid Sigrid Freya Ingrid Solveig Thora Gudrun Ragnhild Helga Ylva Signe Eira".split(),
         "male": "Bjorn Leif Ragnar Sven Eirik Torvald Halvard Gunnar Olaf Ivar Hakon Ulf".split(),
