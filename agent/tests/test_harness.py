@@ -208,7 +208,7 @@ async def test_i_cant_see_it_changes_the_screen_instantly_without_a_model(books)
     r = await agent.handle("s", "I can't see this very well")
     assert r.ui["size"] == 4 and r.ui["contrast"] == "high" and r.ui["bold"] and llm.calls == []
     assert json.loads(prefs.get("look"))["size"] == 4  # remembered across devices and sessions
-    r2 = await agent.handle("s", "bigger")
+    r2 = await agent.handle("s", "make everything bigger")
     assert r2.ui["size"] == 5 and r2.ui["contrast"] == "high"  # builds on the saved look
     assert (await agent.handle("s", "back to normal")).ui == uisettings_default()
 
@@ -222,7 +222,7 @@ def uisettings_default():
 async def test_changing_the_screen_does_not_throw_away_a_proposal_being_reviewed(books):
     agent, store, _, _ = make(books, ["Rewritten."])
     await agent.handle("s", "rewrite chapter 1 paragraph 1")
-    r = await agent.handle("s", "bigger please")
+    r = await agent.handle("s", "make everything bigger please")
     assert r.ui["size"] == 3 and r.pending and r.pending["kind"] == "edit"
     assert (await agent.handle("s", "yes")).changed == ["ch1_s1_p1"]
 

@@ -58,7 +58,7 @@ def is_noise(text: str) -> bool:
 
 # --- confirmations ---------------------------------------------------------------------------------
 _YES_CORE = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "save", "confirm", "ahead", "good", "perfect", "great", "fine", "alright", "correct", "right", "approve", "accept", "keep"}
-_YES_FILL = {"please", "do", "it", "that", "go", "sounds", "looks", "thanks", "thank", "you", "now", "then", "and", "the", "is", "its", "it's", "one", "this", "all", "i", "like", "love", "that's", "thats", "lets", "let's", "sure", "just"}
+_YES_FILL = {"please", "do", "it", "that", "go", "sounds", "looks", "better", "nice", "nicer", "lovely", "wonderful", "excellent", "much", "thanks", "thank", "you", "now", "then", "and", "the", "is", "its", "it's", "one", "this", "all", "i", "like", "love", "that's", "thats", "lets", "let's", "sure", "just"}
 _NO_CORE = {"no", "nope", "nah", "cancel", "discard", "scrap", "never", "dont", "don't", "stop", "reject", "undo"}
 _NO_FILL = {"please", "mind", "that", "it", "save", "use", "thanks", "thank", "you", "this", "one", "do", "not", "now", "i", "dont", "don't", "want"}
 HOLD = re.compile(r"^(not yet|wait|hold on|hang on|one (moment|second|sec)|give me a (moment|second|sec)|let me think)\b")
@@ -165,7 +165,7 @@ _POLITE = r"(?:(?:please|kindly|hey|ok|okay|so|now|and|then)\s+)*(?:(?:can|could
 _EDIT_VERBS = r"(?:change|make|rewrite|rephrase|reword|fix|edit|tweak|soften|tighten|revise|replace|shorten|lengthen|expand|trim|polish|improve|punch up|sharpen|simplify|modernize|modernise)"
 _EDIT_LEAD = re.compile(rf"^{_POLITE}{_EDIT_VERBS}\b")
 _EDIT_CLAUSE = re.compile(rf"[,;]\s*(?:and |then |please )*{_EDIT_VERBS}\b|\b(?:and|then) {_EDIT_VERBS} (?:him|her|them|it|that|this|the)\b")
-_DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|next paragraph|(?:1|one) more (?:paragraph|bit|part)|another (?:paragraph|bit)|more of the story|the next (?:bit|part)|(?:the )?(?:last|final|closing|opening|first|next) paragraph (?:for|of|in) chapter \d+(?= \w)|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
+_DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|next paragraph|(?:1|one) more (?:paragraph|bit|part)|(?:1|one) more(?= (?:the|a|of|about|with|where|when|\w+ing)\b)|(?:and )?(?:then |now )?the (?:part|scene|bit|moment) (?:where|when|in which|with)|another (?:paragraph|bit)|more of the story|the next (?:bit|part)|(?:the )?(?:last|final|closing|opening|first|next) paragraph (?:for|of|in) chapter \d+(?= \w)|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
 _QUESTION = re.compile(r"^(?:so |and |but )?(how|what|why|who|whom|whose|where|should|do you|does|is|are|which|would|am i|did|will it|shall)\b")
 _OPINION = re.compile(r"^(?:i |i'm |im |i've |my )?(?:hate|like|love|dislike|prefer|think|feel|want|wish|need|always|never|don't like|dont like|can't|cant)\b|^i (?:hate|like|love|dislike|prefer|think|feel|wish|really|just|always|never|don't|dont|can't|cant)\b")
 
@@ -430,7 +430,7 @@ def undo_request(text: str) -> bool:
     return len(n.split()) <= 9 and bool(_UNDO.match(n))
 
 
-_DESCRIBE = re.compile(r"^{p}(?:describe|tell me about|tell me what|what(?:'s| is| does)(?: in)?|what do you see in)(?: (?:it|that|this|the))?(?: (?:picture|image|photo|illustration|drawing))?(?: again| to me| for me| please)*(?: look like| looks like| shows| is| in it| on it)?(?: in (?:more )?detail| more)?(?: again| to me| for me| please)*[.?!]?$".replace("{p}", _POLITE))
+_DESCRIBE = re.compile(r"^{p}(?:describe|tell me about|tell me what|what(?:'s| is| does)(?: in)?|what do you see in)(?: (?:it|that|this|the))?(?: (?:picture|image|photo|photograph|illustration|drawing|portrait|painting|snapshot|map))?(?: again| to me| for me| please)*(?: look like| looks like| shows| is| in it| on it)?(?: in (?:more )?detail| more)?(?: again| to me| for me| please)*[.?!]?$".replace("{p}", _POLITE))
 
 _EXPORT_NOUN = re.compile(r"\b(?:book|story|novel|manuscript)\b")
 
@@ -471,7 +471,7 @@ def describe_request(text: str) -> bool:
     """"describe it to me", "what does it look like": the writer wants the picture just shown put into words (not a new paragraph written)."""
     first = re.split(r"[,;.:!?]| because | as | since | I can| I cannot| I can't| I cant", text.strip(), maxsplit=1, flags=re.I)[0]  # "describe it to me again, I can't see it well": the first clause is the request
     n = norm(first)
-    return len(n.split()) <= 9 and bool(_DESCRIBE.match(n)) and bool(re.search(r"\b(?:it|that|this|picture|image|photo|illustration|drawing|look like)\b", n))
+    return len(n.split()) <= 9 and bool(_DESCRIBE.match(n)) and bool(re.search(r"\b(?:it|that|this|picture|image|photo|photograph|illustration|drawing|portrait|painting|snapshot|map|look like)\b", n))
 
 
 _PICTURE_NOUN = r"(?:pictures?|images?|illustrations?|drawings?|paintings?|photos?|photographs?|maps?|sketch(?:es)?|portraits?|cover)"

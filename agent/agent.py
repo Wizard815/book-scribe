@@ -587,6 +587,14 @@ class Agent:
                 return None
             if para.image:
                 return self._reply(sess, f"It is a picture with the caption: {para.image[0]}.")
+        if self.library:  # "describe the photograph": the picture the writer added most recently, in the words the app has for it
+            pics = [m for m in self.library.items(sess.book) if m.get("kind") == "image"]
+            if pics:
+                m = max(pics, key=lambda x: x.get("added", 0))
+                seen = self.library.text(sess.book, m["slug"]).strip() if m.get("status") == "read" else ""
+                if seen:
+                    return self._reply(sess, f"{m['title']}: {seen[:500]}")
+                return self._reply(sess, f"I have your picture, {m['title']}, but I cannot see pictures, so I cannot describe it. If you tell me what is in it, I will keep your words with it and use them in the book.")
         return None
 
     def _export_reply(self, sess: Session, fmt: str) -> Reply:
@@ -1144,11 +1152,23 @@ class Agent:
             sess.history.append({"role": "assistant", "content": "[proposed a new paragraph]"})
             warn = f" A warning: {ctx.warning}" if ctx.warning else ""
             if self._pref("auto_save", "off") == "on" and not ctx.warning:  # a paragraph the app itself flags is never saved behind the writer's back
+                if re.search(r"yes or no|ready for|waiting|say yes|should i|shall i|would you like|your answer|once it'?s saved|after (?:you|it)", lead, re.I):
+                    lead = ""  # it is being saved, not asked about: never say both
                 return self._attach(sess, await self._autosave(sess, ctx.drafted, lead, warn), ctx, "", text)
             reply = self._reply(sess, f"{lead}Here's a draft: {ctx.drafted}{warn} {tail}", await self._speech_text(sess, ctx.drafted, f"{lead}Here's a draft:", f"{warn} {tail}".strip()))
             return self._attach(sess, reply, ctx, "", text)
+        if (not ctx.drafted and not sess.pending and sess.mode == "narrator" and self._looks_like_paragraph(out) and not intent.is_question(text)
+                and re.match(r"^(?:and |ok |okay |now |please )*(?:one more|another|next|more|then|continue|write|and then)\b", intent.norm(text))):
+            sess.history.pop()  # the model wrote prose into the chat instead of proposing it: ask again through the proper draft path, so it is checked, shown and can be saved
+            return await self._propose_draft(sess, text)
         sess.history.append({"role": "assistant", "content": out})
         return self._attach(sess, self._reply(sess, out), ctx, out, text)
+
+    @staticmethod
+    def _looks_like_paragraph(out: str) -> bool:
+        t = out.strip()
+        sentences = re.split(r"(?<=[.!?])\s+", t)
+        return len(t.split()) >= 45 and len(sentences) >= 3 and not t.endswith("?") and "[[" not in t and "?" not in sentences[-1]
 
     async def _propose_edit(self, sess: Session, text: str, target: Paragraph | None = None, sure: bool = True) -> Reply:
         if target is None:
