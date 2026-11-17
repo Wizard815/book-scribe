@@ -288,6 +288,17 @@ class BookStore:
         self._stamp(book)
         return Paragraph(pid, text, chapter, before.scene)
 
+    def delete_paragraphs(self, book: str, ids: list[str]) -> int:
+        """Delete several paragraphs as ONE undoable change."""
+        import uuid
+        self._group, self._gkind = uuid.uuid4().hex, "delete_many"
+        try:
+            for pid in ids:
+                self.delete_paragraph(book, pid)
+        finally:
+            self._group = self._gkind = None
+        return len(ids)
+
     def move_paragraph(self, book: str, paragraph_id: str, to_chapter: int, where="end") -> Paragraph:
         """Move a paragraph: to the end of a chapter (the default), to its start, or just before / after another paragraph. A new chapter is made if it
         is the next number. The whole move is one undo."""
@@ -346,7 +357,7 @@ class BookStore:
         (d / name).write_text(before, encoding="utf-8")
         with open(d / "log.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps({"file": name, "chapter": chapter, "what": what, "paragraph": paragraph_id, "at": int(time.time()), "after": None,
-                                "group": getattr(self, "_group", None)}) + "\n")
+                                "group": getattr(self, "_group", None), "gkind": getattr(self, "_gkind", None)}) + "\n")
         self._pending_hash = (book, hashlib.sha1(before.encode()).hexdigest())
 
     @staticmethod
@@ -409,7 +420,7 @@ class BookStore:
             s.unlink()
             rows.remove(r)
         log.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
-        return {"chapter": last["chapter"], "what": "move" if last.get("group") else last["what"], "paragraph": last.get("paragraph", "")}
+        return {"chapter": last["chapter"], "what": (last.get("gkind") or "move") if last.get("group") else last["what"], "paragraph": last.get("paragraph", "")}
 
     def nth_paragraph(self, book: str, chapter: int, n: int, scene: int | None = None) -> Paragraph | None:
         """n-th paragraph of a chapter (1-based, -1 = last), optionally within one scene. None if out of range."""

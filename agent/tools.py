@@ -96,7 +96,7 @@ def build(agent) -> Toolbox:
             per.append({"chapter": n, "title": store.chapter_title(b, n), "paragraphs": len(ps) - len(pics), "pictures": len(pics), "picture_captions": pics})
         return {
             "per_chapter": per, "chapters": len(store.chapter_numbers(b)), "paragraphs": len(paras), "words": sum(len(p.text.split()) for p in paras if not p.image),
-            "current_chapter": ctx.sess.chapter, "characters": list(bible.characters()),
+            "looking_at_chapter": ctx.sess.chapter, "writing_in_chapter": agent._work(ctx.sess), "characters": list(bible.characters()),
             "open_threads": [t.name for t in bible.threads().values() if str(t.state.get("status", "open")) != "resolved"],
         }
 
@@ -383,16 +383,16 @@ def build(agent) -> Toolbox:
             return "That is only one short sentence. Write a full paragraph of four to seven sentences (unless the writer asked for something short), then propose it again."
         if sess.pending:
             return "A proposal is already waiting for the writer's answer. Do not propose another."
-        issue = await agent.check_continuity(sess, text)
+        issue = await agent.check_continuity(sess, text, sess.last_user)
         if issue and not ctx.continuity_tried:
             ctx.continuity_tried = True
-            return (f"Continuity problem: {issue} Rewrite the paragraph so it agrees with the book and does not retell what is already told, then propose it again.")
+            return (f"Problem: {issue} Rewrite the paragraph so it writes exactly what the writer asked for, agrees with the book and does not retell what is already told, then propose it again.")
         ctx.warning = issue  # still a problem after one rewrite: it is shown, and spoken, to the writer
         nums = store.chapter_numbers(book(ctx))
-        ch = _int(chapter, sess.chapter, 1, 9999) if chapter else sess.chapter
+        ch = _int(chapter, 0, 1, 9999) if chapter else agent._work(sess)
         if ch not in nums and ch != max(nums, default=0) + 1:
-            ch = sess.chapter if sess.chapter in nums or sess.chapter == max(nums, default=0) + 1 else max(nums, default=1)
-        sess.chapter = ch
+            ch = agent._work(sess)
+        sess.chapter = sess.work = ch
         sess.pending = Pending("append", text, ch)
         ctx.drafted = text
         return ("Proposed. The app now shows the paragraph to the writer and asks them yes or no by itself. Do NOT repeat the paragraph in your reply; "
@@ -495,13 +495,19 @@ def build(agent) -> Toolbox:
 
     async def start_chapter(ctx: Ctx, number=None, title=""):
         r = agent._new_chapter_reply(ctx.sess, _int(number, 0, 0, 9999))
-        if title and ctx.sess.chapter in store.chapter_numbers(book(ctx)) and not store.chapter_title(book(ctx), ctx.sess.chapter):
-            store.set_chapter_title(book(ctx), ctx.sess.chapter, title)
+        if title and ctx.sess.work in store.chapter_numbers(book(ctx)) and not store.chapter_title(book(ctx), ctx.sess.work):
+            store.set_chapter_title(book(ctx), ctx.sess.work, title)
         return r.text
 
     async def set_chapter_title(ctx: Ctx, chapter=None, title=""):
         r = agent._title_reply(ctx.sess, _int(chapter, 0, 0, 9999) or None, title)
         return r.text
+
+    async def export_book(ctx: Ctx, format="html"):
+        f = {"web page": "html", "webpage": "html", "html": "html", "pdf": "html", "epub": "epub", "ebook": "epub", "e-book": "epub", "md": "md", "markdown": "md", "zip": "md"}.get(str(format).strip().lower(), "html")
+        label = {"html": "web page file (open it and print it to make a PDF)", "epub": "e-book file", "md": "plain text folder (a zip file)"}[f]
+        ctx.download = {"url": f"/api/books/{book(ctx)}/export?format={f}", "label": label}
+        return f"The app is saving the whole book, with its pictures, as a {label}. Tell the writer it will appear in their downloads."
 
     async def use_skill(ctx: Ctx, name=""):
         s = _skills(agent).get(name.strip().lower())
@@ -570,6 +576,8 @@ def build(agent) -> Toolbox:
           propose_delete, required=("paragraph",)),
         T("start_chapter", "Start a new chapter (the next number) and optionally name it.", {"number": "the next chapter number (optional)", "title": "the chapter's title (optional)"}, start_chapter),
         T("set_chapter_title", "Give a chapter a title.", {"chapter": "chapter number (default: the one on screen)", "title": "the title"}, set_chapter_title, required=("title",)),
+        T("export_book", "Save the whole finished book (all chapters and pictures) as a file for the writer: a web page file (html, can be printed as a PDF), an e-book (epub) or a plain text folder (md). Never say you cannot.",
+          {"format": "html | epub | md"}, export_book),
         T("use_skill", "Load a playbook for a kind of job (see SKILLS).", {"name": "skill name"}, use_skill, required=("name",)),
     ]
     return Toolbox(base + list(agent.addons.tools if agent.addons else []))
