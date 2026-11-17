@@ -69,7 +69,7 @@ def _words(text: str) -> list[str]:
 
 
 _NO_DROP = re.compile(r"^(?:just )?(?:leave|keep) (?:it|that|this|them)?(?: as it was| as it is| as is| the same| alone| how it was| like it was)?(?: please)?$|^(?:forget|drop|cancel|skip|scrap) (?:it|that|this)(?: please)?$|^never ?mind(?: that| it)?$|^(?:as it was|the same|leave it)$|^(?:thanks|thank you|thank|please)$|^not now$|^(?:i )?(?:changed|change) my mind$")
-_CHANGE = re.compile(r"\b(?:make|change|different|instead|another|darker|lighter|bigger|smaller|more|less|without|but|not|no|don'?t|empty|remove|rename|call it|shorter|longer|except|only|wrong|other)\b")
+_CHANGE = re.compile(r"\b(?:leave (?:\w+ ){0,3}out|skip|exclude|ignore|drop|make|change|different|instead|another|darker|lighter|bigger|smaller|more|less|without|but|not|no|don'?t|empty|remove|rename|call it|shorter|longer|except|only|wrong|other)\b")
 _SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| those| these| all| all of them| (?:that|this|the) (?:one|1)| the (?:paragraph|picture))?(?: in| in there| down| to the book| to chapter \d+| into the book| away)?(?: please| now| for me)?|that one|that'?s? (?:the (?:one|1)|fine|good|right|great|perfect|lovely|nice|mine|it)|(?:it'?s|this is) (?:mine|good|great|fine|right|perfect|lovely|nice|the (?:one|1))|do it|mine|(?:the )?(?:one|1)|that|this|it|them|those|these|all|thanks|thank you|great|perfect|lovely|good|nice|fine|right|exactly)(?:,? (?:put it in|use it|add it|save it|keep it|go ahead|please|thank you|thanks))*$")
 
 
@@ -481,7 +481,11 @@ def describe_request(text: str) -> bool:
     """"describe it to me", "what does it look like": the writer wants the picture just shown put into words (not a new paragraph written)."""
     first = re.split(r"[,;.:!?]| because | as | since | I can| I cannot| I can't| I cant", text.strip(), maxsplit=1, flags=re.I)[0]  # "describe it to me again, I can't see it well": the first clause is the request
     n = norm(first)
-    return len(n.split()) <= 9 and bool(_DESCRIBE.match(n)) and bool(re.search(r"\b(?:it|that|this|picture|image|photo|photograph|illustration|drawing|portrait|painting|snapshot|map|look like)\b", n))
+    if len(n.split()) <= 9 and _DESCRIBE.match(n) and re.search(r"\b(?:it|that|this|picture|image|photo|photograph|illustration|drawing|portrait|painting|snapshot|map|look like)\b", n):
+        return True
+    # "describe the railway station picture", "describe the picture in chapter 4 to me": a named picture, never a request for a new paragraph
+    return len(n.split()) <= 12 and bool(re.match(rf"^{_POLITE}(?:describe|tell me about|what(?:'s| is) in|what does)\b", n)) and bool(
+        re.search(r"\b(?:picture|image|photo|photograph|illustration|portrait|snapshot)\b", n)) and not re.search(r"\b(?:make|write|draw|find|add|put|new|another)\b", n)
 
 
 _PICTURE_NOUN = r"(?:pictures?|images?|illustrations?|drawings?|paintings?|photos?|photographs?|maps?|sketch(?:es)?|portraits?|cover)"

@@ -225,8 +225,8 @@ class Agent:
         if items and not sess.pending and (k := intent.pick_number(text)) and 1 <= k <= len(items):
             text = f"Let's use this {sess.last_items_kind}: {items[k - 1]}"
 
-        if intent.describe_request(text) and (r := self._describe_picture(sess)):  # "describe it to me": words for the picture, and a waiting picture keeps waiting
-            return r
+        if intent.describe_request(text):  # "describe it to me": words for the picture, and a waiting picture keeps waiting. Never a new paragraph.
+            return self._describe_picture(sess, text) or self._reply(sess, "I do not know which picture you mean. Say which chapter it is in, or what it shows, and I will describe it.")
         if sess.pending and intent.undo_request(text) and sess.pending.kind not in ("voice",):  # "undo that" while a proposal waits: drop the proposal
             sess.pending = None
             return self._reply(sess, "Okay, I dropped that. Nothing in your book was changed.")
@@ -254,6 +254,12 @@ class Agent:
                 return self._reply(sess, "Okay, I'll wait. Say yes to save it, or tell me what to change.")
             if kind == "yes" and not rest:
                 return await self._accept(sess)
+            if kind == "no" and rest and sess.pending.kind == "picture" and (pos := intent.picture_position(rest)) is not None and len(rest.split()) <= 9 \
+                    and not re.search(r"\b(?:make|different|another|instead|bigger|smaller|new|find)\b", intent.norm(rest)):
+                sess.pending.data["where"] = pos  # "no, put it at the end": the picture is fine, only the place was wrong
+                r = self._reply(sess, f"Okay, it will go in chapter {sess.pending.chapter}{self._where_words(pos) or ', at the end'}. Say yes to put it in the book.")
+                r.picture = self.images.info(sess.book, sess.pending.data["candidate"], sess.pending.data.get("caption", ""), candidate=True)
+                return r
             if kind == "yes" and rest and sess.pending.kind in ("picture", "wiki", "delete", "move", "file", "family", "page") and not intent.is_question(rest) \
                     and not intent._CHANGE.search(rest) and len(rest.split()) <= 5:
                 return await self._accept(sess)  # "yes, put that one in" / "yes, save them" / "yes delete all four": more yes, not a change
@@ -586,7 +592,21 @@ class Agent:
         r.changed = changed
         return r
 
-    def _describe_picture(self, sess: Session) -> Reply | None:
+    def _find_picture(self, sess: Session, text: str) -> Paragraph | None:
+        """The picture a writer means by "the railway station picture" or "the picture in chapter 4": by chapter, by words in its caption, else the newest."""
+        pics = [p for p in self.store.all_paragraphs(sess.book) if p.image]
+        if not pics:
+            return None
+        ref = intent.parse_ref(text)
+        if ref.chapter and (inch := [p for p in pics if p.chapter == ref.chapter]):
+            return inch[-1]
+        words = {w for w in re.findall(r"[a-z]{4,}", intent.norm(text)) if w not in {"describe", "picture", "photo", "photograph", "image", "about", "tell", "please", "chapter", "what", "that", "this", "again", "illustration"}}
+        scored = sorted(((len(words & set(re.findall(r"[a-z]{4,}", p.image[0].lower()))), i, p) for i, p in enumerate(pics)), key=lambda t: (t[0], t[1]), reverse=True)
+        if scored and scored[0][0] > 0:
+            return scored[0][2]
+        return None
+
+    def _describe_picture(self, sess: Session, text: str = "") -> Reply | None:
         """Put a picture into words: the one waiting for a yes, else the one the writer was last looking at."""
         p = sess.pending
         if p and p.kind == "picture":
@@ -594,12 +614,18 @@ class Agent:
             r = self._reply(sess, (d.get("describe") or f"It is a picture with the caption: {d.get('caption', '')}.") + " Say yes to put it in the book, or no for a different one.")
             r.picture = self.images.info(sess.book, d["candidate"], d.get("caption", ""), candidate=True)
             return r
+        named = self._find_picture(sess, text) if text else None
+        if named:
+            sess.chapter, sess.focus = named.chapter, named.id
+            r = self._reply(sess, f"It is the picture in chapter {named.chapter}, called: {named.image[0]}.")
+            r.highlights = self._hl(sess, [named.id])
+            return r
         if sess.focus:
             try:
                 para = self.store.find(sess.book, sess.focus)
             except BookError:
-                return None
-            if para.image:
+                para = None
+            if para is not None and para.image:
                 return self._reply(sess, f"It is a picture with the caption: {para.image[0]}.")
         if self.library:  # "describe the photograph": the picture the writer added most recently, in the words the app has for it
             pics = [m for m in self.library.items(sess.book) if m.get("kind") == "image"]
@@ -1286,7 +1312,19 @@ class Agent:
             sess.pending = None
             return self._reply(sess, "Okay, I won't add it yet. Ask me again with the person and how many generations you want.")
         if p.kind == "wiki" and (p.data or {}).get("batch"):
-            return self._reply(sess, "Say yes to save all of them, or no to drop them. To change one, say no and tell me which.")
+            batch = p.data["batch"]
+            m = re.search(r"\b(?:leave|take|keep)\s+(.+?)\s+(?:out|off)\b|\b(?:without|except|skip|exclude|ignore|drop|not)\s+(.+)$", intent.norm(instruction))
+            gone = {w for w in re.findall(r"[a-z]{3,}", (m.group(1) or m.group(2)) if m else "") if w not in {"the", "page", "pages", "note", "notes", "and", "his", "her"}}
+            kept = [b for b in batch if not (gone & set(re.findall(r"[a-z]{3,}", b["name"].lower())))] if gone else batch
+            if gone and 0 < len(kept) < len(batch):
+                p.data["batch"] = kept
+                p.ask = ""
+                p.ask = self._ask_for(sess, p)
+                left = [b["name"] for b in batch if b not in kept]
+                r = self._reply(sess, f"Okay, I left out {', '.join(left)}. {p.ask} Say yes or no.")
+                r.pending = {"kind": p.kind, "text": p.text, "paragraph_id": p.paragraph_id, "ask": p.ask}
+                return r
+            return self._reply(sess, "Say yes to save all of them, or no to drop them. To leave one out, say which, for example: leave Erik out.")
         if p.kind == "wiki":
             new = (await self.llm.chat([{"role": "system", "content": "Rewrite the note for a story wiki. Plain facts, at most 80 words. Output only the note."},
                                         {"role": "user", "content": f"NOTE:\n{p.text}\n\nChange requested: {instruction}"}], temperature=0.3, max_tokens=250)).strip()

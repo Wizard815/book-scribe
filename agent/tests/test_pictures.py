@@ -822,3 +822,53 @@ async def test_a_flagged_draft_says_it_may_not_be_what_was_asked_and_a_no_goes_b
     assert r.pending and sess.chapter == 1
     r = await ag.handle("s", "no")
     assert sess.chapter == 2 and "back in chapter 2" in r.text
+
+
+# ---- round 10: describing a named picture, "no, put it at the end", "leave Erik out" ---------------------------------------------------------
+def test_describing_a_named_picture_is_a_describe_request_never_a_new_paragraph():
+    for t in ("describe the railway station picture", "describe the picture in chapter 4 to me", "tell me about the trench photo", "describe the trench picture again"):
+        assert intent.describe_request(t), t
+    for t in ("describe the scene where he leaves the farm", "make a picture of the station", "find a picture of the station"):
+        assert not intent.describe_request(t), t
+
+
+@pytest.mark.asyncio
+async def test_describe_the_picture_in_another_chapter_finds_it_and_writes_nothing(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2); store.append_paragraph("demo", 2, "Some writing in chapter two to keep.")
+    n = ag.images.stage("demo", png(), "station"); ag.images.accept("demo", n)
+    store.append_image("demo", 2, n, "An old railway station at dusk")
+    before = [p.id for p in store.all_paragraphs("demo")]
+    ag.session("s").work = 1
+    r = await ag.handle("s", "describe the railway station picture")
+    assert "railway station" in r.text and "chapter 2" in r.text and [p.id for p in store.all_paragraphs("demo")] == before and r.pending is None and not llm.calls
+    r = await ag.handle("s", "describe the picture in chapter 2 to me")
+    assert "railway station" in r.text and not llm.calls
+    r = await ag.handle("s", "describe the zeppelin picture")
+    assert "which picture" in r.text.lower() or "railway" in r.text  # a clear question or the only picture, never a paragraph
+    assert [p.id for p in store.all_paragraphs("demo")] == before
+
+
+@pytest.mark.asyncio
+async def test_no_put_it_at_the_end_moves_the_picture_without_dropping_it(books):
+    ag, store, llm = make(books)
+    llm.replies = ['[[tool: make_picture {"prompt": "a station", "caption": "The station", "after": 1}]]', "A station."]
+    r = await ag.handle("s", "make me a picture of the station")
+    assert r.pending["kind"] == "picture"
+    r = await ag.handle("s", "no, put it at the end")
+    assert r.pending is not None and "at the end" in r.text and r.pending["kind"] == "picture"
+    await ag.handle("s", "yes")
+    assert store.paragraphs("demo", 1)[-1].image
+
+
+@pytest.mark.asyncio
+async def test_yes_but_leave_one_out_leaves_it_out_of_the_wiki_batch(books):
+    ag, store, llm = make(books)
+    from agent import Pending
+    batch = [{"kind": "characters", "name": n, "note": "A person."} for n in ("Nils Lund", "Erik Holmberg", "Freja Lund")]
+    sess = ag.session("s"); sess.pending = Pending("wiki", "", 1, data={"batch": batch}, ask="Save these 3 notes to the wiki: Nils Lund, Erik Holmberg, Freja Lund?")
+    r = await ag.handle("s", "Yes, but leave Erik out")
+    assert "left out Erik Holmberg" in r.text and [b["name"] for b in sess.pending.data["batch"]] == ["Nils Lund", "Freja Lund"]
+    await ag.handle("s", "yes")
+    names = " ".join(str(x) for x in store.bible_names("demo")) if hasattr(store, "bible_names") else ""
+    assert "Erik" not in names
