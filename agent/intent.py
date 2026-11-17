@@ -303,6 +303,14 @@ def new_chapter(text: str) -> int | None:
     return int(m.group(1)) if m.group(1) else 0
 
 
+def title_chapter(text: str) -> tuple[int | None, str] | None:
+    """"call chapter 3 The Lake", "title this chapter 'Dozmary Pool'" -> (chapter number or None for the one on screen, the title)."""
+    m = re.match(rf"(?i)^{_POLITE}(?:call|title|name|rename|label)(?: the)?( (?:this|current|new|next))? chapter(?: (\d+))?[,:]?(?: to| as)?\s+[\"'“]?(.{{2,70}}?)[\"'”]?[.!?]?$", text.strip())
+    if not m or (not m.group(1) and not m.group(2)):  # "call the chapter house" is not naming a chapter
+        return None
+    return (int(m.group(2)) if m.group(2) else None, m.group(3).strip())
+
+
 _DELETE = re.compile(rf"^{_POLITE}(?:delete|remove|cut|scrap|erase|get rid of|take out)\b(.+)$")
 _MOVE_LEAD = re.compile(rf"^{_POLITE}(?:move|put|shift|send)\b(.+)$")
 _TOPWORD = r"(?:start|beginning|top|front)"

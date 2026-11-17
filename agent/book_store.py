@@ -38,12 +38,17 @@ class BookError(Exception):
     pass
 
 
+from images import parse as parse_image  # noqa: E402  (a paragraph may be a picture: see images.py)
+
+
 def clean_paragraph(text: str) -> str:
     """One paragraph, one line, nothing that could be mistaken for file structure.
 
     Model output sometimes contains blank lines (extra paragraphs), a leading '#' or an HTML comment; written raw, those
     would silently split or corrupt the chapter file and orphan later paragraph_ids.
     """
+    if parse_image(text.strip()):
+        return text.strip()  # a picture paragraph is kept exactly as written
     s = re.sub(r"<!--.*?-->", " ", text, flags=re.S)
     s = re.sub(r"\s*\n\s*", " ", s.strip())
     s = re.sub(r"^#+\s*", "", s)
@@ -59,6 +64,11 @@ class Paragraph:
     text: str
     chapter: int
     scene: int
+
+    @property
+    def image(self):
+        """(caption, file name) when this paragraph is a picture."""
+        return parse_image(self.text)
 
 
 def _safe_name(name: str) -> str:
@@ -171,6 +181,33 @@ class BookStore:
         head = f"Chapter {n}: {title}" if title else f"Chapter {n}"
         p.write_text(f'---\nchapter: {n}\ntitle: "{title or f"Chapter {n}"}"\n---\n\n# {head}\n\n## Scene 1\n\n')
         return n
+
+    def append_image(self, book: str, chapter: int, filename: str, caption: str) -> Paragraph:
+        """Put a picture at the end of a chapter (undoable like any change)."""
+        from images import markdown
+        return self.append_paragraph(book, chapter, markdown(caption, filename))
+
+    def chapter_title(self, book: str, n: int) -> str:
+        m = re.search(r'^title:\s*"(.*)"\s*$', self.read_chapter_raw(book, n), re.M)
+        t = m.group(1).strip() if m else ""
+        return "" if t == f"Chapter {n}" else t
+
+    def titles(self, book: str) -> dict[int, str]:
+        return {n: self.chapter_title(book, n) for n in self.chapter_numbers(book)}
+
+    def set_chapter_title(self, book: str, n: int, title: str) -> str:
+        """Give a chapter a name (undoable). Both the file header and the visible heading change."""
+        title = re.sub(r"\s{2,}", " ", re.sub(r"[\"\n\r#]+", " ", title)).strip()[:80]
+        if not title:
+            raise BookError("A title needs some words.")
+        path = self.chapter_path(book, n)
+        raw = _read(path)
+        self._snapshot(book, n, "title", "")
+        raw = re.sub(r'^title:\s*".*"\s*$', f'title: "{title}"', raw, count=1, flags=re.M)
+        raw = re.sub(r"^# Chapter \d+.*$", f"# Chapter {n}: {title}", raw, count=1, flags=re.M)
+        path.write_text(raw)
+        self._stamp(book)
+        return title
 
     def find(self, book: str, paragraph_id: str) -> Paragraph:
         for para in self.all_paragraphs(book):

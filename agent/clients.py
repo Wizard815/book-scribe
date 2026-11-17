@@ -7,7 +7,7 @@ import httpx
 from providers import Profile
 from router import AllTiersFailed, NotConfigured, Router  # noqa: F401  (re-exported for main.py)
 
-DEFAULT_TIMEOUT = {"chat": 180.0, "stt": 120.0, "tts": 120.0, "embed": 60.0}
+DEFAULT_TIMEOUT = {"chat": 180.0, "stt": 120.0, "tts": 120.0, "embed": 60.0, "image": 240.0}
 
 
 def headers(p: Profile) -> dict:
@@ -91,6 +91,33 @@ class TTS(_Base):
             return r.content
 
         return await self.router.call("tts", go)
+
+
+class ImageGen(_Base):
+    """Makes a picture from a description: any OpenAI-compatible /v1/images/generations server (a local Stable Diffusion / Flux box, or a cloud model)."""
+    role = "image"
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.router.reg.chain("image"))
+
+    async def generate(self, prompt: str, size: str = "1024x1024") -> bytes:
+        import base64
+
+        async def go(p: Profile) -> bytes:
+            r = await self.http.post(f"{p.base_url}/v1/images/generations", headers=headers(p), timeout=timeout_for("image", p),
+                                     json={"model": p.model or "image", "prompt": prompt[:1000], "n": 1, "size": size, "response_format": "b64_json"})
+            r.raise_for_status()
+            d = (r.json().get("data") or [{}])[0]
+            if d.get("b64_json"):
+                return base64.b64decode(d["b64_json"])
+            if d.get("url"):  # some servers only return an address on their own host
+                g = await self.http.get(d["url"] if d["url"].startswith("http") else f"{p.base_url}{d['url']}", headers=headers(p), timeout=timeout_for("image", p))
+                g.raise_for_status()
+                return g.content
+            raise ValueError("the image server returned no picture")
+
+        return await self.router.call("image", go)
 
 
 async def list_models(http: httpx.AsyncClient, p: Profile) -> list[str]:

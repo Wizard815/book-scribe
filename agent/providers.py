@@ -21,7 +21,7 @@ from pathlib import Path
 
 from settings import Settings
 
-ROLES = ("chat", "embed", "stt", "tts", "graph")
+ROLES = ("chat", "embed", "stt", "tts", "graph", "image")
 N_TIERS = 3
 DEFAULT_LABELS = ["T1 · Local ROCm", "T2 · CPU fallback", "T3 · Frontier"]
 
@@ -105,10 +105,11 @@ class Registry:
             "embed": (s.embed_url or s.chat_url, s.embed_model),
             "stt": (_strip(s.stt_url, "/v1/audio/transcriptions"), s.stt_model),
             "tts": (_strip(s.tts_url, "/v1/audio/speech"), s.tts_model),
+            "image": (_strip(s.image_url, "/v1/images/generations"), s.image_model),
         }.get(role, ("", ""))  # graph is never seeded: with empty tiers it reuses the chat tiers
         if not url:
             return None
-        label = {"chat": "Chat", "embed": "Embeddings", "stt": "Speech-to-text", "tts": "Text-to-speech"}[role]
+        label = {"chat": "Chat", "embed": "Embeddings", "stt": "Speech-to-text", "tts": "Text-to-speech", "image": "Pictures"}[role]
         return Profile(f"env-{role}", f"{label} (from .env)", "local", url, "", model, s.tts_voice if role == "tts" else "")
 
     def _seed_role(self, role: str, s: Settings) -> bool:

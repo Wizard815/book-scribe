@@ -180,8 +180,9 @@ body.dragging #dropBanner { display: flex; }
   function mountTools() {
     const box = $("siteTools"); box.hidden = false; box.replaceChildren();
     const imp = h("button", { type: "button", id: "importBtn", className: "primary", textContent: "Import" }); imp.onclick = openImport;
+    const save = h("button", { type: "button", id: "saveBookBtn", textContent: "Save book" }); save.onclick = () => { window.location.href = `/api/books/${enc(book())}/export?format=html`; };
     const s = h("button", { type: "button", textContent: "Settings" }); s.onclick = () => openSettings();
-    box.append(imp, s);
+    box.append(imp, save, s);
     const tools = document.querySelector(".tools");
     if (tools && !document.getElementById("libBtn")) {
       const f = h("button", { type: "button", id: "addFileBtn", textContent: "Add file" }); f.onclick = () => $("libFile").click();
@@ -427,6 +428,10 @@ body.dragging #dropBanner { display: flex; }
     const nm = h("input", { id: "newBook", type: "text", maxLength: 60, placeholder: "A name for the new book" }), m1 = h("p", { className: "ok" });
     const mk = h("button", { type: "button", className: "primary", textContent: "Start a new book" });
     mk.onclick = async () => { try { const r = await call("POST", "/api/books", { name: nm.value }); await BS.setBook(r.name); render("books"); } catch (e) { msg(m1, e.message, true); } };
+    const dl = (fmt, label) => { const a = h("a", { className: "btn", href: `/api/books/${enc(book())}/export?format=${fmt}`, textContent: label }); a.setAttribute("download", ""); return a; };
+    out.push(h("div", { className: "sect", textContent: "Save the whole book as a file" }),
+      h("p", { className: "hint", textContent: "The chapters with their titles and all the pictures. The web page file opens anywhere and can be printed or saved as a PDF; the e-book file is for e-readers." }),
+      h("div", { className: "row" }, dl("html", "Web page (pictures inside)"), dl("epub", "E-book (EPUB)"), dl("md", "Plain text folder (zip)")));
     out.push(h("div", { className: "sect", textContent: "A new book" }), h("label", { for: "newBook", className: "sr", textContent: "Name of the new book" }), nm, h("div", { className: "row" }, mk), m1);
     // import
     const target = h("select", { id: "impBook" }, ...info.books.map((n) => h("option", { value: n, textContent: n })));

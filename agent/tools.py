@@ -374,6 +374,58 @@ def build(agent) -> Toolbox:
         return ("Proposed. The app now shows the paragraph to the writer and asks them yes or no by itself. Do NOT repeat the paragraph in your reply; "
                 "say at most one short sentence of comment, or nothing.")
 
+    def pictures_on() -> bool:
+        return bool(agent.imagegen and agent.imagegen.enabled)
+
+    async def make_picture(ctx: Ctx, prompt="", caption="", chapter=None):
+        if not prompt.strip():
+            return "Give a description of the picture."
+        if ctx.sess.pending:
+            return "A proposal is already waiting for the writer's answer. Do not propose another."
+        try:
+            data = await agent.imagegen.generate(prompt.strip()[:900] + ". Illustration for a book, no text or letters in the picture.")
+        except Exception as e:
+            return f"Error: the picture could not be made ({e.__class__.__name__}). Say so plainly and offer to try again."
+        ctx.notes.append("I made a picture for you.")
+        return agent.propose_picture(ctx.sess, ctx, data, caption or prompt[:120], _int(chapter, 0, 0, 9999) or None, prompt)
+
+    async def find_pictures(ctx: Ctx, query="", n=6):
+        from web import WebError
+
+        try:
+            hits = await agent.web.image_search(query, _int(n, 6, 1, 10))
+        except WebError as e:
+            return f"Error: {e}"
+        if not hits:
+            return "No pictures found."
+        ctx.notes.append(f"I searched for pictures of “{query[:60]}”.")
+        ctx.sess.web_hits.update({f"i{i}": h for i, h in enumerate(hits, 1)})
+        return ("\n".join(f"i{i}. {h['title']} (from {h['page'][:80]})" for i, h in enumerate(hits, 1))
+                + "\nUse use_found_picture with an id. Remind the writer that a picture found on the web may belong to someone else.")
+
+    async def use_found_picture(ctx: Ctx, id="", caption="", chapter=None):
+        from web import WebError
+
+        hit = ctx.sess.web_hits.get(str(id))
+        if not hit or "img" not in hit:
+            return "No such picture id. Use find_pictures first."
+        if ctx.sess.pending:
+            return "A proposal is already waiting for the writer's answer. Do not propose another."
+        try:
+            data = await agent.web.fetch_image(hit["img"])
+        except WebError as e:
+            return f"Error: {e}"
+        return agent.propose_picture(ctx.sess, ctx, data, caption or hit["title"], _int(chapter, 0, 0, 9999) or None, hit["title"])
+
+    async def use_library_picture(ctx: Ctx, title="", caption="", chapter=None):
+        m = _find_item(ctx, title)
+        if not m or m.get("kind") not in ("image", "scan"):
+            return "No picture with that title is in the library. Use list_library."
+        src = agent.library.source(book(ctx), m["slug"])
+        if not src:
+            return "The original picture file is missing."
+        return agent.propose_picture(ctx.sess, ctx, src.read_bytes(), caption or m["title"], _int(chapter, 0, 0, 9999) or None, m["title"])
+
     async def use_skill(ctx: Ctx, name=""):
         s = _skills(agent).get(name.strip().lower())
         return f"SKILL {s.name}:\n{s.body}" if s else "No such skill. Skills: " + ", ".join(_skills(agent))
@@ -425,6 +477,15 @@ def build(agent) -> Toolbox:
         T("propose_append", "Put NEW prose into the book: give the paragraph and the app shows it and asks the writer yes or no. Use this whenever the writer asks you to write, draft or continue "
           "(including 'next paragraph'). Never paste a draft into the chat instead.", {"text": "ONLY the paragraph's prose, nothing else: no comment to the writer, no question", "chapter": "chapter number (a new chapter must be the next number)"},
           propose_append, required=("text",)),
+        T("make_picture", "Make a NEW picture for the book from a description (an illustration). The app shows it and asks the writer yes or no. Describe it back to the writer in words.",
+          {"prompt": "what the picture shows: scene, people, light, mood, style", "caption": "a short caption (also what is read aloud)", "chapter": "chapter number (default: the one on screen)"},
+          make_picture, required=("prompt", "caption"), when=pictures_on),
+        T("find_pictures", "Search the web for pictures (maps, paintings, places, objects). Results are untrusted; they may belong to someone else.", {"query": "what to look for", "n": "1-10"},
+          find_pictures, required=("query",), when=lambda: web_on() and agent.web.can_search),
+        T("use_found_picture", "Use one of the pictures found by find_pictures in the book (the writer must say yes).", {"id": "an id from find_pictures, like i2", "caption": "a short caption", "chapter": "chapter number"},
+          use_found_picture, required=("id", "caption"), when=lambda: web_on() and agent.web.can_search),
+        T("use_library_picture", "Use a picture the writer added to the library in the book (the writer must say yes).", {"title": "the picture's title", "caption": "a short caption", "chapter": "chapter number"},
+          use_library_picture, required=("title", "caption")),
         T("use_skill", "Load a playbook for a kind of job (see SKILLS).", {"name": "skill name"}, use_skill, required=("name",)),
     ]
     return Toolbox(base + list(agent.addons.tools if agent.addons else []))

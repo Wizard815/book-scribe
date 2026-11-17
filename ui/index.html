@@ -123,6 +123,10 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
 #chapterLabel { font-size: 20px; font-weight: 700; color: var(--muted); padding: 0 6px; }
 #book { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px 40px; }
 .para { margin: 0 0 1em; padding: 8px 12px; border-left: 6px solid transparent; border-radius: 8px; font-size: min(var(--fs), 13vw); line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; }
+figure.para { margin: 0 0 1em; text-align: center; cursor: pointer; }
+figure.para img { max-width: 100%; max-height: 62vh; border-radius: 10px; border: 2px solid var(--line); background: var(--surface); }
+figure.para figcaption { font-size: calc(var(--fs) * .68); color: var(--muted); font-style: italic; margin-top: 6px; }
+.chatpic { display: block; max-width: 100%; max-height: 34vh; margin: 6px 0 10px; border-radius: 10px; border: 2px solid var(--line); }
 .para.mark { background: var(--mark); border-left-color: var(--accent); }
 .para textarea { width: 100%; min-height: 140px; font: inherit; font-size: min(var(--fs), 13vw); color: var(--fg); background: var(--surface); border: 3px solid var(--accent); border-radius: 12px; padding: 10px; resize: vertical; }
 .para .row { display: flex; gap: 8px; margin-top: 8px; }
@@ -493,6 +497,7 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     family: [["Yes, add them", "yes", ""], ["No", "no", "no"]],
     wiki: [["Yes, save it", "yes", ""], ["No", "no", "no"]],
     delete: [["Yes, delete it", "yes", ""], ["No", "no", "no"]],
+    picture: [["Yes, use it", "yes", ""], ["No", "no", "no"]],
     move: [["Yes, move it", "yes", ""], ["No", "no", "no"]],
   };
   function setPending(p, question) {
@@ -650,6 +655,10 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
     (j.notes || []).forEach((n) => bubble("note", n));
     if (b && j.highlights && j.highlights.length) addRefButtons(b, j.highlights);
     if (b && j.ideas && j.ideas.length) addIdeaButtons(b, j.ideas);
+    if (b && j.picture) {  // a picture waiting for yes or no: shown inside the answer
+      const img = document.createElement("img"); img.className = "chatpic"; img.src = j.picture.url; img.alt = "Picture: " + j.picture.caption;
+      b.el.insertBefore(img, b.body);
+    }
     setPending(j.pending || null, (j.pending && j.pending.ask) || j.text);
     if (j.open_item && window.BS.openLibraryItem) window.BS.openLibraryItem(j.open_item.slug);
     if (j.highlights && j.highlights.length) applyHighlights(j.highlights);
@@ -895,16 +904,26 @@ h1 { margin: 0; font-size: 30px; letter-spacing: -0.01em; }
   async function showChapter(n, focus, flash, marks) {
     if (!state.bookName) return;
     try {
-      const { paragraphs } = await api(`/books/${encodeURIComponent(state.bookName)}/chapters/${n}`);
+      const { paragraphs, title } = await api(`/books/${encodeURIComponent(state.bookName)}/chapters/${n}`);
       if (!state.chapters.includes(n)) state.chapters = (await api(`/books/${encodeURIComponent(state.bookName)}/chapters`)).chapters;  // a chapter that was just started
       state.chapter = n;
       const i = state.chapters.indexOf(n);
-      $("chapterLabel").textContent = `Chapter ${n} of ${state.chapters.length || n}`;
+      $("chapterLabel").textContent = `Chapter ${n} of ${state.chapters.length || n}` + (title ? ` · ${title}` : "");
       $("prevCh").disabled = i <= 0; $("nextCh").disabled = i < 0 || i >= state.chapters.length - 1;
       const box = $("book"); box.replaceChildren();
       for (const p of paragraphs) {
-        const el = document.createElement("p");
         const mi = marks ? marks.indexOf(p.id) : -1;
+        if (p.image) {  // a picture is its own paragraph: the picture, its caption, and tap to hear the caption
+          const fig = document.createElement("figure"), img = document.createElement("img"), cap = document.createElement("figcaption");
+          fig.className = "para fig" + (p.id === focus || mi >= 0 ? " mark" : ""); fig.id = "p_" + p.id; fig.tabIndex = 0;
+          img.src = p.image.url; img.alt = "Picture: " + p.image.caption; img.loading = "lazy"; cap.textContent = p.image.caption;
+          fig.append(img, cap);
+          const hearPic = () => speak("A picture. " + p.image.caption, [{ speaker: "narrator", text: "A picture. " + p.image.caption }]);
+          fig.onclick = hearPic; fig.onkeydown = (e) => { if (e.key === "Enter") hearPic(); };
+          box.append(fig);
+          continue;
+        }
+        const el = document.createElement("p");
         el.className = "para" + (p.id === focus || mi >= 0 ? " mark" : ""); el.id = "p_" + p.id; el.tabIndex = 0; el.textContent = p.text;
         if (marks && marks.length > 1 && mi >= 0) el.dataset.n = String(mi + 1);  // numbered when several are lit
         const hear = () => speak(p.text, [{ speaker: "narrator", text: p.text }]);  // tap a paragraph to hear it
@@ -1129,8 +1148,9 @@ body.dragging #dropBanner { display: flex; }
   function mountTools() {
     const box = $("siteTools"); box.hidden = false; box.replaceChildren();
     const imp = h("button", { type: "button", id: "importBtn", className: "primary", textContent: "Import" }); imp.onclick = openImport;
+    const save = h("button", { type: "button", id: "saveBookBtn", textContent: "Save book" }); save.onclick = () => { window.location.href = `/api/books/${enc(book())}/export?format=html`; };
     const s = h("button", { type: "button", textContent: "Settings" }); s.onclick = () => openSettings();
-    box.append(imp, s);
+    box.append(imp, save, s);
     const tools = document.querySelector(".tools");
     if (tools && !document.getElementById("libBtn")) {
       const f = h("button", { type: "button", id: "addFileBtn", textContent: "Add file" }); f.onclick = () => $("libFile").click();
@@ -1376,6 +1396,10 @@ body.dragging #dropBanner { display: flex; }
     const nm = h("input", { id: "newBook", type: "text", maxLength: 60, placeholder: "A name for the new book" }), m1 = h("p", { className: "ok" });
     const mk = h("button", { type: "button", className: "primary", textContent: "Start a new book" });
     mk.onclick = async () => { try { const r = await call("POST", "/api/books", { name: nm.value }); await BS.setBook(r.name); render("books"); } catch (e) { msg(m1, e.message, true); } };
+    const dl = (fmt, label) => { const a = h("a", { className: "btn", href: `/api/books/${enc(book())}/export?format=${fmt}`, textContent: label }); a.setAttribute("download", ""); return a; };
+    out.push(h("div", { className: "sect", textContent: "Save the whole book as a file" }),
+      h("p", { className: "hint", textContent: "The chapters with their titles and all the pictures. The web page file opens anywhere and can be printed or saved as a PDF; the e-book file is for e-readers." }),
+      h("div", { className: "row" }, dl("html", "Web page (pictures inside)"), dl("epub", "E-book (EPUB)"), dl("md", "Plain text folder (zip)")));
     out.push(h("div", { className: "sect", textContent: "A new book" }), h("label", { for: "newBook", className: "sr", textContent: "Name of the new book" }), nm, h("div", { className: "row" }, mk), m1);
     // import
     const target = h("select", { id: "impBook" }, ...info.books.map((n) => h("option", { value: n, textContent: n })));
