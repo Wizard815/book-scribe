@@ -153,6 +153,7 @@ class ImageStore:
             notes = {}
         if text is None:
             return str(notes.get(name, ""))
+        text = " ".join(s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if not re.search(r"\b(?:chapter \d+|paragraph|should i|shall i|put it in|yes or no|say yes)\b", s, re.I))
         if text.strip():
             notes[name] = text.strip()[:600]
             self._notes_path(book).write_text(json.dumps(notes))

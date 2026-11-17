@@ -311,3 +311,45 @@ async def test_the_model_can_replace_a_saved_paragraph_in_place(books):
     await ag.handle("s", "yes")
     paras = store.paragraphs("demo", 2)
     assert len(paras) == 1 and paras[0].text.startswith("The new paragraph")
+
+
+@pytest.mark.asyncio
+async def test_a_pending_picture_can_be_sent_to_another_chapter_and_place_in_one_answer(books):
+    ag, store, llm = make(books)
+    for n in (2, 3):
+        store.create_chapter("demo", n)
+        for t in ("Alpha here for the book.", "Bravo here for the book."):
+            store.append_paragraph("demo", n, t)
+    llm.replies = ['[[tool: make_picture {"prompt": "a troopship", "caption": "A troopship", "chapter": 2}]]', "A big grey troopship at the dock."]
+    r = await ag.handle("s", "make me a picture of a troopship")
+    assert r.pending["kind"] == "picture" and "chapter 2" in r.pending["ask"]
+    r = await ag.handle("s", "no, put it in chapter 3 after paragraph 1")
+    assert "chapter 3" in r.text and "after paragraph 1" in r.text and r.pending["kind"] == "picture"
+    await ag.handle("s", "yes")
+    paras = store.paragraphs("demo", 3)
+    assert paras[1].image and len(paras) == 3 and not any(p.image for p in store.paragraphs("demo", 2))
+
+
+@pytest.mark.asyncio
+async def test_a_new_picture_goes_to_the_chapter_the_writer_turned_to(books):
+    ag, store, llm = make(books)
+    for n in (2, 3):
+        store.create_chapter("demo", n)
+        store.append_paragraph("demo", n, "Alpha here for the book.")
+    ag.session("s").work = 2
+    llm.replies = ['[[tool: make_picture {"prompt": "a station", "caption": "A station"}]]', "A station."]
+    r = await ag.handle("s", "make me a picture of a station", viewing=3)
+    assert r.pending["kind"] == "picture" and "chapter 3" in r.pending["ask"]
+    ag.session("s").pending = None
+    ag.session("s").screen_wins = False
+    ag.session("s").work = 2; ag.session("s").chapter = 2
+    llm.replies = ['[[tool: make_picture {"prompt": "a station", "caption": "A station"}]]', "A station."]
+    r = await ag.handle("s", "make me a picture of a station", viewing=3)  # still on 3, nothing new: where they were writing
+    assert r.pending and "chapter 2" in r.pending["ask"]
+
+
+def test_a_remembered_description_drops_old_placement_talk(books):
+    import images as imgs
+    st = imgs.ImageStore(__import__("book_store").BookStore(books))
+    st.note("demo", "x.jpg", "A grey ship at a dock. I placed it in chapter 5 after the first paragraph. Should I put it in?")
+    assert st.note("demo", "x.jpg") == "A grey ship at a dock."

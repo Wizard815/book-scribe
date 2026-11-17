@@ -401,6 +401,7 @@ def build(agent) -> Toolbox:
             ch = agent._work(sess)
         sess.chapter = sess.work = ch
         sess.pending = Pending("append", text, ch)
+        sess.screen_wins = False
         ctx.drafted = text
         return ("Proposed. The app now shows the paragraph to the writer and asks them yes or no by itself. Do NOT repeat the paragraph in your reply; "
                 "say at most one short sentence of comment, or nothing.")

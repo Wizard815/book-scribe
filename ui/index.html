@@ -650,7 +650,7 @@ figure.para figcaption { font-size: calc(var(--fs) * .72 * min(var(--zoom), 1.8)
     } catch (e) { b.el.remove(); throw e; }
   }
   async function askServer(text) {
-    const r = await siteFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, session_id: state.sid, book: state.bookName }) });
+    const r = await siteFetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, session_id: state.sid, book: state.bookName, viewing: state.chapter || null }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(j.detail || "server"), { code: "server", detail: j.detail });
     return j;
@@ -731,6 +731,7 @@ figure.para figcaption { font-size: calc(var(--fs) * .72 * min(var(--zoom), 1.8)
     try {
       const fd = new FormData(); fd.append("audio", blob, opts.name || "speech.webm"); fd.append("session_id", state.sid); fd.append("book", state.bookName || "");
       if (opts.interrupted) fd.append("interrupted", "1");
+      if (state.chapter) fd.append("viewing", String(state.chapter));
       const r = await siteFetch("/api/voice", { method: "POST", body: fd });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw Object.assign(new Error("voice"), { code: "server", detail: j.detail });

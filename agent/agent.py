@@ -86,6 +86,8 @@ class Session:
     last_ideas: dict | None = None  # the last random-idea request, so "more" can repeat it
     web_hits: dict = field(default_factory=dict)  # last web search results by id
     work: int = 0  # the chapter new writing goes into (set by "start / go to chapter", by naming a chapter, by saving): looking at other paragraphs never moves it
+    last_viewing: int | None = None  # the chapter the page last said it was showing
+    screen_wins: bool = False  # the writer navigated since they last wrote: new pictures go to the chapter on screen, not the one being written
     last_dropped: object = None  # the proposal that was put aside when the writer moved on, so "bring it back" can restore it
     say_first: str = ""  # something to say before the next reply (a dropped proposal)
     last_user: str = ""  # what the writer last asked for, so a draft can be checked against it
@@ -180,10 +182,14 @@ class Agent:
         return sess
 
     # ------------------------------------------------------------------
-    async def handle(self, sid: str, user_text: str, book: str | None = None, via: str = "typed", interrupted: bool = False) -> Reply:
+    async def handle(self, sid: str, user_text: str, book: str | None = None, via: str = "typed", interrupted: bool = False, viewing: int | None = None) -> Reply:
         """One turn. Everything said is written to the journal (so nothing is ever lost when working memory is trimmed)."""
         sess = self.session(sid, book)
         sess.via, sess.interrupted = via, interrupted
+        if viewing and viewing != sess.last_viewing:  # the writer turned to another chapter: what they say next is about the chapter they are looking at
+            sess.last_viewing, sess.screen_wins = viewing, True
+            if viewing in self.store.chapter_numbers(sess.book):
+                sess.chapter = viewing
         reply = await self._handle(sid, user_text, book)
         if self.journal and reply.text and user_text.strip():
             sess = self.session(sid, book)
@@ -263,23 +269,33 @@ class Agent:
             kind, rest = intent.confirmation(text)
             if kind == "yes" and len(rest.split()) > 8 and not intent._CHANGE.search(rest) and sess.pending.kind != "confirm_target":
                 kind = None  # a long remark that merely starts with "right" or "yes" is conversation, not an answer and not a change request
-            if sess.pending.kind == "picture" and kind != "no" and (pos := intent.picture_position(text)) is not None and not intent.is_question(text):
-                sess.pending.data["where"] = pos  # "put it at the start of the chapter" / "yes, after paragraph 2": placing it is part of the answer
-                if kind == "yes":
-                    return await self._accept(sess)
-                r = self._reply(sess, f"Okay, it will go in chapter {sess.pending.chapter}{self._where_words(pos) or ', at the end'}. Say yes to put it in the book.")
-                r.picture = self.images.info(sess.book, sess.pending.data["candidate"], sess.pending.data.get("caption", ""), candidate=True)
-                return r
+            if sess.pending.kind == "picture" and not intent.is_question(text):
+                said = rest if kind else text
+                nums_ = self.store.chapter_numbers(sess.book)
+                ch_new = intent.parse_ref(said).chapter if re.search(r"\bchapter \d+", intent.norm(said)) else None
+                if ch_new is not None and not (ch_new in nums_ or ch_new == max(nums_, default=0) + 1):
+                    ch_new = None
+                pos = intent.picture_position(said)
+                other = re.search(r"\b(?:make|different|another|instead|bigger|smaller|new|find|draw)\b", intent.norm(said))
+                if (ch_new is not None or pos is not None) and not other and len(said.split()) <= 14:
+                    # "no, put it in chapter 4 after paragraph 1" / "yes, at the end": where it goes is part of the answer (a "no" about the place keeps the picture)
+                    if ch_new is not None:
+                        sess.pending.chapter = sess.work = ch_new
+                        sess.pending.data["where"] = pos
+                    elif pos is not None:
+                        sess.pending.data["where"] = pos
+                    sess.pending.ask = ""
+                    sess.pending.ask = self._ask_for(sess, sess.pending)
+                    if kind == "yes":
+                        return await self._accept(sess)
+                    r = self._reply(sess, f"Okay, it will go in chapter {sess.pending.chapter}{self._where_words(sess.pending.data.get('where')) or ', at the end'}. Say yes to put it in the book.")
+                    r.pending = {"kind": "picture", "text": sess.pending.text, "paragraph_id": None, "ask": sess.pending.ask}
+                    r.picture = self.images.info(sess.book, sess.pending.data["candidate"], sess.pending.data.get("caption", ""), candidate=True)
+                    return r
             if kind == "hold":
                 return self._reply(sess, "Okay, I'll wait. Say yes to save it, or tell me what to change.")
             if kind == "yes" and not rest:
                 return await self._accept(sess)
-            if kind == "no" and rest and sess.pending.kind == "picture" and (pos := intent.picture_position(rest)) is not None and len(rest.split()) <= 9 \
-                    and not re.search(r"\b(?:make|different|another|instead|bigger|smaller|new|find)\b", intent.norm(rest)):
-                sess.pending.data["where"] = pos  # "no, put it at the end": the picture is fine, only the place was wrong
-                r = self._reply(sess, f"Okay, it will go in chapter {sess.pending.chapter}{self._where_words(pos) or ', at the end'}. Say yes to put it in the book.")
-                r.picture = self.images.info(sess.book, sess.pending.data["candidate"], sess.pending.data.get("caption", ""), candidate=True)
-                return r
             if kind == "yes" and rest and sess.pending.kind in ("picture", "wiki", "delete", "move", "file", "family", "page") and not intent.is_question(rest) \
                     and not intent._CHANGE.search(rest) and len(rest.split()) <= 5:
                 return await self._accept(sess)  # "yes, put that one in" / "yes, save them" / "yes delete all four": more yes, not a change
@@ -316,7 +332,7 @@ class Agent:
                     r = await self._converse(sess, text)
                 sess.pending = keep
                 r.pending = {"kind": keep.kind, "text": keep.text, "paragraph_id": keep.paragraph_id, "ask": keep.ask}
-                if keep.ask:
+                if keep.ask and keep.kind != "page":
                     beg = f" It begins: {excerpt(keep.text, 10)}" if keep.kind in ("append", "edit") and keep.text else ""
                     reminder = f"I am still holding this for you: {keep.ask}{beg} Say yes or no."
                     r.text = f"{r.text} {reminder}".strip()
@@ -798,7 +814,8 @@ class Agent:
         if sess.pending and not self._supersede(sess):
             return "A proposal is already waiting for the writer's answer. Do not propose another."
         nums = self.store.chapter_numbers(sess.book)
-        ch = chapter or self._work(sess)
+        named = intent.parse_ref(sess.last_user).chapter if re.search(r"\bchapter \d+", intent.norm(sess.last_user)) else None
+        ch = named or chapter or (sess.chapter if sess.screen_wins and sess.chapter in nums else self._work(sess))  # the chapter the writer named, else the one they turned to, else where they are writing
         if ch not in nums and ch != max(nums, default=0) + 1:
             ch = self._work(sess)
         try:
@@ -1393,6 +1410,7 @@ class Agent:
         nums = self.store.chapter_numbers(sess.book)
         if asked and (asked in nums or asked == (max(nums, default=0) + 1)):
             sess.work = asked  # "write paragraph 2 of chapter 3": the chapter the writer named (a new chapter is made on save)
+        sess.screen_wins = False
         sess.chapter = sess.work = self._work(sess)  # otherwise the chapter being written in, not whatever paragraph was last looked at
         recent = "\n\n".join(p.text for p in self.store.paragraphs(sess.book, sess.chapter)[-4:]) if sess.chapter in self.store.chapter_numbers(sess.book) else ""
         ctx = harness.Ctx(sess=sess)
