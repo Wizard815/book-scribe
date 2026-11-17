@@ -365,7 +365,7 @@ async def test_a_paragraph_that_contradicts_the_book_is_caught_once_and_then_war
     ag, store, llm = make(books)
     for t in ("Bedivere did not ask why, then or ever.", "He carried the sword and said nothing at all."):
         store.append_paragraph("demo", 1, t)
-    bad = "I asked him why, for the first time, and he did not answer me. Then I carried the sword on down to the water in silence."
+    bad = "Bedivere asked him why, for the first time, and the old man did not answer. Then he carried the sword on down to the water in silence."
     llm.replies = [f'[[tool: propose_append {{"text": "{bad}"}}]]', "CONFLICT: Bedivere never asked why in chapter 1.", f'[[tool: propose_append {{"text": "{bad}"}}]]',
                    "CONFLICT: still asks why.", "A draft for you."]
     r = await ag.handle("s", "next paragraph, he asks why")

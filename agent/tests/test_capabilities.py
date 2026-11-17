@@ -240,3 +240,19 @@ async def test_a_wordy_wikipedia_query_is_retried_with_shorter_words():
     w = webmod.Web(wikipedia_url="https://wiki.test", http=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     got = await w.wikipedia("1918 flu in the army camps")
     assert got and got["title"] == "Spanish flu" and len(calls) >= 2
+
+
+@pytest.mark.asyncio
+async def test_a_paragraph_in_the_wrong_person_is_sent_back_once_and_long_drafts_are_read_from_the_start(books):
+    ag, store, llm = make(books)
+    store.bible("demo").write("premise", "A family history told in the third person by a storyteller who never appears.") if hasattr(store.bible("demo"), "write") else None
+    first = "I remember my great-uncle standing in the field. I could see the wheat and I loved it."
+    third = ("He stood in the field at the edge of the farm. The wheat ran to the road in gold waves. His father called him in for supper, twice. "
+             "The lamp was lit in the kitchen before he came. He ate quickly and said nothing about the day.")
+    llm.replies = [f'[[tool: propose_append {{"text": "{first} The sun went down behind the barn."}}]]', f'[[tool: propose_append {{"text": "{third}"}}]]', "Here."]
+    r = await ag.handle("s", "next paragraph, the field")
+    assert r.pending and "gold waves" in r.text and "I remember" not in r.text
+    spoken = " ".join(x["text"] for x in r.speech)
+    assert "only the start" in spoken and "ate quickly" not in spoken
+    r = await ag.handle("s", "read it all")
+    assert "ate quickly" in " ".join(x["text"] for x in r.speech) and r.pending
