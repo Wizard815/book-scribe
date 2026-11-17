@@ -8,16 +8,16 @@ title: "Camp Doniphan"
 ## Scene 1
 
 <!-- paragraph_id: ch3_s1_p1 -->
-Camp Doniphan rose out of the Oklahoma prairie like a town that had been put up overnight. When Everett stepped down from the train he walked into a haze of dust, kicked up by boots and wagon wheels and the wind that never seemed to rest. Row after row of tents ran off across the flat ground, their canvas gone the color of the earth, with the first rough wooden barracks still being hammered together among them. Men called to one another in a dozen accents, and Everett heard Missouri voices and Kansas ones, and none of them spoke Swedish. He shouldered his bag, tasted grit on his tongue, and understood that this was where he would become a soldier.
-
-<!-- paragraph_id: ch3_s1_p2 -->
-The drilling began at once. Everett and the other new men marched up and down the dusty parade ground with wooden rifles on their shoulders, since the real ones had not yet come, and a sergeant barked at them until their steps fell together. In the weeks that followed they dug trenches in the hard ground, practiced with the bayonet and learned how the guns and the infantry were meant to work together. Everett was a farm boy and used to long days, so the work did not frighten him, though his hands blistered in new places. At night he lay on his cot in the tent and listened to the wind pulling at the canvas.
-
-<!-- paragraph_id: ch3_s1_p3 -->
-One evening Everett borrowed a pencil and wrote home on a sheet of paper balanced on his knee. "Dear Mother and Father," he wrote. "I am well and the food is plenty. It is hot here and the dust gets in everything, but I am getting used to it. The men are good fellows, Kansas and Missouri both. We drill all day and I sleep like a stone at night. Please do not worry, Mother. Tell Linnea I am thinking of her. Your son, Everett." He read it over twice, saw that he had left out almost everything, and decided that was how his parents would want it.
-
-<!-- paragraph_id: ch3_s1_p4 -->
-When winter came to Oklahoma it came hard, with a cold wind off the plains that found every crack in the barracks walls. The men slept in their coats and socks, and the stove at the end of the room never kept up with the cold. On those nights Everett sometimes took out his Bible and opened it carefully to the place where the pressed prairie flower lay. It had gone flat and papery and pale, but it still held its shape, and it still smelled faintly of Kansas. He did not read much, only looked at it for a while in the dim light, then closed the book and tucked it back under his blanket.
+Camp Doniphan was dust. It rose from the parade ground under a thousand marching boots and settled in the mess lines, in the blankets, in the coffee. Everett stepped down from the train with his canvas bag and his mother's Bible and found rows upon rows of canvas tents stretching away across the flat Oklahoma ground, and hundreds of boys from Kansas and Missouri milling between them, farm boys and clerks and store boys, all of them shouting to each other in the same flat plains voices he had grown up with.
 
 <!-- paragraph_id: ch3_s1_p5 -->
-![The training camp, Camp Doniphan, 1917](image:camp-doniphan-fort-sill-1917-army-traini-14dad71a.jpg)
+![Tents at an army training camp, 1917](image:camp-doniphan-1917-army-training-camp-te-ca4b9900.jpg)
+
+<!-- paragraph_id: ch3_s1_p2 -->
+Winter came to the camp early, and the drilling went on through it. Everett marched in the dark before breakfast with his breath smoking and his fingers too numb to feel the rifle, and learned to load it, aim it and fire it at paper targets on the far hillside, one careful round at a time. A sergeant with a voice like a barn door followed the line shouting at every mistake, and most of all at Everett, whose boots would not keep step. "Lund!" he bellowed. "You march like a man behind a plough!" Everett said nothing, and lifted his boots higher.
+
+<!-- paragraph_id: ch3_s1_p3 -->
+On Sunday, when the drilling stopped, Everett sat on his bunk with a borrowed pencil and wrote a letter to his mother. He told her the food was plentiful and the boys were decent, and he did not tell her about his cold hands or the sergeant. What he could not put into words was how he missed the quiet of the farm: the hush of the yard before sunrise, the wind moving through the wheat, the whole wide stillness that he had never known to be a thing until the camp's noise took it away. He wrote "Your son, Everett," and sat a while looking at the line.
+
+<!-- paragraph_id: ch3_s1_p4 -->
+The night before the train east, the barracks was loud with boys packing and joking, and Everett slipped outside to sit alone on an upturned crate. He opened the Bible on his knee and found the pressed prairie flower lying between the pages, flat and brittle, its colour faded to the pale shade of old paper. He held it by its stem, hardly breathing, as though it might crumble at a word. It still smelled faintly of the pasture at home, and for a moment, under the cold Oklahoma stars, he was back there.
