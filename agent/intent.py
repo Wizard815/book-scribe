@@ -129,6 +129,7 @@ class Ref:
     scene: int | None = None
     para: int | None = None      # 1-based; -1 = last
     whole_book: bool = False     # "the opening line of the book"
+    picture: bool = False        # "the picture in chapter 3": the writer means the picture, not a paragraph of writing
 
     @property
     def explicit(self) -> bool:
@@ -157,6 +158,10 @@ def parse_ref(text: str) -> Ref:
         r.para = 1
     if r.para is not None and r.chapter is None and re.search(r"\b(of|in) the (book|novel|story)\b|\bopening\b|\bvery first\b", n):
         r.chapter, r.whole_book = 1, True
+    if re.search(r"\b(?:the |that |this |my |its |last |first )?(?:picture|photo|photograph|image|illustration|drawing)\b", n) and not re.search(rf"\b{_PARA_WORD} \d+\b", n):
+        r.picture = True  # "delete the picture in chapter 3" (never "paragraph 2")
+        if r.para is None:
+            r.para = -1 if re.search(r"\blast (?:picture|photo|image)\b", n) else 1
     return r
 
 
@@ -179,6 +184,9 @@ _VERB_ANYWHERE = re.compile(rf"\b{_EDIT_VERBS}\b")
 _LOCATOR_OPEN = re.compile(r"^(?:in|at|when|where|during|after|before|on|for|the|that|this|chapter|paragraph|scene)\b")
 
 
+_WIKI_TALK = re.compile(r"\b(?:wiki|story notes?|story bible|bible|character pages?|notes? (?:for|on|about)|pages? for|save (?:notes?|them|these)|story pages?)\b")
+
+
 def is_edit(text: str) -> bool:
     """An imperative aimed at existing text. Transcripts rarely have commas, so "in chapter 3 when they meet make him
     nervous" counts: an edit verb after a location phrase. Questions and opinions ("how do I make...", "I hate it when
@@ -186,6 +194,8 @@ def is_edit(text: str) -> bool:
     n = norm(text)
     if is_question(text) or _OPINION.match(n) or _NEGATIVE.match(n):
         return False
+    if _WIKI_TALK.search(n) and parse_ref(text).para is None:
+        return False  # "make wiki pages for the father, the farm and the camp" is about the story wiki, not an edit of a paragraph
     if _EDIT_LEAD.match(n) or _EDIT_CLAUSE.search(text.lower()):
         return True
     return bool(_VERB_ANYWHERE.search(n) and (_LOCATOR_OPEN.match(n) or parse_ref(text).chapter is not None))

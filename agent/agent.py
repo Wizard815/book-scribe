@@ -267,7 +267,11 @@ class Agent:
                 if sess.pending.kind == "picture":
                     self.images.discard(sess.book, (sess.pending.data or {}).get("candidate", ""))
                 self.memory.add(f"Writer rejected a proposed {sess.pending.kind}: '{sess.pending.text[:120]}'", "preference")
+                was = sess.pending.kind
                 sess.pending = None
+                if was in ("edit", "confirm_target") and self._work(sess) != sess.chapter:  # the look at an older chapter ends with the "no": back to where the writing is
+                    sess.chapter = self._work(sess)
+                    return self._reply(sess, f"Okay, I left it as it was. I'm back in chapter {sess.chapter}, where you are writing. What next?")
                 return self._reply(sess, "Okay, dropped it. What would you like instead?")
             if kind and rest and sess.pending.kind != "confirm_target":
                 return await self._revise(sess, rest)  # "yes but make it shorter" / "no, make it longer": never save or drop blindly
@@ -426,6 +430,9 @@ class Agent:
         seen: dict[int, int] = {}
         lines = []
         for p in paras:  # numbered inside each chapter, the way the writer says it ("paragraph 3 of chapter 2")
+            if p.image:
+                lines.append(f"chapter {p.chapter} picture (not numbered): {imgs.plain(p.text)[:60]}")
+                continue
             seen[p.chapter] = seen.get(p.chapter, 0) + 1
             lines.append(f"chapter {p.chapter} paragraph {seen[p.chapter]}: {' '.join(imgs.plain(p.text).split()[:14])}…")
         lines = lines[-limit:]
@@ -514,7 +521,7 @@ class Agent:
         ch = chapter or sess.chapter
         if ch not in self.store.chapter_numbers(sess.book):
             return self._reply(sess, f"There is no chapter {ch}.")
-        paras = self.store.paragraphs(sess.book, ch)
+        paras = [p for p in self.store.paragraphs(sess.book, ch) if not p.image]
         picked = []
         for k in numbers:
             i = k - 1 if k > 0 else len(paras) + k
@@ -687,9 +694,13 @@ class Agent:
     def _place_image(self, sess: Session, chapter: int, name: str, caption: str, where: int | None) -> Paragraph:
         """The picture goes after `where` paragraphs (0 = the very start); anywhere else, or nothing said, it goes at the end of the chapter."""
         paras = self.store.paragraphs(sess.book, chapter)
-        if where is None or where < 0 or where >= len(paras) or not paras:
+        texts = [i for i, p in enumerate(paras) if not p.image]  # "after paragraph 2" counts the writing, not other pictures
+        if where is None or where < 0 or not paras:
             return self.store.append_image(sess.book, chapter, name, caption)
-        return self.store.insert_paragraph(sess.book, chapter, imgs.markdown(caption, name), before_id=paras[where].id)
+        at = 0 if where == 0 else (texts[where - 1] + 1 if where <= len(texts) else len(paras))
+        if at >= len(paras):
+            return self.store.append_image(sess.book, chapter, name, caption)
+        return self.store.insert_paragraph(sess.book, chapter, imgs.markdown(caption, name), before_id=paras[at].id)
 
     @staticmethod
     def _where_words(where: int | None) -> str:
@@ -890,7 +901,7 @@ class Agent:
     def _by_ref(self, sess: Session, ref: intent.Ref) -> Paragraph | None:
         if ref.para is None:
             return None
-        return self.store.nth_paragraph(sess.book, ref.chapter or sess.chapter, ref.para, ref.scene)
+        return self.store.nth_paragraph(sess.book, ref.chapter or sess.chapter, ref.para, ref.scene, picture=ref.picture)
 
     async def _resolve(self, sess: Session, text: str) -> tuple[Paragraph | None, bool]:
         """-> (paragraph, sure). sure=False means "this is my best guess; read it back before touching it".
@@ -926,7 +937,9 @@ class Agent:
 
     def _where(self, sess: Session, para: Paragraph) -> str:
         """How the writer counts: the paragraph's position in the chapter, not its within-scene id suffix."""
-        ids = [p.id for p in self.store.paragraphs(sess.book, para.chapter)]
+        if para.image:
+            return f"the picture in chapter {para.chapter}"
+        ids = [p.id for p in self.store.paragraphs(sess.book, para.chapter) if not p.image]  # pictures are not counted: the writer counts the writing
         return f"chapter {para.chapter}, paragraph {ids.index(para.id) + 1}"
 
     # --- LLM helpers -----------------------------------------------------
@@ -1172,6 +1185,8 @@ class Agent:
             lead = (out.strip() + " ") if out.strip() and len(out.strip()) <= 220 and out.strip() != "I'm not sure what to say to that. Could you tell me a little more?" else ""
             sess.history.append({"role": "assistant", "content": "[proposed a new paragraph]"})
             warn = f" A warning: {ctx.warning}" if ctx.warning else ""
+            if ctx.warning:
+                tail = "It may not be what you asked for. Say yes to keep it anyway, or tell me what to change."
             if self._pref("auto_save", "off") == "on" and not ctx.warning:  # a paragraph the app itself flags is never saved behind the writer's back
                 if re.search(r"yes or no|ready for|waiting|say yes|should i|shall i|would you like|your answer|once it'?s saved|after (?:you|it)", lead, re.I):
                     lead = ""  # it is being saved, not asked about: never say both
@@ -1249,6 +1264,8 @@ class Agent:
         tail = f"Should I add it to chapter {sess.chapter}?" if sess.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.chapter} with it?"
         issue = ctx.warning if ctx.drafted else await self.check_continuity(sess, new, text)  # a paragraph proposed through the tool was already checked there
         warn = f" A warning: {issue}" if issue else ""
+        if issue:
+            tail = "It may not be what you asked for. Say yes to keep it anyway, or tell me what to change."
         if self._pref("auto_save", "off") == "on" and not issue:
             return self._attach(sess, await self._autosave(sess, new, "", warn), ctx, "", text)
         reply = self._reply(sess, f"Here's a draft: {new}{warn} {tail}", await self._speech_text(sess, new, "Here's a draft:", f"{warn} {tail}".strip()))

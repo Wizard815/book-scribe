@@ -127,6 +127,16 @@ class Ideas:
         allowed = KINDS[kind]["options"]
         opts = {k: v for k, v in opts.items() if k in allowed and v in allowed[k]}
         fits = [c for c in (fits or []) if c in CULTURES]
+        if kind in ("name", "character") and n >= 2 and opts.get("gender", "any") == "any":  # a handful of names should include women AND men
+            first = self.rng.choice(["female", "male"]); other = "male" if first == "female" else "female"
+            out: list[str] = []
+            for i in range(n):
+                g = first if i % 2 == 0 else other
+                o = {**opts, "gender": g}
+                if fits and o.get("culture", "any") == "any":
+                    o["culture"] = self.rng.choice(fits)
+                out.append(self._fresh(lambda o=o: self.name(**o) if kind == "name" else self.character(**o)))
+            return out
         if fits and kind in ("name", "character") and opts.get("culture", "any") == "any":  # the book's own setting beats pure chance
             make_fit = {"name": lambda: self.name(self.rng.choice(fits), opts.get("gender", "any")), "character": lambda: self.character(self.rng.choice(fits), opts.get("gender", "any"))}[kind]
             return [self._fresh(make_fit) for _ in range(n)]
