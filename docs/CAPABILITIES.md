@@ -43,11 +43,11 @@ see `examples/grandpa-lindsborg/`). A line is only ticked when it has passed. Wh
 - [U/E] Remembers how the book is to be told; which chapters have pictures; what is saved.
 - [U/E] Save the whole book as an e-book and a web page with its pictures.
 
-## Status (grandpa test, round 7 of 7)
-In the last round every item in sections 1, 2, 4, 5, 6 and 7 passed end to end: uploads (incl. duplicate), family tree into the wiki with the living protected, research with a kept
-page, five chapters in the third person, pictures where asked (incl. one-answer redirects to another chapter and place), describe/move/delete a picture, sentence removal in place with
-undo, dropped drafts said out loud and restored, "ask me first" with a draft waiting, zoom, exports and goodbye. Findings from that round fixed afterwards (unit-tested only):
-"story notes" wording was taken for a paragraph draft, a change to a waiting draft was taken for an edit of an old paragraph, and a kept page was offered again.
-Known and not fixed: the stand-in model still adds small unsupported detail and repeats facts between chapters (the app warns about repeats but cannot know what is unsupported),
-a picture request while writing can go to the chapter being written rather than the one just looked at when a draft was saved in between, web pictures are described only by their
-title (nothing here can see pictures), and a real vision/writing model is untested.
+## Status (grandpa test, round 8)
+Round 8 again produced a complete five-chapter book (third person, pictures where asked, uploads, family tree, research, sentence removal, redirects, describe/move/delete,
+zoom, exports). Items that passed: everything in sections 1, 2, 5 (except the redirect below), 6 and 7. Findings and what was done afterwards (unit-tested only, not re-run through the story):
+* invented details and repeats between chapters slipped through: the app now flags years/numbers/names found nowhere, and sentences whose words the documents never mention,
+  and sends back a paragraph that re-says the book (word-sequence overlap or the same content words);
+* "no, put it in chapter 4" when chapter 4 did not exist created an untitled chapter and moved where the writing went: the picture now stays waiting and the app says the chapter does not exist yet.
+Known and not fixed: a stand-in model's flowery filler cannot be told from fact by the app (only by comparing with the documents), web pictures are described only by their title,
+a real vision/writing model is untested.

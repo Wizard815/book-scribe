@@ -458,3 +458,34 @@ async def test_details_nobody_gave_are_flagged_and_never_saved_behind_the_writer
     llm.replies = [f'[[tool: propose_append {{"text": "{inv}"}}]]', "Here."]
     r = await ag.handle("s", "next paragraph, the tractor")
     assert r.pending and "could not find" in r.text and "tractor" in r.pending["text"]  # not auto-saved
+
+
+@pytest.mark.asyncio
+async def test_a_picture_is_not_sent_to_a_chapter_that_does_not_exist_yet(books):
+    ag, store, llm = make(books)
+    llm.replies = ['[[tool: make_picture {"prompt": "a troopship", "caption": "A troopship"}]]', "A grey ship."]
+    await ag.handle("s", "make me a picture of a troopship")
+    work = ag.session("s").work
+    r = await ag.handle("s", "no, put it in chapter 9 after paragraph 1")
+    assert "does not exist yet" in r.text and ag.session("s").pending is not None and ag.session("s").work == work
+    assert not any(9 == n for n in store.chapter_numbers("demo"))
+
+
+def test_the_same_story_in_other_words_is_called_a_repeat(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    store.append_paragraph("demo", 2, "Elsa Berglund was born in Lindsborg in September, and she grew up on a farm there before marrying Everett in the summer after the war ended.")
+    again = "Born in Lindsborg in September, Elsa Berglund grew up on a farm there and married Everett in the summer after the war had ended, a few years later."
+    assert ag.check_repeat(ag.session("s"), again)
+
+
+@pytest.mark.asyncio
+async def test_sentences_the_documents_never_mention_are_pointed_out(books):
+    ag, store, llm = make(books)
+    await add(ag, "draft_registration_card_1917.pdf"); await add(ag, "letter_from_france_october_1918.pdf")
+    ag.session("s").history.append({"role": "user", "content": "Everett was a farmer near Lindsborg in 1917."})
+    good = "Everett registered for the draft at Lindsborg and gave his trade as a farmer. He wrote to his mother about the mud and the flu."
+    assert ag.ungrounded(ag.session("s"), good) == ""
+    flowery = "The village shimmered beneath wandering clouds while merchants hurried between cobbled courtyards carrying baskets overflowing with ripe peaches. Every cathedral bell echoed gloriously across the sleepy valley."
+    out = ag.ungrounded(ag.session("s"), flowery)
+    assert "not in your documents" in out
