@@ -394,3 +394,10 @@ How the agent and the chat fit together: see [docs/ARCHITECTURE.md](docs/ARCHITE
   change is waiting never drops it; I say out loud that it is still waiting. Random ideas are numbered: say "number 2" or "the second one".
 * **Big print layout.** From 40px words upward the layout and size rows fold away, the controls stop growing, the typing box sits behind a
   Keyboard button, and new replies start at their beginning, so the conversation always has room (also on a phone).
+* **Pictures in the book.** A picture is its own paragraph (with a caption that is read aloud and searched), so it can be moved, deleted and undone.
+  The agent can make one from a description (set `IMAGE_URL` to any OpenAI-compatible `/v1/images/generations` server: local Stable Diffusion / Flux, or
+  a cloud model; also a tier in the admin Models tab), find one on the web (needs SearXNG; it warns that a found picture may belong to someone else), or
+  use one from your library. It always shows the picture, **describes it in words**, and only a yes puts it in the book. Every picture is opened, checked,
+  shrunk and re-saved first.
+* **Chapter titles and saving the book.** "Call chapter 3 The Lake". Settings, Books, or the Save book button gives the whole book with its pictures as a
+  web page (prints to PDF), an EPUB, or a Markdown zip.

@@ -116,3 +116,11 @@ chose leaves the machine, every lookup shows the writer a note ("I looked up Exc
 needs a yes. Everything fetched is marked untrusted data: the model is told never to follow instructions inside it, and nothing it says can write
 to the book or wiki without the writer's yes. `web.py` only opens public internet addresses over ordinary ports (every redirect is re-checked), caps
 the size, and never fetches pages from your own network. SearXNG must have the `json` output format enabled in its settings.
+
+## Pictures
+
+`images.py`. A picture paragraph is `![caption](image:file.jpg)` in the chapter file, so every paragraph rule (ids, undo, move, delete, highlight) applies.
+Sources: `make_picture` (the `image` provider role, tiered like chat), `find_pictures` + `use_found_picture` (SearXNG image search; downloads use the same
+public-addresses-only fetcher as web pages and are validated as pictures), `use_library_picture`. A picture first becomes a *candidate*
+(`<book>/images/.candidates/`) and is shown in the chat with the big YES / NO card; only a yes moves it into the book. The model is told to describe it
+in words every time, because the writer may not look. `export.py` builds the finished book (html with embedded pictures, epub, md zip).
