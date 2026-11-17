@@ -251,6 +251,14 @@ class Agent:
             done = await self._voice_pending(sess, text)
             if done is not None:
                 return done
+        if sess.pending and sess.pending.kind in ("append", "edit") and re.match(r"^(?:please )?(?:read|say|play) (?:it|that|this|them|the (?:whole|rest|draft|paragraph|thing))(?: (?:all|out|aloud|again|to me|of it|through|please|out loud|the whole thing|the rest))*$|^(?:read )?(?:all of it|the whole thing|the rest)$", intent.norm(text)):
+            r = self._reply(sess, f"{sess.pending.text} {sess.pending.ask or self._ask_for(sess, sess.pending)} Say yes or no.",
+                            await self._speech_text(sess, sess.pending.text, "", f"{sess.pending.ask or ''} Say yes, or no, or what to change.".strip()))
+            return r
+        if (dr := re.match(r"^(?:please )?(?:read (?:my )?drafts? (?:to me )?(?:in full|all the way|completely|all of it)|read the whole (?:draft|paragraph) (?:every time|each time)|(?:read|only read) (?:me )?(?:just )?the (?:start|beginning) of (?:my )?drafts)(?: from now on| please)?$", intent.norm(text))):
+            if self.prefs:
+                self.prefs.update({"draft_read": "full" if "start" not in intent.norm(text) and "beginning" not in intent.norm(text) else "short"})
+            return self._reply(sess, "Okay. I will read each whole draft to you." if "start" not in intent.norm(text) and "beginning" not in intent.norm(text) else "Okay. I will read you just the start of a long draft.")
         if sess.pending:
             kind, rest = intent.confirmation(text)
             if kind == "yes" and len(rest.split()) > 8 and not intent._CHANGE.search(rest) and sess.pending.kind != "confirm_target":
@@ -609,6 +617,33 @@ class Agent:
         r = self._reply(sess, text)
         r.changed = changed
         return r
+
+    def book_voice(self, sess: Session) -> str:
+        """"third" or "first": the person the book is told in, from the premise the writer gave, else from what is already written. "" when unknown."""
+        try:
+            premise = self.store.bible(sess.book).read("premise").lower()
+        except Exception:
+            premise = ""
+        if re.search(r"third[- ]person|in the third\b", premise):
+            return "third"
+        if re.search(r"first[- ]person|in the first\b", premise):
+            return "first"
+        texts = [imgs.plain(p.text) for p in self.store.all_paragraphs(sess.book) if not p.image][-6:]
+        if len(texts) >= 3:
+            fp = sum(bool(re.search(r"\b(?:I|my|me)\b", re.sub(r'["“”][^"“”]*["“”]', " ", t))) for t in texts)
+            return "first" if fp >= len(texts) - 1 else "third" if fp == 0 else ""
+        return ""
+
+    def check_voice(self, sess: Session, text: str) -> str:
+        """A draft that slips into the wrong person ("I" in a book told in the third person) -> a short reason, else ""."""
+        voice = self.book_voice(sess)
+        bare = re.sub(r'["“”][^"“”]*["“”]', " ", text)  # what people say in quotes may use I
+        has_i = bool(re.search(r"\b(?:I|me|my|mine|myself|we|our)\b", bare))
+        if voice == "third" and has_i:
+            return "This book is told in the third person (he, she, Everett), but the paragraph speaks as I or we."
+        if voice == "first" and not has_i and len(bare.split()) > 25:
+            return "This book is told in the first person (I, my), but the paragraph tells it as he or she."
+        return ""
 
     def _supersede(self, sess: Session) -> bool:
         """A new draft or picture while an older draft/picture waits: the older one is put aside (and said out loud, and "bring it back" restores it), so the
@@ -1252,7 +1287,7 @@ class Agent:
                 if re.search(r"yes or no|ready for|waiting|say yes|should i|shall i|would you like|your answer|once it'?s saved|after (?:you|it)", lead, re.I):
                     lead = ""  # it is being saved, not asked about: never say both
                 return self._attach(sess, await self._autosave(sess, ctx.drafted, lead, warn), ctx, "", text)
-            reply = self._reply(sess, f"{lead}Here's a draft: {ctx.drafted}{warn} {tail}", await self._speech_text(sess, ctx.drafted, f"{lead}Here's a draft:", f"{warn} {tail}".strip()))
+            reply = self._reply(sess, f"{lead}Here's a draft: {ctx.drafted}{warn} {tail}", await self._draft_speech(sess, ctx.drafted, f"{lead}Here's a draft:", f"{warn} {tail}".strip()))
             return self._attach(sess, reply, ctx, "", text)
         if (not ctx.drafted and not sess.pending and sess.mode == "narrator" and self._looks_like_paragraph(out) and not intent.is_question(text)
                 and re.match(r"^(?:and |ok |okay |now |please )*(?:one more|another|next|more|then|continue|write|and then)\b", intent.norm(text))):
@@ -1309,7 +1344,7 @@ class Agent:
         sess.pending = Pending("edit", new, target.chapter, paragraph_id=target.id)
         self._remember(sess, text, f"[proposed a rewrite of {where}]")
         lead = f"Changing {where}, which starts: {excerpt(target.text, 6)} Here is the new version:"
-        reply = self._reply(sess, f"{lead} {new} Should I save it?", await self._speech_text(sess, new, lead, "Should I save it?", target))
+        reply = self._reply(sess, f"{lead} {new} Should I save it?", await self._draft_speech(sess, new, lead, "Should I save it?", target))
         reply.notes += [f"Style note: {i}" for i in issues]
         reply.highlights = self._hl(sess, [target.id])
         return reply
@@ -1339,7 +1374,7 @@ class Agent:
             tail = "It may not be what you asked for. Say yes to keep it anyway, or tell me what to change."
         if self._pref("auto_save", "off") == "on" and not issue:
             return self._attach(sess, await self._autosave(sess, new, "", warn), ctx, "", text)
-        reply = self._reply(sess, f"Here's a draft: {new}{warn} {tail}", await self._speech_text(sess, new, "Here's a draft:", f"{warn} {tail}".strip()))
+        reply = self._reply(sess, f"Here's a draft: {new}{warn} {tail}", await self._draft_speech(sess, new, "Here's a draft:", f"{warn} {tail}".strip()))
         reply.notes += [f"Style note: {i}" for i in issues]
         return self._attach(sess, reply, ctx, "", text)
 
@@ -1390,7 +1425,7 @@ class Agent:
         new, issues = await self._gated(msgs)
         p.text = new
         self._remember(sess, instruction, "[revised the proposal]")
-        reply = self._reply(sess, f"Revised: {new} Should I save it?", await self._speech_text(sess, new, "Revised:", "Should I save it?"))
+        reply = self._reply(sess, f"Revised: {new} Should I save it?", await self._draft_speech(sess, new, "Revised:", "Should I save it?"))
         reply.notes += [f"Style note: {i}" for i in issues]
         return reply
 
@@ -1527,6 +1562,15 @@ class Agent:
         paras = self.store.paragraphs(sess.book, para.chapter)
         i = next((k for k, p in enumerate(paras) if p.id == para.id), 0)
         return await self._segments(sess, para.text, paras[max(0, i - 12) : i])
+
+    async def _draft_speech(self, sess: Session, body: str, lead: str, tail: str, target: Paragraph | None = None) -> list[dict]:
+        """A draft waiting for a yes is read out loud. A long one is read from its start only (tired ears), and "read it all" gives the rest; "read my drafts in full"
+        turns that off. The whole text is always on the screen."""
+        sentences = re.split(r"(?<=[.!?])\s+", body.strip())
+        if len(sentences) <= 3 or self._pref("draft_read", "short") == "full":
+            return await self._speech_text(sess, body, lead, tail, target)
+        start = " ".join(sentences[:2])
+        return await self._speech_text(sess, start, lead, f"That is only the start. Say read it all to hear the rest. {tail}".strip(), target)
 
     async def _speech_text(self, sess: Session, body: str, lead: str, tail: str, target: Paragraph | None = None) -> list[dict]:
         try:

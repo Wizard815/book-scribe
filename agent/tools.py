@@ -386,6 +386,10 @@ def build(agent) -> Toolbox:
             return "That is only one short sentence. Write a full paragraph of four to seven sentences (unless the writer asked for something short), then propose it again."
         if sess.pending and not agent._supersede(sess):
             return "A proposal is already waiting for the writer's answer. Do not propose another."
+        vissue = agent.check_voice(sess, text)
+        if vissue and not ctx.voice_tried:
+            ctx.voice_tried = True
+            return f"Problem: {vissue} Rewrite the paragraph in the book's own voice, then propose it again."
         issue = await agent.check_continuity(sess, text, sess.last_user)
         if issue and not ctx.continuity_tried:
             ctx.continuity_tried = True
