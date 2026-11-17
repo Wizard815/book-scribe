@@ -455,7 +455,7 @@ async def test_details_nobody_gave_are_flagged_and_never_saved_behind_the_writer
     inv = "In 1923 Everett bought a blue tractor from Mr Halvorsen in Wichita. He paid 400 dollars for it and drove it home through the rain."
     out = ag.ungrounded(ag.session("s"), inv)
     assert "1923" in out and "Halvorsen" in out
-    llm.replies = [f'[[tool: propose_append {{"text": "{inv}"}}]]', "Here."]
+    llm.replies = [f'[[tool: propose_append {{"text": "{inv}"}}]]', f'[[tool: propose_append {{"text": "{inv}"}}]]', "Here."]  # sent back once, then shown with its warning
     r = await ag.handle("s", "next paragraph, the tractor")
     assert r.pending and "could not find" in r.text and "tractor" in r.pending["text"]  # not auto-saved
 

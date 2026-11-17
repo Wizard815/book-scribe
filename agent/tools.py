@@ -400,7 +400,11 @@ def build(agent) -> Toolbox:
         if issue and not ctx.continuity_tried:
             ctx.continuity_tried = True
             return (f"Problem: {issue} Rewrite the paragraph so it writes exactly what the writer asked for, agrees with the book and does not retell what is already told, then propose it again.")
-        ctx.warning = issue or agent.ungrounded(sess, text)  # a problem after one rewrite, or details nobody gave: shown and spoken to the writer, never saved behind their back
+        ground = "" if issue else agent.ungrounded(sess, text)
+        if ground and not ctx.ground_tried:
+            ctx.ground_tried = True
+            return f"Problem: {ground} Rewrite the paragraph using ONLY what the documents, the family tree, the wiki and the writer say (search_library or read_library to check), then propose it again."
+        ctx.warning = issue or ground  # a problem after one rewrite, or details nobody gave: shown and spoken to the writer, never saved behind their back
         nums = store.chapter_numbers(book(ctx))
         ch = _int(chapter, 0, 1, 9999) if chapter else agent._work(sess)
         if ch not in nums and ch != max(nums, default=0) + 1:
