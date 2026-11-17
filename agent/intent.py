@@ -375,6 +375,29 @@ def undo_request(text: str) -> bool:
     return len(n.split()) <= 9 and bool(_UNDO.match(n))
 
 
+_DESCRIBE = re.compile(r"^{p}(?:describe|tell me about|what(?:'s| is| does)|what do you see in)(?: (?:it|that|this|the))?(?: (?:picture|image|photo|illustration|drawing))?(?: again)?(?: to me| for me| please)*(?: look like| in it| on it)?[.?!]?$".replace("{p}", _POLITE))
+
+
+def describe_request(text: str) -> bool:
+    """"describe it to me", "what does it look like": the writer wants the picture just shown put into words (not a new paragraph written)."""
+    n = norm(text)
+    return len(n.split()) <= 9 and bool(_DESCRIBE.match(n)) and bool(re.search(r"\b(?:it|that|this|picture|image|photo|illustration|drawing|look like)\b", n))
+
+
+_PICTURE_NOUN = r"(?:pictures?|images?|illustrations?|drawings?|paintings?|photos?|photographs?|maps?|sketch(?:es)?|portraits?|cover)"
+_PICTURE_VERB = r"(?:make|draw|paint|create|generate|find|get|add|put|use|show|search(?: for)?|look(?: up| for)?|fetch|want|need|like|give)"
+_ON_COMPUTER = re.compile(r"\b(?:downloaded|download|downloads|on my computer|my computer|desktop|my folder|inbox|i just (?:saved|got|scanned|took)|from my (?:phone|camera|files))\b")
+
+
+def picture_request(text: str) -> bool:
+    """"make me a picture of the lake", "find a map of Camelot", "I would like an illustration here": a picture for the book, to be made or found on the web.
+    Not "I just downloaded a photo" (that is a file on the computer) and not an edit of the words."""
+    n = norm(text)
+    if _ON_COMPUTER.search(n) or len(n.split()) > 40:
+        return False
+    return bool(re.search(rf"\b{_PICTURE_VERB}\b.*\b{_PICTURE_NOUN}\b", n) or re.search(rf"\b{_PICTURE_NOUN}\b.*\b(?:of|for|showing|with)\b", n) and re.search(rf"\b(?:chapter|here|book|story|scene)\b|^(?:a|an|the|one|another)\b", n))
+
+
 def file_request(text: str) -> bool:
     """"I just downloaded a new PDF, can you open it": the writer wants a file found on the computer."""
     n = norm(text)

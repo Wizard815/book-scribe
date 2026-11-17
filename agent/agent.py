@@ -214,6 +214,8 @@ class Agent:
         if items and not sess.pending and (k := intent.pick_number(text)) and 1 <= k <= len(items):
             text = f"Let's use this {sess.last_items_kind}: {items[k - 1]}"
 
+        if intent.describe_request(text) and (r := self._describe_picture(sess)):  # "describe it to me": words for the picture, and a waiting picture keeps waiting
+            return r
         if sess.pending and intent.undo_request(text) and sess.pending.kind not in ("voice",):  # "undo that" while a proposal waits: drop the proposal
             sess.pending = None
             return self._reply(sess, "Okay, I dropped that. Nothing in your book was changed.")
@@ -298,6 +300,8 @@ class Agent:
             return self._move_reply(sess, mv, text)
         if (what := intent.open_request(text)) and (r := self._open_reply(sess, what)):  # "open the harbour notes"
             return r
+        if intent.picture_request(text):  # "make a picture of the lake", "find a map of Camelot": a picture for the book, not an edit or a file on the computer
+            return await self._converse(sess, text)
         if intent.file_request(text):  # "I just downloaded a new PDF, can you open it"
             return self._find_reply(sess, text)
 
@@ -478,6 +482,23 @@ class Agent:
         r = self._reply(sess, text)
         r.changed = changed
         return r
+
+    def _describe_picture(self, sess: Session) -> Reply | None:
+        """Put a picture into words: the one waiting for a yes, else the one the writer was last looking at."""
+        p = sess.pending
+        if p and p.kind == "picture":
+            d = p.data or {}
+            r = self._reply(sess, (d.get("describe") or f"It is a picture with the caption: {d.get('caption', '')}.") + " Say yes to put it in the book, or no for a different one.")
+            r.picture = self.images.info(sess.book, d["candidate"], d.get("caption", ""), candidate=True)
+            return r
+        if sess.focus:
+            try:
+                para = self.store.find(sess.book, sess.focus)
+            except BookError:
+                return None
+            if para.image:
+                return self._reply(sess, f"It is a picture with the caption: {para.image[0]}.")
+        return None
 
     def _title_reply(self, sess: Session, n: int | None, title: str) -> Reply:
         n = n or sess.chapter
@@ -969,6 +990,8 @@ class Agent:
         if ctx.picture and sess.pending and sess.pending.kind == "picture":  # the model made or found a picture: show it, describe it, ask
             cap = ctx.picture["caption"]
             lead = (out.strip() + " ") if out.strip() and len(out.strip()) <= 320 else f"I have a picture for you: {cap}. "
+            if sess.pending.data is not None:
+                sess.pending.data["describe"] = out.strip()  # what the model said about it, kept so "describe it to me" can say it again
             sess.history.append({"role": "assistant", "content": "[proposed a picture]"})
             reply = self._reply(sess, f"{lead}Should I put it in chapter {sess.pending.chapter}?")
             reply.picture = self.images.info(sess.book, ctx.picture["candidate"], cap, candidate=True)

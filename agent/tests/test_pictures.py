@@ -240,3 +240,43 @@ def test_pictures_are_served_safely_and_the_chapter_list_knows_about_them(client
     j = client.get("/api/books/demo/chapters/1").json()
     assert j["title"] == "The Walk" and j["paragraphs"][-1]["image"] == {"url": f"/api/books/demo/images/{name}", "caption": "A lake", "file": name} and j["paragraphs"][0]["image"] is None
     assert client.get("/api/books/demo/chapters").json()["titles"] == {"1": "The Walk"}
+
+
+@pytest.mark.asyncio
+async def test_describe_it_to_me_describes_the_waiting_picture_and_keeps_it_waiting(books):
+    import intent
+    ag, store, llm = make(books)
+    llm.replies = ['[[tool: make_picture {"prompt": "a lady in a grey gown standing in a misty lake holding out a sword", "caption": "The Lady of the Lake"}]]',
+                   "A woman in a misty grey gown stands waist-deep in a calm lake and holds a glowing sword out to a young king in a boat."]
+    await ag.handle("s", "make a picture of the lady of the lake")
+    for phrase in ["describe it to me", "what does it look like?", "can you describe that picture", "tell me about it"]:
+        n_calls = len(llm.calls)
+        r = await ag.handle("s", phrase)
+        assert "misty grey gown" in r.text and r.pending["kind"] == "picture" and r.picture and len(llm.calls) == n_calls, phrase  # answered from what the model said; no new draft, no model call
+    r = await ag.handle("s", "yes"); assert "in chapter 1" in r.text
+    r = await ag.handle("s", "describe it to me"); assert "caption: The Lady of the Lake" in r.text  # and afterwards, from the caption
+    for not_describe in ["describe the courtyard at dawn", "describe Mira's coat", "write a description of the lake"]:
+        assert not intent.describe_request(not_describe), not_describe
+
+
+def test_picture_requests_are_not_mistaken_for_edits_or_for_files_on_the_computer():
+    import intent
+    for s in ["make a picture of the lady of the lake", "make me a picture of the lake", "find a picture of Dozmary Pool", "find an old map of Camelot on the web", "I'd like a picture for chapter 3",
+              "draw the castle at dawn as an illustration", "use my photo of Dozmary Pool in chapter 10", "get me an illustration of Merlin", "add a picture here"]:
+        assert intent.picture_request(s), s
+    for s in ["I just downloaded a picture, can you open it", "find the photo I downloaded", "make it shorter", "make the lake darker in paragraph 2", "the picture is lovely, thank you"]:
+        assert not intent.picture_request(s), s
+    assert intent.file_request("find the photo I downloaded")  # that one is a file on the computer
+
+
+@pytest.mark.asyncio
+async def test_make_me_a_picture_goes_to_the_model_with_its_tools_not_to_the_editor(books):
+    ag, store, llm = make(books)
+    before = store.read_chapter_raw("demo", 1)
+    llm.replies = ['[[tool: make_picture {"prompt": "a castle on a hill at dawn", "caption": "Camelot at dawn"}]]', "A pale stone castle on a green hill, lit gold by the sunrise."]
+    r = await ag.handle("s", "make me a picture of Camelot at dawn")
+    assert r.pending["kind"] == "picture" and r.picture and "pale stone castle" in r.text and store.read_chapter_raw("demo", 1) == before
+    ag2, store2, llm2 = make(books)
+    llm2.replies = ['[[tool: find_pictures {"query": "old map of Camelot"}]]', "I could not search just now."]
+    r = await ag2.handle("s", "find a picture of an old map of Camelot")
+    assert "inbox folder" not in r.text and "downloads" not in r.text.lower()  # not the file finder
