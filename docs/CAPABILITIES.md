@@ -42,3 +42,11 @@ see `examples/grandpa-lindsborg/`). A line is only ticked when it has passed. Wh
 ## 7. Memory and finishing
 - [U/E] Remembers how the book is to be told; which chapters have pictures; what is saved.
 - [U/E] Save the whole book as an e-book and a web page with its pictures.
+
+## Status (grandpa test, round 3)
+All of sections 1, 2, 4, 6 and 7 passed end to end (uploads incl. duplicate, family tree into the wiki with the living protected, research with a kept page,
+five chapters, pictures where asked, describe/move/delete a picture, dropped drafts said out loud and restored, zoom, exports, goodbye). Remaining small
+findings were fixed afterwards and are covered by unit tests only: "the last sentence of the first paragraph" was read as the last paragraph, "hello"
+while a draft waited did not say which draft, and a wordy Wikipedia query found nothing (it now retries with shorter words).
+Known and not fixed: small invented colour in a stand-in model's prose ("faded to the brown of weak tea"), long drafts read in full, picture descriptions are
+as good as the model's own words, a real vision model is untested.

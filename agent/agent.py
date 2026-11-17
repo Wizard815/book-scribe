@@ -307,7 +307,8 @@ class Agent:
                 sess.pending = keep
                 r.pending = {"kind": keep.kind, "text": keep.text, "paragraph_id": keep.paragraph_id, "ask": keep.ask}
                 if keep.ask:
-                    reminder = f"I am still holding this for you: {keep.ask} Say yes or no."
+                    beg = f" It begins: {excerpt(keep.text, 10)}" if keep.kind in ("append", "edit") and keep.text else ""
+                    reminder = f"I am still holding this for you: {keep.ask}{beg} Say yes or no."
                     r.text = f"{r.text} {reminder}".strip()
                     r.speech = (r.speech or []) + [{"speaker": vx.ASSISTANT, "text": reminder}]
                 return r
@@ -649,7 +650,7 @@ class Agent:
         if named:
             sess.chapter, sess.focus = named.chapter, named.id
             kept = self.images.note(sess.book, named.image[1]) if len(named.image) > 1 else ""
-            r = self._reply(sess, f"It is the picture in chapter {named.chapter}, called: {named.image[0]}." + (f" {' '.join(re.split(r'(?<=[.!?])\s+', kept)[:3])}" if kept else ""))
+            r = self._reply(sess, f"It is the picture in chapter {named.chapter}, called: {named.image[0]}." + (f" {' '.join(re.split(r'(?<=[.!?])\s+', kept)[:2])}" if kept else ""))
             r.highlights = self._hl(sess, [named.id])
             return r
         if sess.focus:
