@@ -68,6 +68,7 @@ def _words(text: str) -> list[str]:
     return norm(text).split()
 
 
+_NO_DROP = re.compile(r"^(?:just )?(?:leave|keep) (?:it|that|this|them)?(?: as it was| as it is| as is| the same| alone| how it was| like it was)?(?: please)?$|^(?:forget|drop|cancel|skip|scrap) (?:it|that|this)(?: please)?$|^never ?mind(?: that| it)?$|^(?:as it was|the same|leave it)$|^(?:thanks|thank you|thank|please)$|^not now$|^(?:i )?(?:changed|change) my mind$")
 _CHANGE = re.compile(r"\b(?:make|change|different|instead|another|darker|lighter|bigger|smaller|more|less|without|but|not|no|don'?t|empty|remove|rename|call it|shorter|longer|except|only|wrong|other)\b")
 _SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| those| these| all| all of them| (?:that|this|the) (?:one|1)| the (?:paragraph|picture))?(?: in| in there| down| to the book| to chapter \d+| into the book| away)?(?: please| now| for me)?|that one|that'?s? (?:the (?:one|1)|fine|good|right|great|perfect|lovely|nice|mine|it)|(?:it'?s|this is) (?:mine|good|great|fine|right|perfect|lovely|nice|the (?:one|1))|do it|mine|(?:the )?(?:one|1)|thanks|thank you|great|perfect|lovely|good|nice|fine|right|exactly)(?:,? (?:put it in|use it|add it|save it|keep it|go ahead|please|thank you|thanks))*$")
 
@@ -100,6 +101,8 @@ def confirmation(text: str) -> tuple[str | None, str]:
         return None, text  # "don't change the ending of chapter 2" is a new instruction, not a rejection
     if rest and rest[0] in ("but", "except", "only", "although", "and", "though"):
         rest = rest[1:]
+    if kind == "no" and _NO_DROP.match(" ".join(rest)):
+        rest = []  # "no, leave it as it was": a plain no
     if kind == "yes" and _SAVE_WORDS.match(" ".join(rest)):
         rest = []  # "yes, add it" / "yes save that" / "yes go ahead and put it in": more yes, not a change request
     return kind, " ".join(rest)
@@ -465,7 +468,8 @@ def autosave_mode(text: str) -> str | None:
 
 def describe_request(text: str) -> bool:
     """"describe it to me", "what does it look like": the writer wants the picture just shown put into words (not a new paragraph written)."""
-    n = norm(text)
+    first = re.split(r"[,;.:!?]| because | as | since | I can| I cannot| I can't| I cant", text.strip(), maxsplit=1, flags=re.I)[0]  # "describe it to me again, I can't see it well": the first clause is the request
+    n = norm(first)
     return len(n.split()) <= 9 and bool(_DESCRIBE.match(n)) and bool(re.search(r"\b(?:it|that|this|picture|image|photo|illustration|drawing|look like)\b", n))
 
 

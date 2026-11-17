@@ -588,3 +588,64 @@ async def test_the_model_can_always_save_the_book_and_a_draft_is_checked_against
     assert "it does not do what you asked: it is not the oath scene" in issue and "THE WRITER ASKED FOR: next paragraph, the oath" in str(llm.calls[-1][-1]["content"])
     assert "chapter 1 paragraph 1:" in str(llm.calls[-1][-1]["content"])  # the whole book's outline is in front of the checker, so a retelling in another chapter is visible
     llm.replies = ["CONFLICT: the pull was told in chapter 2."]; assert "pull was told" in await ag.check_continuity(s, para, "")
+
+
+# ------------------------------------------------------------------------------------------------------ round six: the last small traps
+@pytest.mark.asyncio
+async def test_describe_it_again_i_cannot_see_it_well_describes_and_does_not_enlarge_the_screen(books):
+    import intent
+    assert intent.describe_request("Describe it to me again, I can't see it well") and intent.describe_request("describe that picture to me, I cannot see it")
+    ag, store, llm = make(books)
+    llm.replies = ['[[tool: make_picture {"prompt": "a grey stone in a misty churchyard at dawn", "caption": "The stone"}]]', "A grey stone stands alone in a misty churchyard at dawn, with a sword sunk in its top."]
+    await ag.handle("s", "make a picture of the stone")
+    look_before = ag._look()
+    r = await ag.handle("s", "Describe it to me again, I can't see it well")
+    assert "grey stone stands alone" in r.text and r.ui is None and ag._look() == look_before and r.pending["kind"] == "picture"
+    r = await ag.handle("s", "I can't see this very well"); assert r.ui is not None  # the real "make it bigger" request still works
+
+
+def test_no_leave_it_as_it_was_is_a_plain_no_and_a_change_request_is_still_a_change_request():
+    import intent
+    for s in ["no, leave it as it was", "No. Keep it as it is", "no, forget it", "never mind", "no thanks", "no, I changed my mind"]:
+        assert intent.confirmation(s) == ("no", ""), s
+    assert intent.confirmation("no, make it sadder")[1] == "make it sadder" and intent.confirmation("no, make it an empty lake")[1] == "make it an empty lake"
+
+
+@pytest.mark.asyncio
+async def test_a_paragraph_the_app_itself_flags_is_never_saved_behind_the_writers_back(books):
+    ag, store, llm = make(books)
+    ag.prefs = __import__("prefs").Prefs(ag.s.state_dir); ag.prefs.update({"auto_save": "on"})
+    for t in ("a first long paragraph about the stone in the churchyard.", "a second long paragraph about the king.", "a third paragraph that is long enough.", "a fourth paragraph that is long enough."):
+        store.append_paragraph("demo", 1, t)
+    para = "The sword hung against his hip and knocked at his knee with every step, once, twice, as if it wanted his attention. He let it knock, and walked on."
+    llm.replies = [f'[[tool: propose_append {{"text": "{para}"}}]]', "MISSED: no hiding scene.", f'[[tool: propose_append {{"text": "{para}"}}]]', "MISSED: still no hiding scene.", "Here is a version."]
+    r = await ag.handle("s", "next paragraph, he hides the sword in the reeds")
+    assert r.pending["kind"] == "append" and "A warning: it does not do what you asked" in r.text and "I saved this" not in r.text and para not in store.read_chapter_raw("demo", 1)
+    await ag.handle("s", "no")
+    llm.replies = [f'[[tool: propose_append {{"text": "{para}"}}]]', "OK", "Here it is."]
+    r = await ag.handle("s", "next paragraph, he walks on"); assert "I saved this to chapter 1" in r.text  # a clean paragraph is still saved at once
+
+
+@pytest.mark.asyncio
+async def test_an_edit_that_changes_nothing_is_retried_once_and_then_explained(books):
+    ag, store, llm = make(books)
+    old = store.paragraphs("demo", 1)[0].text
+    llm.replies = [old, "Mira stepped onto the platform, her breath fogging in the bitter cold air, and counted the doors."]
+    r = await ag.handle("s", "change paragraph 1 to make it colder"); assert r.pending and "bitter cold" in r.text
+    ag2, store2, llm2 = make(books); llm2.replies = [old, old]
+    r = await ag2.handle("s", "change paragraph 1 to make it colder"); assert r.pending is None and "could not find a way to change it" in r.text
+
+
+@pytest.mark.asyncio
+async def test_a_picture_proposal_always_comes_with_a_description_and_a_long_remark_is_not_a_yes(books):
+    ag, store, llm = make(books)
+    llm.replies = ['[[tool: make_picture {"prompt": "a lone knight at a frozen lake under a black sky", "caption": "The lake"}]]', "Here you go."]
+    r = await ag.handle("s", "make a picture of the lake")
+    assert "a lone knight at a frozen lake under a black sky" in r.text and "Should I put it in chapter 1?" in r.text  # the model said nothing useful: the app says what it made
+    r = await ag.handle("s", "describe it"); assert "lone knight" in r.text
+    await ag.handle("s", "no")
+    ctx = harness.Ctx(sess=ag.session("s"))
+    await ag.toolbox.call("propose_wiki_notes", {"notes": [{"kind": "characters", "name": "A", "note": "x"}, {"kind": "characters", "name": "B", "note": "y"}]}, ctx)
+    llm.replies = ["Noted."]
+    r = await ag.handle("s", "Right. The ten chapters are one the walk to the lake, two the boy in the courtyard, three Merlin looks twice")
+    assert "Saved to the wiki" not in r.text and "A" not in [n for n in store.bible("demo").characters() if n == "A"]  # a long remark starting with "Right" is not a yes
