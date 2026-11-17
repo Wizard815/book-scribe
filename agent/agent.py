@@ -86,6 +86,8 @@ class Session:
     last_ideas: dict | None = None  # the last random-idea request, so "more" can repeat it
     web_hits: dict = field(default_factory=dict)  # last web search results by id
     work: int = 0  # the chapter new writing goes into (set by "start / go to chapter", by naming a chapter, by saving): looking at other paragraphs never moves it
+    last_dropped: object = None  # the proposal that was put aside when the writer moved on, so "bring it back" can restore it
+    say_first: str = ""  # something to say before the next reply (a dropped proposal)
     last_user: str = ""  # what the writer last asked for, so a draft can be checked against it
     last_items: list = field(default_factory=list)  # the numbered random ideas just offered, so "number 2" can pick one
     last_items_kind: str = "idea"
@@ -225,6 +227,10 @@ class Agent:
         if items and not sess.pending and (k := intent.pick_number(text)) and 1 <= k <= len(items):
             text = f"Let's use this {sess.last_items_kind}: {items[k - 1]}"
 
+        if sess.last_dropped is not None and not sess.pending and re.match(r"^(?:please )?(?:bring|put|get) (?:that|it|the (?:last|other|first|dropped|old) (?:one|paragraph|draft|change)) back$|^i (?:want|wanted) (?:that|it|the (?:other|first|last) one) back$|^(?:restore|undrop) (?:that|it)$", intent.norm(text)):
+            sess.pending, sess.last_dropped = sess.last_dropped, None
+            r = self._reply(sess, f"Here it is again. {sess.pending.ask or self._ask_for(sess, sess.pending)} Say yes or no.")
+            return r
         if intent.describe_request(text):  # "describe it to me": words for the picture, and a waiting picture keeps waiting. Never a new paragraph.
             return self._describe_picture(sess, text) or self._reply(sess, "I do not know which picture you mean. Say which chapter it is in, or what it shows, and I will describe it.")
         if sess.pending and intent.undo_request(text) and sess.pending.kind not in ("voice",):  # "undo that" while a proposal waits: drop the proposal
@@ -306,8 +312,10 @@ class Agent:
                     return await self._propose_edit(sess, original, target=target, sure=sure)
                 text = rest
             else:
-                sess.pending = None  # anything else is a new command; the unsaved proposal is abandoned, and we say so
+                dropped, sess.pending = sess.pending, None  # anything else is a new command; the unsaved proposal is abandoned, and we say so
                 sess.notices.append("I dropped the unsaved proposal.")
+                sess.last_dropped = dropped
+                sess.say_first = f"I dropped the {'paragraph' if dropped.kind == 'append' else 'change'} I showed you before, because you moved on. Say bring it back if you wanted it."
 
         if not sess.pending and (draft := self._draft_to_rescue(sess, text)):  # "yes, add it" to a draft that was shown without a proposal
             sess.pending = Pending("append", draft, self._work(sess))
@@ -419,8 +427,9 @@ class Agent:
         if kind != "yes" or rest or not sess.history or sess.history[-1]["role"] != "assistant":
             return ""
         last = sess.history[-1]["content"].strip()
-        if len(last) < 200 or not self._OFFER.search(last) or last.startswith("["):
-            return ""
+        if len(last) < 200 or not self._OFFER.search(last) or last.startswith("[") \
+                or re.match(r"^(?:i can'?t|i cannot|i couldn'?t|i could not|i'm sorry|i am sorry|sorry|i do not|i don'?t|unfortunately|i'm not|i am not|okay, i|i did not|i didn'?t)\b", last.lower()):
+            return ""  # only a story paragraph that was shown is ever rescued, never my own apology or explanation
         body = re.sub(r"(?:\s*[^.?!]*\?)\s*$", "", last).strip()  # drop the closing question
         body = re.sub(r"^[^\n]{0,90}:\s*\n?", "", body, count=1).strip() if re.match(r"^[^\n]{0,90}:\s", body) else body  # drop "Here's the next paragraph:"
         return body if len(body) >= 120 else ""
@@ -1660,6 +1669,12 @@ class Agent:
             sess.pending.ask = self._ask_for(sess, sess.pending) or text
         pend = {"kind": sess.pending.kind, "text": sess.pending.text, "paragraph_id": sess.pending.paragraph_id, "ask": sess.pending.ask} if sess.pending else None
         notices, sess.notices = sess.notices, []
+        lead = sess.say_first
+        if lead:  # said out loud as well as shown, because the writer may not be looking at the screen
+            sess.say_first = ""
+            text = f"{lead} {text}".strip()
+            if speech is not None:
+                speech = [{"speaker": vx.ASSISTANT, "text": lead}] + speech
         if speech is None:
             speech = [{"speaker": vx.ASSISTANT, "text": text}] if text else []
         return Reply(text=text, mode=sess.mode, chapter=sess.chapter, focus=sess.focus, pending=pend, notes=notices, speech=speech)

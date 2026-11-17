@@ -1,0 +1,143 @@
+"""The capability checklist (docs/CAPABILITIES.md) as scripted scenarios: a grandfather writing a five-chapter family-history book with pictures,
+researched history, PDF family documents and a family tree. The model is a script; everything else is the real app."""
+import json
+from pathlib import Path
+
+import pytest
+
+import harness
+import ingest
+from tests.test_pictures import PARA, FakeImageGen, make, png
+
+FILES = Path(__file__).parent / "family_files"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _files():
+    FILES.mkdir(exist_ok=True)
+    src = Path("/tmp/claude-0/grandpa/files")
+    for f in src.glob("*") if src.exists() else []:
+        (FILES / f.name).write_bytes(f.read_bytes())
+    if not any(FILES.glob("*.ged")):
+        pytest.skip("sample family files are not generated")
+
+
+async def add(ag, name):
+    return await ingest.add_file("demo", name, (FILES / name).read_bytes(), ag.library, ag.llm, None, ag.journal)
+
+
+@pytest.mark.asyncio
+async def test_pdf_family_documents_are_read_and_found_by_meaning(books):
+    ag, store, llm = make(books)
+    for n in ("draft_registration_card_1917.pdf", "letter_from_france_october_1918.pdf", "obituary_everett_lund_1971.pdf", "ship_passenger_list_1884.pdf"):
+        m = await add(ag, n)
+        assert m["status"] == "read", (n, m)
+    out = await ag.toolbox.call("search_library", {"query": "Charpentry postcard letter to mother"}, harness.Ctx(sess=ag.session("s")))
+    assert "Charpentry" in out
+    again = await add(ag, "draft_registration_card_1917.pdf")
+    assert again.get("duplicate") and "already added" in again["message"]
+    text = ag.library.text("demo", next(m["slug"] for m in ag.library.items("demo") if "draft" in m["title"].lower() or "registration" in m["title"].lower()))
+    assert "Lindsborg" in text and "1896" in text
+
+
+@pytest.mark.asyncio
+async def test_a_family_tree_becomes_characters_places_and_a_timeline_after_a_yes(books):
+    ag, store, llm = make(books)
+    m = await add(ag, "lund_family.ged")
+    assert m["kind"] == "family_tree" and m["status"] == "read"
+    s = ag.session("s")
+    out = await ag.toolbox.call("family_lookup", {"name": "Everett"}, harness.Ctx(sess=s))
+    assert "1896" in out and "Lindsborg" in out
+    out = await ag.toolbox.call("propose_family_import", {"name": "Everett Lund", "ancestors": 2, "descendants": 2}, harness.Ctx(sess=s))
+    assert s.pending and s.pending.kind == "family"
+    r = await ag.handle("s", "yes, add them")
+    names = " ".join(store.bible("demo").characters())
+    assert "Nils" in names and "Everett" in names and "Sigrid" in names and "added" in r.text
+    # the living are protected: Dorothy (born 1950) is made-up or absent, never listed under the real name
+    assert "Dorothy" not in names
+
+
+@pytest.mark.asyncio
+async def test_researched_history_is_looked_up_announced_and_kept_only_on_a_yes(books):
+    ag, store, llm = make(books)
+    # (the web tools are covered in test_web; here: a lookup result becomes a wiki note only after a yes)
+    ag.session("s")
+    llm.replies = ['[[tool: propose_wiki_notes {"notes": [{"kind": "world", "name": "Meuse-Argonne Offensive", "note": "26 September to 11 November 1918; the largest American operation of the war."}]}]]', "I have a note about it."]
+    r = await ag.handle("s", "save the facts about the Meuse-Argonne in the wiki")
+    assert r.pending and r.pending["kind"] == "wiki" and "Meuse-Argonne Offensive" not in " ".join(store.bible("demo").entries("world"))
+    r = await ag.handle("s", "yes")
+    assert "Meuse-Argonne Offensive" in " ".join(store.bible("demo").entries("world"))
+
+
+@pytest.mark.asyncio
+async def test_the_model_can_move_and_delete_a_picture_by_name_not_number(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    for t in ("Alpha is here.", "Bravo is here.", "Charlie is here."):
+        store.append_paragraph("demo", 2, t)
+    n = ag.images.stage("demo", png(), "pic"); ag.images.accept("demo", n)
+    store.append_image("demo", 2, n, "A barn")
+    s = ag.session("s"); s.chapter = 2
+    out = await ag.toolbox.call("propose_move", {"chapter": 2, "picture": "true", "where": "start"}, harness.Ctx(sess=s))
+    assert s.pending and s.pending.kind == "move", out
+    await ag.handle("s", "yes")
+    paras = store.paragraphs("demo", 2); assert paras[0].image and len(paras) == 4
+    out = await ag.toolbox.call("propose_delete", {"chapter": 2, "picture": "true"}, harness.Ctx(sess=s))
+    assert s.pending and s.pending.kind == "delete" and "picture" in s.pending.ask.lower() + out.lower()
+    await ag.handle("s", "no")
+    assert any(p.image for p in store.paragraphs("demo", 2))
+
+
+@pytest.mark.asyncio
+async def test_a_picture_can_be_moved_by_voice(books):
+    ag, store, llm = make(books)
+    n = ag.images.stage("demo", png(), "pic"); ag.images.accept("demo", n)
+    store.append_image("demo", 1, n, "A barn")
+    r = await ag.handle("s", "move the picture in chapter 1 to the start of the chapter")
+    assert r.pending and r.pending["kind"] == "move", r.text
+    await ag.handle("s", "yes")
+    assert store.paragraphs("demo", 1)[0].image
+
+
+@pytest.mark.asyncio
+async def test_ask_me_first_sticks_and_a_chat_apology_is_never_saved_as_a_paragraph(books):
+    ag, store, llm = make(books)
+    ag.prefs = __import__("prefs").Prefs(ag.s.state_dir)
+    await ag.handle("s", "save as you go"); assert ag.prefs.get("auto_save") == "on"
+    await ag.handle("s", "ask me first from now on"); assert ag.prefs.get("auto_save") == "off"
+    llm.replies = [f'[[tool: propose_append {{"text": "{PARA}"}}]]', "Here you are."]
+    n0 = len(store.paragraphs("demo", 1))
+    r = await ag.handle("s", "next paragraph, the walk down")
+    assert r.pending and len(store.paragraphs("demo", 1)) == n0
+    await ag.handle("s", "no")
+    apology = ("I'm sorry, I can't single out the middle picture on my own, and I did not want to guess which one you meant, so I have left everything exactly as it was. "
+               "Tell me the chapter and I will try again, and if that does not work we can delete it together. Would you like me to try that now?")
+    ag.session("s").history.append({"role": "assistant", "content": apology})
+    r = await ag.handle("s", "yes")
+    assert len(store.paragraphs("demo", 1)) == n0 and "I'm sorry" not in store.read_chapter_raw("demo", 1)
+
+
+@pytest.mark.asyncio
+async def test_an_unanswered_draft_that_is_dropped_is_said_out_loud_and_can_be_brought_back(books):
+    ag, store, llm = make(books)
+    llm.replies = [f'[[tool: propose_append {{"text": "{PARA}"}}]]', "Here."]
+    r = await ag.handle("s", "next paragraph, the walk down")
+    assert r.pending
+    llm.replies = ["He climbed the hill slowly and the wind was in his face and the road was long before him, with fields on either side that he had known all his life."]
+    r = await ag.handle("s", "what colour was the barn?")
+    r = await ag.handle("s", "delete paragraph 1 of chapter 1")
+    assert "I dropped the paragraph" in r.text and any("dropped" in n for n in r.notes) or "dropped" in r.text
+    await ag.handle("s", "no")
+    r = await ag.handle("s", "bring it back")
+    assert r.pending and r.pending["kind"] == "append" and "Here it is again" in r.text
+
+
+@pytest.mark.asyncio
+async def test_no_make_it_a_bigger_ship_is_about_the_story_not_the_screen(books):
+    ag, store, llm = make(books)
+    llm.replies = ["A bigger ship it is. Shall I make a new picture?"]
+    r = await ag.handle("s", "no, make it a bigger ship")
+    assert r.ui is None
+    llm.replies = ["Okay."]
+    r = await ag.handle("s", "yes, make one")
+    assert "chapter 1 picture" not in r.text

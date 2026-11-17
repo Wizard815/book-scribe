@@ -104,6 +104,11 @@ _ZOOM_RESET = re.compile(r"\bzoom (?:back|reset|normal)\b|\b(?:normal|regular|us
 _NOT_ZOOM_PCT = re.compile(r"\b(?:sure|certain|agree|right|confident|done|finished)\b")
 
 
+def _story_size_talk(n: str):
+    """"make it a bigger ship": the writer is talking about the story, not asking for bigger words."""
+    return re.search(r"\b(?:a|an|the|some|one|that|this)\s+(?:much |a lot |far )?(?:bigger|smaller|larger)\s+(?!(?:please|now|again|than|for|so|still|thanks|thank|if)\b)\w+", n)
+
+
 def _book_zoom(n: str, cur: int, raw: str = "") -> tuple[int, str] | None:
     """The book page's zoom: "make the book text bigger", "zoom in", "200 percent", "zoom back to normal". None if this is not about it."""
     if _ZOOM_RESET.search(n):
@@ -114,7 +119,8 @@ def _book_zoom(n: str, cur: int, raw: str = "") -> tuple[int, str] | None:
         return z, f"the book is at {z} percent"
     whole = re.search(r"\b(?:screen|everything|buttons?|chat|whole|display|menu|controls?|the app)\b", n)
     picture = re.search(r"\b(?:picture|pictures|photo|photos|photograph|image|images|map|illustration|drawing)\b", n)
-    plain = (_BIGGER.search(n) or _SMALLER.search(n)) and (re.search(rf"\b{_UI_NOUN}\b", n) or len(n.split()) <= 3) and not whole and not picture and not _CANT_SEE.search(n)  # "make the words bigger": the page is what is being read
+    story_talk = _story_size_talk(n)
+    plain = (_BIGGER.search(n) or _SMALLER.search(n)) and not story_talk and (re.search(rf"\b{_UI_NOUN}\b", n) or len(n.split()) <= 3) and not whole and not picture and not _CANT_SEE.search(n)  # "make the words bigger": the page is what is being read
     zoomish = plain or re.search(r"\bzoom(?: in| out)?\b", n) and not re.search(r"\bzoom (?:call|meeting|link)\b", n)
     bookish = _BOOKISH.search(n) and _ZOOM_WORDS.search(n)
     if not (zoomish or bookish):
@@ -158,7 +164,9 @@ def parse(text: str, look: dict | None) -> tuple[dict, str] | None:
     if _CANT_SEE.search(n) and not _CANT_SEE_NOT_UI.search(n) and not _BIGGER.search(n) and not _SMALLER.search(n):
         size(+2); new["contrast"] = "high" if cur["contrast"] == "normal" else cur["contrast"]; new["bold"] = True; new["spacing"] = max(cur["spacing"], 1)
         return new, "I made the words bigger and bolder, and the colours stronger. Say bigger if you need more, or back to normal."
-    if _BIGGEST.search(n) and _has_ui_target(n, words):
+    if _story_size_talk(n):
+        pass
+    elif _BIGGEST.search(n) and _has_ui_target(n, words):
         size(to=SIZE_MAX); said.append("as big as they go")
     elif _NORMAL_SIZE.search(n):
         size(to=DEFAULT["size"]); said.append("back to the usual size")

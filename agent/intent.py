@@ -194,6 +194,8 @@ def is_edit(text: str) -> bool:
     n = norm(text)
     if is_question(text) or _OPINION.match(n) or _NEGATIVE.match(n):
         return False
+    if re.match(rf"^{_POLITE}(?:yes,? |no,? )?(?:please )?(?:make|do|write) (?:one|some|it|that|them)(?: please| now| for me| again)?$", n) and parse_ref(text).para is None:
+        return False  # "yes, make one": an answer to my question, not an edit of any paragraph
     if _WIKI_TALK.search(n) and parse_ref(text).para is None:
         return False  # "make wiki pages for the father, the farm and the camp" is about the story wiki, not an edit of a paragraph
     if _EDIT_LEAD.match(n) or _EDIT_CLAUSE.search(text.lower()):
@@ -464,7 +466,8 @@ def export_request(text: str) -> str | None:
 
 
 _AUTO_ON = re.compile(r"^{p}(?:just )?(?:save (?:it |them |everything |each (?:one|paragraph) )?(?:as (?:you|we) go|straight away|right away|automatically|without asking)|stop asking(?: me)?(?: to save| to confirm| every time| all the time)?|don'?t (?:keep )?ask(?:ing)?(?: me)?(?: to save| every time| all the time)?|(?:keep )?saving(?: it| them| everything)?(?: as you go)?|auto ?save(?: on)?|no need to ask)(?: please)?[.!?]?$".replace("{p}", _POLITE))
-_AUTO_OFF = re.compile(r"^{p}(?:ask me (?:first|before saving|again|every time)|ask before (?:you )?sav(?:e|ing)|stop saving (?:everything|automatically|by yourself)|auto ?save off|check with me (?:first|before saving))(?: please)?[.!?]?$".replace("{p}", _POLITE))
+_FROM_NOW = r"(?:,? (?:from now on|every time|each time|always|again|please|for now|for the rest of the book))*"
+_AUTO_OFF = re.compile((r"^{p}(?:(?:from now on,? )?(?:ask me (?:first|before (?:saving|you save|you do (?:that|anything))(?: anything| it| them)?|again|every time)|ask before (?:you )?sav(?:e|ing)(?: anything)?|stop saving (?:everything|automatically|by yourself|straight away)|auto ?save off|check with me (?:first|before saving)|wait for my yes|(?:don'?t|do not) save (?:anything |it |them |paragraphs )?(?:until|unless|without) (?:i (?:say|tell you|say yes|say so|ok it|okay it|agree)|my (?:yes|ok|okay|ok it)|asking(?: me)?)|(?:don'?t|do not) save (?:anything |it |them |paragraphs )?by yourself|go back to asking(?: me)?))" + _FROM_NOW + r"[.!?]?$").replace("{p}", _POLITE))
 
 
 def autosave_mode(text: str) -> str | None:
