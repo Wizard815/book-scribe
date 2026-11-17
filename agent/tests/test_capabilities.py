@@ -9,17 +9,7 @@ import harness
 import ingest
 from tests.test_pictures import PARA, FakeImageGen, make, png
 
-FILES = Path(__file__).parent / "family_files"
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _files():
-    FILES.mkdir(exist_ok=True)
-    src = Path("/tmp/claude-0/grandpa/files")
-    for f in src.glob("*") if src.exists() else []:
-        (FILES / f.name).write_bytes(f.read_bytes())
-    if not any(FILES.glob("*.ged")):
-        pytest.skip("sample family files are not generated")
+FILES = Path(__file__).resolve().parents[2] / "examples" / "grandpa-lindsborg" / "family-files"  # fictional sample PDFs and a GEDCOM
 
 
 async def add(ag, name):
