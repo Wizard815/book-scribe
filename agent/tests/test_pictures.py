@@ -726,3 +726,38 @@ async def test_describe_the_photograph_describes_the_library_photo_and_never_wri
     assert "cannot see pictures" in r.text and r.pending is None and not llm.calls and len(store.all_paragraphs("demo")) == before
     ag.library.add("demo", "farm.jpg", png(10, 10, (1, 2, 3)), "farm photo", "image", "A red barn on a wheat field under a pale sky.", status="read")
     assert "red barn" in (await ag.handle("s", "describe the photo")).text
+
+
+# ---- round 8: where a picture goes ----------------------------------------------------------------------------------------------------
+def test_picture_position_is_understood_from_plain_words():
+    pos = intent.picture_position
+    assert pos("put my photograph at the start of chapter 1") == 0 and pos("put it at the very beginning") == 0
+    assert pos("yes, after paragraph 2") == 2 and pos("put it before paragraph 3") == 2 and pos("between paragraph 2 and paragraph 3") == 2
+    assert pos("put it at the end") == -1 and pos("yes, put that one in") is None and pos("make it a bigger ship") is None
+
+
+@pytest.mark.asyncio
+async def test_a_picture_goes_where_the_writer_says_and_can_be_moved_while_it_waits(books):
+    ag, store, llm = make(books)
+    for t in ("First paragraph of the chapter.", "Second paragraph of the chapter.", "Third paragraph of the chapter."):
+        store.append_paragraph("demo", 1, t)
+    sess = ag.session("s"); sess.work = 1
+    n0 = len(store.paragraphs("demo", 1)); first = store.paragraphs("demo", 1)[0].text
+    llm.replies = ['[[tool: make_picture {"prompt": "a barn", "caption": "The barn"}]]', "A red barn on a field."]
+    r = await ag.handle("s", "make me a picture of the barn after paragraph 2")
+    assert r.pending["kind"] == "picture" and "after paragraph 2" in r.pending["ask"]
+    r = await ag.handle("s", "put it at the very start of the chapter please")
+    assert "Say yes" in r.text and r.pending is not None
+    r = await ag.handle("s", "yes")
+    paras = store.paragraphs("demo", 1)
+    assert paras[0].image and "very start" in r.text and len(paras) == n0 + 1 and paras[1].text == first
+    llm.replies = ['[[tool: make_picture {"prompt": "a lake", "caption": "The lake", "after": 3}]]', "A lake."]
+    await ag.handle("s", "make me a picture of the lake")
+    r = await ag.handle("s", "yes, put it at the end")
+    paras = store.paragraphs("demo", 1); assert paras[-1].image and len(paras) == n0 + 2
+
+
+def test_swedish_names_exist_and_are_found_by_the_word_swedish():
+    import ideas
+    assert "swedish" in ideas.CULTURES and intent.ideas_request("give me three Swedish names")["opts"]["culture"] == "swedish"
+    assert ideas.cultures_for("a farm near Lindsborg, Kansas, to Swedish parents") == ["swedish"]

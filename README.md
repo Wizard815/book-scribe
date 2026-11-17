@@ -355,7 +355,7 @@ a paragraph aloud splits it into narration and dialogue and speaks each part in 
 
 ## Creativity, tools and big-print help
 
-* **Random ideas.** Names (17 cultures plus fantasy styles), places, character sketches, problems, twists, titles and more come from
+* **Random ideas.** Names (18 cultures plus fantasy styles), places, character sketches, problems, twists, titles and more come from
   real randomness, not the model. Open **Ideas** in the app, or say "give me three Japanese names". The model can call the same
   generator itself so it stops reusing its favourite names. Lists are in `agent/ideas_data.py`.
 * **A toolbox for the model** (`agent/harness.py`, `agent/tools.py`): look up the book and bible, point at passages (they light up

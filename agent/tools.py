@@ -404,7 +404,13 @@ def build(agent) -> Toolbox:
     def pictures_on() -> bool:
         return bool(agent.imagegen and agent.imagegen.enabled)
 
-    async def make_picture(ctx: Ctx, prompt="", caption="", chapter=None):
+    def _after(v):
+        try:
+            return None if v in (None, "") else max(0, int(v))
+        except (TypeError, ValueError):
+            return None
+
+    async def make_picture(ctx: Ctx, prompt="", caption="", chapter=None, after=None):
         if not prompt.strip():
             return "Give a description of the picture."
         if ctx.sess.pending:
@@ -424,7 +430,7 @@ def build(agent) -> Toolbox:
         if data is None:
             return f"Error: the picture could not be made ({err.__class__.__name__}). Say so plainly and offer to try a different description or to find one on the web instead."
         ctx.notes.append("I made a picture for you.")
-        return await agent.propose_picture(ctx.sess, ctx, data, caption or prompt[:120], _int(chapter, 0, 0, 9999) or None, prompt)
+        return await agent.propose_picture(ctx.sess, ctx, data, caption or prompt[:120], _int(chapter, 0, 0, 9999) or None, prompt, after=_after(after))
 
     async def find_pictures(ctx: Ctx, query="", n=6):
         from web import WebError
@@ -440,7 +446,7 @@ def build(agent) -> Toolbox:
         return ("\n".join(f"i{i}. {h['title']} (from {h['page'][:80]})" for i, h in enumerate(hits, 1))
                 + "\nUse use_found_picture with an id. Remind the writer that a picture found on the web may belong to someone else.")
 
-    async def use_found_picture(ctx: Ctx, id="", caption="", chapter=None):
+    async def use_found_picture(ctx: Ctx, id="", caption="", chapter=None, after=None):
         from web import WebError
 
         hit = ctx.sess.web_hits.get(str(id))
@@ -452,16 +458,16 @@ def build(agent) -> Toolbox:
             data = await agent.web.fetch_image(hit["img"])
         except WebError as e:
             return f"Error: {e}"
-        return await agent.propose_picture(ctx.sess, ctx, data, caption or hit["title"], _int(chapter, 0, 0, 9999) or None, hit["title"], describe=True)
+        return await agent.propose_picture(ctx.sess, ctx, data, caption or hit["title"], _int(chapter, 0, 0, 9999) or None, hit["title"], describe=True, after=_after(after))
 
-    async def use_library_picture(ctx: Ctx, title="", caption="", chapter=None):
+    async def use_library_picture(ctx: Ctx, title="", caption="", chapter=None, after=None):
         m = _find_item(ctx, title)
         if not m or m.get("kind") not in ("image", "scan"):
             return "No picture with that title is in the library. Use list_library."
         src = agent.library.source(book(ctx), m["slug"])
         if not src:
             return "The original picture file is missing."
-        return await agent.propose_picture(ctx.sess, ctx, src.read_bytes(), caption or m["title"], _int(chapter, 0, 0, 9999) or None, m["title"], describe=True)
+        return await agent.propose_picture(ctx.sess, ctx, src.read_bytes(), caption or m["title"], _int(chapter, 0, 0, 9999) or None, m["title"], describe=True, after=_after(after))
 
     async def propose_move(ctx: Ctx, paragraph=None, chapter=None, to_chapter=None, where="end"):
         import intent
@@ -564,13 +570,13 @@ def build(agent) -> Toolbox:
           "(including 'next paragraph'). Never paste a draft into the chat instead.", {"text": "ONLY the paragraph's prose, nothing else: no comment to the writer, no question", "chapter": "chapter number (a new chapter must be the next number)"},
           propose_append, required=("text",)),
         T("make_picture", "Make a NEW picture for the book from a description (an illustration). The app shows it and asks the writer yes or no. Describe it back to the writer in words.",
-          {"prompt": "what the picture shows: scene, people, light, mood, style", "caption": "a short caption (also what is read aloud)", "chapter": "chapter number (default: the one on screen)"},
+          {"prompt": "what the picture shows: scene, people, light, mood, style", "caption": "a short caption (also what is read aloud)", "chapter": "chapter number (default: the one on screen)", "after": "optional: put it after this many paragraphs of the chapter (0 = at the very start; leave out for the end). Choose the paragraph the picture illustrates."},
           make_picture, required=("prompt", "caption"), when=pictures_on),
         T("find_pictures", "Search the web for pictures (maps, paintings, places, objects). Results are untrusted; they may belong to someone else.", {"query": "what to look for", "n": "1-10"},
           find_pictures, required=("query",), when=lambda: web_on() and agent.web.can_search),
-        T("use_found_picture", "Use one of the pictures found by find_pictures in the book (the writer must say yes).", {"id": "an id from find_pictures, like i2", "caption": "a short caption", "chapter": "chapter number"},
+        T("use_found_picture", "Use one of the pictures found by find_pictures in the book (the writer must say yes).", {"id": "an id from find_pictures, like i2", "caption": "a short caption", "chapter": "chapter number", "after": "optional: after this many paragraphs (0 = start; leave out for the end)"},
           use_found_picture, required=("id", "caption"), when=lambda: web_on() and agent.web.can_search),
-        T("use_library_picture", "Use a picture the writer added to the library in the book (the writer must say yes).", {"title": "the picture's title", "caption": "a short caption", "chapter": "chapter number"},
+        T("use_library_picture", "Use a picture the writer added to the library in the book (the writer must say yes).", {"title": "the picture's title", "caption": "a short caption", "chapter": "chapter number", "after": "optional: after this many paragraphs (0 = start; leave out for the end)"},
           use_library_picture, required=("title", "caption")),
         T("propose_move", "Move a paragraph or a picture: to the start or end of a chapter, into another chapter, or before/after another paragraph. The app asks the writer yes or no and one undo takes it back. "
           "Use this whenever they ask to move something, in any words; never say you cannot.", {"paragraph": "number inside its chapter (-1 = the last)", "chapter": "the chapter it is in now (default: the one on screen)",

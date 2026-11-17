@@ -243,6 +243,13 @@ class Agent:
             kind, rest = intent.confirmation(text)
             if kind == "yes" and len(rest.split()) > 8 and not intent._CHANGE.search(rest) and sess.pending.kind != "confirm_target":
                 kind = None  # a long remark that merely starts with "right" or "yes" is conversation, not an answer and not a change request
+            if sess.pending.kind == "picture" and kind != "no" and (pos := intent.picture_position(text)) is not None and not intent.is_question(text):
+                sess.pending.data["where"] = pos  # "put it at the start of the chapter" / "yes, after paragraph 2": placing it is part of the answer
+                if kind == "yes":
+                    return await self._accept(sess)
+                r = self._reply(sess, f"Okay, it will go in chapter {sess.pending.chapter}{self._where_words(pos) or ', at the end'}. Say yes to put it in the book.")
+                r.picture = self.images.info(sess.book, sess.pending.data["candidate"], sess.pending.data.get("caption", ""), candidate=True)
+                return r
             if kind == "hold":
                 return self._reply(sess, "Okay, I'll wait. Say yes to save it, or tell me what to change.")
             if kind == "yes" and not rest:
@@ -460,7 +467,7 @@ class Agent:
                     return f"Save these {len(d['batch'])} notes to the wiki: {names}?"
                 return "Save this to the book's premise?" if d.get("kind") == "premise" else f"Save this note under {d.get('name', 'the wiki')}?"
             if p.kind == "picture":
-                return f"Put this picture in chapter {p.chapter}?"
+                return f"Put this picture in chapter {p.chapter}{self._where_words((p.data or {}).get('where'))}?"
             if p.kind == "delete":
                 if (p.data or {}).get("ids"):
                     return f"Delete these {len(p.data['ids'])} paragraphs of chapter {p.chapter}?"
@@ -645,7 +652,7 @@ class Agent:
         sess.chapter = n
         return self._reply(sess, f"Chapter {n} is now called {t}.")
 
-    async def propose_picture(self, sess: Session, ctx, data: bytes, caption: str, chapter: int | None, hint: str = "", describe: bool = False) -> str:
+    async def propose_picture(self, sess: Session, ctx, data: bytes, caption: str, chapter: int | None, hint: str = "", describe: bool = False, after: int | None = None) -> str:
         """Check a picture, keep it as a candidate, and ask the writer. -> a plain message for the model."""
         if sess.pending:
             return "A proposal is already waiting for the writer's answer. Do not propose another."
@@ -659,7 +666,10 @@ class Agent:
             return f"Error: {e}"
         cap = imgs.clean_caption(caption)
         sess.chapter = sess.work = ch
-        sess.pending = Pending("picture", cap, ch, data={"candidate": name, "caption": cap})
+        where = after if isinstance(after, int) else intent.picture_position(sess.last_user)  # the writer's own words win over the model's guess
+        if isinstance(after, int) and (said := intent.picture_position(sess.last_user)) is not None:
+            where = said
+        sess.pending = Pending("picture", cap, ch, data={"candidate": name, "caption": cap, "where": where})
         ctx.picture = {"candidate": name, "caption": cap, "chapter": ch}
         seen = ""
         if describe and self.llm:  # a picture that was found, not made: let a vision model look at it, so it can be described to the writer
@@ -674,6 +684,17 @@ class Agent:
         return ("Proposed. The app shows the picture to the writer and asks yes or no by itself. In your reply, DESCRIBE the picture in one or two plain sentences "
                 "(the writer may not look at the screen) and do not ask about saving." + how)
 
+    def _place_image(self, sess: Session, chapter: int, name: str, caption: str, where: int | None) -> Paragraph:
+        """The picture goes after `where` paragraphs (0 = the very start); anywhere else, or nothing said, it goes at the end of the chapter."""
+        paras = self.store.paragraphs(sess.book, chapter)
+        if where is None or where < 0 or where >= len(paras) or not paras:
+            return self.store.append_image(sess.book, chapter, name, caption)
+        return self.store.insert_paragraph(sess.book, chapter, imgs.markdown(caption, name), before_id=paras[where].id)
+
+    @staticmethod
+    def _where_words(where: int | None) -> str:
+        return "" if where is None or where < 0 else (", at the very start" if where == 0 else f", after paragraph {where}")
+
     def _commit_picture(self, sess: Session) -> Reply:
         p, sess.pending = sess.pending, None
         d = p.data or {}
@@ -681,14 +702,14 @@ class Agent:
             if p.chapter not in self.store.chapter_numbers(sess.book):
                 self.store.create_chapter(sess.book, p.chapter)
             name = self.images.accept(sess.book, d["candidate"])
-            para = self.store.append_image(sess.book, p.chapter, name, d.get("caption", ""))
+            para = self._place_image(sess, p.chapter, name, d.get("caption", ""), d.get("where"))
         except (FileNotFoundError, BookError, PictureError) as e:
             return self._reply(sess, f"I couldn't add the picture: {e}")
         sess.focus = para.id
         self.kg.refresh(sess.book)
         if self.index:
             self.index.schedule(sess.book)
-        r = self._reply(sess, f"The picture is in chapter {p.chapter}.")
+        r = self._reply(sess, f"The picture is in chapter {p.chapter}{self._where_words(d.get('where'))}.")
         r.changed = [para.id]
         r.highlights = self._hl(sess, [para.id])
         return r

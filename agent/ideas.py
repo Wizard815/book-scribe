@@ -40,6 +40,7 @@ KINDS: dict[str, dict] = {
 SETTING_HINTS: list[tuple[str, list[str]]] = [
     (r"\b(?:arthur|camelot|round table|merlin|excalibur|avalon|guinevere|lancelot|bedivere|gawain|morgan le fay|lady of the lake|uther|cornwall|knights? of)\b", ["welsh", "english"]),
     (r"\b(?:viking|norse|odin|thor|jarl|valhalla|longship|asgard)\b", ["norse"]),
+    (r"\b(?:swedish|sweden|swede|swedes|stockholm|lindsborg|scandinavian)\b", ["swedish"]),
     (r"\b(?:samurai|shogun|ronin|edo|kyoto|daimyo|katana)\b", ["japanese"]),
     (r"\b(?:ireland|irish|dublin|cork|galway|gaelic)\b", ["irish"]),
     (r"\b(?:scotland|scottish|highlands|edinburgh|clan)\b", ["scottish"]),
