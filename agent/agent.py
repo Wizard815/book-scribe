@@ -286,14 +286,16 @@ class Agent:
                 said = rest if kind else text
                 nums_ = self.store.chapter_numbers(sess.book)
                 ch_new = intent.parse_ref(said).chapter if re.search(r"\bchapter \d+", intent.norm(said)) else None
-                if ch_new is not None and not (ch_new in nums_ or ch_new == max(nums_, default=0) + 1):
+                if ch_new is not None and ch_new not in nums_:
+                    if re.search(r"\bchapter \d+", intent.norm(said)) and not intent.picture_position(said) is None or ch_new == max(nums_, default=0) + 1:
+                        return self._reply(sess, f"Chapter {ch_new} does not exist yet. Say start chapter {ch_new} first, or tell me one of chapters 1 to {max(nums_, default=1)}. The picture is still waiting.")
                     ch_new = None
                 pos = intent.picture_position(said)
                 other = re.search(r"\b(?:make|different|another|instead|bigger|smaller|new|find|draw)\b", intent.norm(said))
                 if (ch_new is not None or pos is not None) and not other and len(said.split()) <= 14:
                     # "no, put it in chapter 4 after paragraph 1" / "yes, at the end": where it goes is part of the answer (a "no" about the place keeps the picture)
                     if ch_new is not None:
-                        sess.pending.chapter = sess.work = ch_new
+                        sess.pending.chapter = ch_new  # only the picture moves; where the writer is writing does not change
                         sess.pending.data["where"] = pos
                     elif pos is not None:
                         sess.pending.data["where"] = pos
@@ -721,15 +723,19 @@ class Agent:
         def shingles(t: str) -> set:
             w = re.findall(r"[a-z0-9']+", imgs.plain(t).lower())
             return {" ".join(w[i:i + 4]) for i in range(max(0, len(w) - 3))}
-        new = shingles(text)
+        def content(t: str) -> set:
+            return {w for w in re.findall(r"[a-z]{5,}", imgs.plain(t).lower())}
+        new, cnew = shingles(text), content(text)
         if len(new) < 8:
             return ""
         for p in self.store.all_paragraphs(sess.book):
             if p.image:
                 continue
-            old = shingles(p.text)
+            old, cold = shingles(p.text), content(p.text)
             if old and len(new & old) / min(len(new), len(old)) >= 0.35:
                 return f"This repeats much of {self._where(sess, p)}, which already tells it."
+            if len(cnew) >= 12 and len(cold) >= 12 and len(cnew & cold) / len(cnew | cold) >= 0.4:  # the same story in other words
+                return f"This tells the same things as {self._where(sess, p)}."
         return ""
 
     def ungrounded(self, sess: Session, text: str) -> str:
@@ -762,9 +768,18 @@ class Agent:
             tok = m.group(1)
             if tok.lower() not in hay and tok not in found:
                 found.append(tok)
-        if not found:
-            return ""
-        return "I could not find " + ", ".join(found[:4]) + " in your documents, your notes or what you told me."
+        if found:
+            return "I could not find " + ", ".join(found[:4]) + " in your documents, your notes or what you told me."
+        if self.library and self.library.items(sess.book):  # sentences made of things the documents never mention
+            hayw = set(re.findall(r"[a-z]{5,}", hay))
+            weak = []
+            for sen in re.split(r"(?<=[.!?])\s+", bare.strip()):
+                ws = [w for w in re.findall(r"[a-z]{5,}", sen.lower())]
+                if len(sen.split()) >= 8 and len(ws) >= 4 and sum(w in hayw for w in ws) / len(ws) < 0.3:
+                    weak.append(sen.strip())
+            if weak:
+                return "These details are not in your documents or notes: " + " ".join(f"\u201c{w[:90]}\u201d" for w in weak[:2])
+        return ""
 
     def _supersede(self, sess: Session) -> bool:
         """A new draft or picture while an older draft/picture waits: the older one is put aside (and said out loud, and "bring it back" restores it), so the
