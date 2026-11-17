@@ -234,7 +234,8 @@ class Agent:
                 sess.pending, sess.last_dropped = sess.last_dropped, None
             else:
                 return self._reply(sess, "I am holding something else for your yes or no right now. Answer that first.")
-            r = self._reply(sess, f"Here it is again. {sess.pending.ask or self._ask_for(sess, sess.pending)} Say yes or no.")
+            body = f" {sess.pending.text}" if sess.pending.kind in ("append", "edit") else ""
+            r = self._reply(sess, f"Here it is again:{body} {sess.pending.ask or self._ask_for(sess, sess.pending)} Say yes or no.")
             return r
         if intent.describe_request(text):  # "describe it to me": words for the picture, and a waiting picture keeps waiting. Never a new paragraph.
             return self._describe_picture(sess, text) or self._reply(sess, "I do not know which picture you mean. Say which chapter it is in, or what it shows, and I will describe it.")
@@ -291,7 +292,7 @@ class Agent:
                     return self._reply(sess, f"Okay, I left it as it was. I'm back in chapter {sess.chapter}, where you are writing. What next?")
                 return self._reply(sess, "Okay, dropped it. What would you like instead?")
             if kind and rest and sess.pending.kind != "confirm_target":
-                return await self._revise(sess, rest)  # "yes but make it shorter" / "no, make it longer": never save or drop blindly
+                return await self._revise(sess, rest, said_yes=(kind == "yes"))  # "yes but make it shorter" / "no, make it longer": never save or drop blindly
             if not kind and (r := self._ui_reply(sess, text)):  # "bigger" while reviewing a proposal: change the screen, keep the proposal
                 return r
             if not kind and sess.pending.kind != "voice" and not self._is_new_command(text):
@@ -329,6 +330,8 @@ class Agent:
             r.text += " (That was the paragraph I just showed you.)"
             return r
 
+        if intent.norm(text) in ("goodbye", "good bye", "bye bye", "goodnight", "good night"):  # a real farewell gets a farewell, never an empty answer
+            return self._reply(sess, "Goodbye for now. Everything you saved is in your book.")
         if intent.is_noise(text):  # silence that the speech model turned into "Thank you."
             return Reply(text="", mode=sess.mode, chapter=sess.chapter, focus=sess.focus)
 
@@ -645,7 +648,8 @@ class Agent:
         named = self._find_picture(sess, text) if text else None
         if named:
             sess.chapter, sess.focus = named.chapter, named.id
-            r = self._reply(sess, f"It is the picture in chapter {named.chapter}, called: {named.image[0]}.")
+            kept = self.images.note(sess.book, named.image[1]) if len(named.image) > 1 else ""
+            r = self._reply(sess, f"It is the picture in chapter {named.chapter}, called: {named.image[0]}." + (f" {' '.join(re.split(r'(?<=[.!?])\s+', kept)[:3])}" if kept else ""))
             r.highlights = self._hl(sess, [named.id])
             return r
         if sess.focus:
@@ -654,7 +658,8 @@ class Agent:
             except BookError:
                 para = None
             if para is not None and para.image:
-                return self._reply(sess, f"It is a picture with the caption: {para.image[0]}.")
+                kept = self.images.note(sess.book, para.image[1]) if len(para.image) > 1 else ""
+                return self._reply(sess, f"It is a picture with the caption: {para.image[0]}." + (f" {' '.join(re.split(r'(?<=[.!?])\s+', kept)[:3])}" if kept else ""))
         if self.library:  # "describe the photograph": the picture the writer added most recently, in the words the app has for it
             pics = [m for m in self.library.items(sess.book) if m.get("kind") == "image"]
             if pics:
@@ -767,6 +772,7 @@ class Agent:
             if p.chapter not in self.store.chapter_numbers(sess.book):
                 self.store.create_chapter(sess.book, p.chapter)
             name = self.images.accept(sess.book, d["candidate"])
+            self.images.note(sess.book, name, d.get("describe") or d.get("gen_prompt") or "")
             para = self._place_image(sess, p.chapter, name, d.get("caption", ""), d.get("where"))
         except (FileNotFoundError, BookError, PictureError) as e:
             return self._reply(sess, f"I couldn't add the picture: {e}")
@@ -1222,7 +1228,7 @@ class Agent:
         canon = await self._canon_by_meaning(sess, text)
         msgs = self._context(sess, text, canon=canon, sparks=self._sparks(sess, text), tools=True, recall=await self._recall(sess, text))
         out, _ = await harness.run(self.llm, msgs, self.toolbox, ctx, max_steps=3, temperature=self._temperature())
-        out = out or "I'm not sure what to say to that. Could you tell me a little more?"
+        out = (out or "").strip() or ("Goodbye for now. Everything you saved is in your book." if re.search(r"\b(?:good ?bye|bye|see you|talk (?:to you )?later)\b", text.lower()) else "I'm not sure what to say to that. Could you tell me a little more?")
         if ctx.picture and sess.pending and sess.pending.kind == "picture":  # the model made or found a picture: show it, describe it, ask
             cap = ctx.picture["caption"]
             gp = (sess.pending.data or {}).get("gen_prompt", "")
@@ -1279,6 +1285,16 @@ class Agent:
                                         "If the instruction refers to something that is NOT in this paragraph (a word, a detail), do not invent it: reply with exactly NOT_FOUND: followed by a short, plain reason."}
         ]
         new, issues = await self._gated(msgs)
+        if new.strip().upper().startswith("NOT_FOUND") and (rf := intent.parse_ref(text)).chapter and rf.para is None and not rf.picture:
+            # "take that part out of the paragraph in chapter 2": no paragraph was named, so the guess may be the wrong one; try the others in that chapter
+            for other in [p for p in self.store.paragraphs(sess.book, rf.chapter) if not p.image and p.id != target.id][:6]:
+                m2 = self._context(sess, text, other.text, other) + [
+                    {"role": "user", "content": f"Rewrite ONLY this paragraph.\nInstruction: {text}\n\nORIGINAL:\n{other.text}\n\nOutput only the new paragraph. If the instruction refers to something that is NOT in this paragraph (a word, a detail), reply with exactly NOT_FOUND: and a short reason."}]
+                n2, i2 = await self._gated(m2)
+                if not n2.strip().upper().startswith("NOT_FOUND"):
+                    target, new, issues, msgs = other, n2, i2, m2
+                    where = self._where(sess, target)
+                    break
         if new.strip().upper().startswith("NOT_FOUND"):
             return self._reply(sess, "I did not change anything. " + (new.split(":", 1)[1].strip() if ":" in new else "That is not in this paragraph.") + " Tell me what you want instead.")
         new = clean_draft(new)
@@ -1326,7 +1342,7 @@ class Agent:
         reply.notes += [f"Style note: {i}" for i in issues]
         return self._attach(sess, reply, ctx, "", text)
 
-    async def _revise(self, sess: Session, instruction: str) -> Reply:
+    async def _revise(self, sess: Session, instruction: str, said_yes: bool = False) -> Reply:
         """The writer answered a proposal with changes ("yes but shorter", "no, make it longer"): redo it, don't save or drop."""
         p = sess.pending
         if p.kind in ("delete", "move"):
@@ -1349,6 +1365,10 @@ class Agent:
                 p.ask = ""
                 p.ask = self._ask_for(sess, p)
                 left = [b["name"] for b in batch if b not in kept]
+                if said_yes:  # "yes, but leave Erik out": the rest is saved now, no second yes
+                    done = self._commit_wiki(sess)
+                    done.text = f"I left out {', '.join(left)}. {done.text}"
+                    return done
                 r = self._reply(sess, f"Okay, I left out {', '.join(left)}. {p.ask} Say yes or no.")
                 r.pending = {"kind": p.kind, "text": p.text, "paragraph_id": p.paragraph_id, "ask": p.ask}
                 return r

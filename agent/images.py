@@ -15,6 +15,7 @@ file that is not really a picture, an enormous one, or one carrying hidden data 
 from __future__ import annotations
 
 import hashlib
+import json
 import io
 import re
 import time
@@ -140,6 +141,22 @@ class ImageStore:
             if (m := parse(p.text)):
                 out.add(m[1])
         return out
+
+    def _notes_path(self, book: str) -> Path:
+        return self.dir(book) / ".descriptions.json"
+
+    def note(self, book: str, name: str, text: str | None = None) -> str:
+        """What the app said a picture shows (kept so "describe the picture in chapter 2" can say it again later). Reads when text is None."""
+        try:
+            notes = json.loads(self._notes_path(book).read_text())
+        except (OSError, ValueError):
+            notes = {}
+        if text is None:
+            return str(notes.get(name, ""))
+        if text.strip():
+            notes[name] = text.strip()[:600]
+            self._notes_path(book).write_text(json.dumps(notes))
+        return text
 
     def info(self, book: str, name: str, caption: str = "", candidate: bool = False) -> dict:
         base = f"/api/books/{book}/images/" + ("candidate/" if candidate else "")
