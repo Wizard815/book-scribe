@@ -170,8 +170,11 @@ async def test_pictures_are_read_by_the_chat_model_or_kept_with_a_plain_explanat
     assert m["status"] == "read" and "bees are gone" in lib.text("demo", m["slug"])
     part = seeing.calls[0][0]["content"]
     assert part[1]["type"] == "image_url" and part[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")  # sent as a picture, not as text
-    m2 = await ingest.add_file("demo", "letter2.png", buf.getvalue(), lib, Blind(), FakeSTT(), jr)
-    assert m2["status"] == "unread" and "pictures" in m2["message"] and lib.source("demo", m2["slug"]) is not None  # the file is kept, and the writer is told
+    again = await ingest.add_file("demo", "letter-copy.png", buf.getvalue(), lib, seeing, FakeSTT(), jr)
+    assert again.get("duplicate") and again["slug"] == m["slug"] and "already added" in again["message"] and len(lib.items("demo")) == 1  # the same file twice is one file
+    buf2 = io.BytesIO(); Image.new("RGB", (220, 100), "white").save(buf2, "PNG")
+    m2 = await ingest.add_file("demo", "letter2.png", buf2.getvalue(), lib, Blind(), FakeSTT(), jr)
+    assert m2["status"] == "unread" and "cannot see pictures" in m2["message"] and "put it in the book" in m2["message"] and lib.source("demo", m2["slug"]) is not None  # kept, and said plainly
     m3 = await ingest.add_file("demo", "memo.mp3", b"ID3" + b"\x00" * 500, lib, seeing, FakeSTT(), jr)
     assert m3["status"] == "read" and "bees behind the chapel" in lib.text("demo", m3["slug"])
     assert any("added a file" in r["text"] for r in jr.recent("demo", 10, since_screen=False))  # the journal remembers that it happened

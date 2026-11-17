@@ -299,6 +299,13 @@ class Agent:
             return self._ideas_reply(sess, req)
         if intent.undo_request(text):
             return self._undo_reply(sess)
+        if (nt := intent.new_chapter_titled(text)) is not None:
+            r = self._new_chapter_reply(sess, nt[0])
+            if self.store.chapter_title(sess.book, sess.chapter) == "" and sess.chapter in self.store.chapter_numbers(sess.book):
+                t = self.store.set_chapter_title(sess.book, sess.chapter, nt[1])
+                r.text = f"Chapter {sess.chapter}, {t}, is ready. Tell me what happens in it, or say write the first paragraph."
+                r.speech = [{"speaker": vx.ASSISTANT, "text": r.text}]
+            return r
         if (n := intent.new_chapter(text)) is not None:
             return self._new_chapter_reply(sess, n)
         if (fmt := intent.export_request(text)) is not None:
@@ -406,7 +413,10 @@ class Agent:
             return r
         said_lead, tail = f"{lead}I saved this to chapter {ch}:", f"{warn} Say undo to take it back.".strip()
         r.text = f"{said_lead} {text} {tail}"
-        r.speech = await self._speech_text(sess, text, said_lead, tail)
+        sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+        short = " ".join(sentences[:2]) if len(sentences) > 2 else text  # tired ears: the first two sentences are spoken; the whole paragraph is on screen and can be read in full
+        more = " I have read you the start. Say read it to me for all of it." if len(sentences) > 2 else ""
+        r.speech = await self._speech_text(sess, short, said_lead, f"{more} {tail}".strip())
         return r
 
     def _book_state(self, sess: Session) -> str:
@@ -748,6 +758,8 @@ class Agent:
             b = self.store.bible(book)
             bits = [b.read("premise")] + [f"{e.name} {e.summary()}" for k in ("characters", "world") for e in list(b.entries(k).values())[:40]]
             bits += [p.text for p in self.store.all_paragraphs(book)[:12]]
+            if self.journal:
+                bits += [r["text"] for r in self.journal.recent(book, 40, since_screen=False) if r["role"] == "user"]  # what the writer has said about the book so far
         except Exception:
             return []
         from ideas import cultures_for
@@ -1216,7 +1228,10 @@ class Agent:
             cur = bible.read("premise").rstrip()
             bible.write_doc("premise", (cur if cur.strip("# \nPremise") else "# Premise") + "\n\n" + note)
             return "the book's premise"
-        old = next((e for e in bible.entries(kind).values() if e.name.lower() == name.lower()), None)
+        def base(n: str) -> str:
+            return re.sub(r"^(?:sir|lady|lord|king|queen|dame|master|mr|mrs|miss|old|young|saint|st|the|prince|princess)\.?\s+", "", n.strip().lower())
+        old = next((e for e in bible.entries(kind).values() if e.name.lower() == name.lower()), None) or \
+            next((e for e in bible.entries(kind).values() if base(e.name) == base(name)), None)  # "Sir Kay" and "Kay" are one page
         body = ((old.body.strip() + "\n\n") if old and old.body.strip() else "") + note
         bible.upsert(kind, old.name if old else name, None, body)
         return name

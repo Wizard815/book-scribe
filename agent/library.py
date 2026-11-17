@@ -63,7 +63,7 @@ class Library:
 
     # --- adding ----------------------------------------------------------------------------------------------------
     def add(self, book: str, filename: str, data: bytes, title: str, kind: str, text: str, status: str = "read", notes: list[str] | None = None,
-            pages: int = 0, tree: genealogy.Tree | None = None) -> dict:
+            pages: int = 0, tree: genealogy.Tree | None = None, sha1: str = "") -> dict:
         base = slugify(title) if re.search(r"[A-Za-z0-9]", title) else "file"
         slug, n = base[:60], 2
         while (self.dir(book) / slug).exists():
@@ -74,7 +74,7 @@ class Library:
         (d / f"source{ext}").write_bytes(data)
         (d / "text.md").write_text(text, encoding="utf-8")
         meta = {"slug": slug, "title": title, "filename": Path(filename).name[:120], "kind": kind, "added": int(time.time()), "status": status,
-                "chars": len(text), "pages": pages, "bytes": len(data), "notes": (notes or [])[:6]}
+                "chars": len(text), "pages": pages, "bytes": len(data), "notes": (notes or [])[:6], "sha1": sha1}
         if tree:
             meta["people"] = len(tree.people)
             (d / "tree.json").write_text(json.dumps({"people": {k: asdict(v) for k, v in tree.people.items()}, "families": {k: asdict(v) for k, v in tree.families.items()}}), encoding="utf-8")

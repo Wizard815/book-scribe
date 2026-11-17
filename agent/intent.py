@@ -68,7 +68,7 @@ def _words(text: str) -> list[str]:
     return norm(text).split()
 
 
-_SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| the paragraph)?(?: in| in there| down| to the book| to chapter \d+| into the book| away)?(?: please| now| for me)?|that one|that'?s? (?:the one|fine|good|right)|do it)$")
+_SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| the (?:paragraph|picture))?(?: in| in there| down| to the book| to chapter \d+| into the book| away)?(?: please| now| for me)?|that one|that'?s? (?:the (?:one|1)|fine|good|right|great|perfect|lovely|nice|mine|it)|(?:it'?s|this is) (?:mine|good|great|fine|right|perfect|lovely|nice|the (?:one|1))|do it|mine|(?:the )?(?:one|1)|thanks|thank you|great|perfect|lovely|good|nice|fine|right|exactly)(?:,? (?:put it in|use it|add it|save it|keep it|go ahead|please|thank you|thanks))*$")
 
 
 def confirmation(text: str) -> tuple[str | None, str]:
@@ -161,7 +161,7 @@ _POLITE = r"(?:(?:please|kindly|hey|ok|okay|so|now|and|then)\s+)*(?:(?:can|could
 _EDIT_VERBS = r"(?:change|make|rewrite|rephrase|reword|fix|edit|tweak|soften|tighten|revise|replace|shorten|lengthen|expand|trim|polish|improve|punch up|sharpen|simplify|modernize|modernise)"
 _EDIT_LEAD = re.compile(rf"^{_POLITE}{_EDIT_VERBS}\b")
 _EDIT_CLAUSE = re.compile(rf"[,;]\s*(?:and |then |please )*{_EDIT_VERBS}\b|\b(?:and|then) {_EDIT_VERBS} (?:him|her|them|it|that|this|the)\b")
-_DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|next paragraph|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
+_DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|next paragraph|(?:the )?(?:last|final|closing|opening|first|next) paragraph (?:for|of|in) chapter \d+(?= \w)|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
 _QUESTION = re.compile(r"^(?:so |and |but )?(how|what|why|who|whom|whose|where|should|do you|does|is|are|which|would|am i|did|will it|shall)\b")
 _OPINION = re.compile(r"^(?:i |i'm |im |i've |my )?(?:hate|like|love|dislike|prefer|think|feel|want|wish|need|always|never|don't like|dont like|can't|cant)\b|^i (?:hate|like|love|dislike|prefer|think|feel|wish|really|just|always|never|don't|dont|can't|cant)\b")
 
@@ -305,6 +305,21 @@ def new_chapter(text: str) -> int | None:
     return int(m.group(1)) if m.group(1) else 0
 
 
+_NEW_CHAPTER_TITLED = re.compile(r"(?i)^" + _POLITE + r"(?:start|begin|open|make|create|add|write)(?: me)?(?: a| the)?(?: new| next| fresh)? chapter(?: (?:number )?(\d+))?(?:,|:| and)?\s+(?:and )?(?:(?:call(?:ed)?|title[d]?|name[d]?|label(?:l?ed)?)(?: it| the chapter| this chapter)?(?: to| as)?\s+)?[\"'“]?(.{2,70}?)[\"'”]?[.!?]?$")
+
+
+def new_chapter_titled(text: str) -> tuple[int, str] | None:
+    """"start chapter 3 and call it The Lake", "begin chapter 4, The Round Table" -> (chapter number, 0 = the next one; the title)."""
+    raw = text.strip()
+    m = _NEW_CHAPTER_TITLED.match(raw)
+    if not m or not (m.group(2) or "").strip():
+        return None
+    title = m.group(2).strip()
+    if re.fullmatch(r"(?i)(?:please|now|for me|again)", title) or len(title.split()) > 9:
+        return None
+    return (int(m.group(1)) if m.group(1) else 0, title)
+
+
 def title_chapter(text: str) -> tuple[int | None, str] | None:
     """"call chapter 3 The Lake", "title this chapter 'Dozmary Pool'" -> (chapter number or None for the one on screen, the title)."""
     m = re.match(rf"(?i)^{_POLITE}(?:call|title|name|rename|label)(?: the)?( (?:this|current|new|next))? chapter(?: (\d+))?[,:]?(?: to| as)?\s+[\"'“]?(.{{2,70}}?)[\"'”]?[.!?]?$", text.strip())
@@ -314,7 +329,7 @@ def title_chapter(text: str) -> tuple[int | None, str] | None:
 
 
 _DELETE = re.compile(rf"^{_POLITE}(?:delete|remove|cut|scrap|erase|get rid of|take out)\b(.+)$")
-_MOVE_LEAD = re.compile(rf"^{_POLITE}(?:move|put|shift|send)\b(.+)$")
+_MOVE_LEAD = re.compile(rf"^{_POLITE}(?:move|put|shift|send)\b(.+?)(?:,? (?:please|now|for me))?$")
 _TOPWORD = r"(?:start|beginning|top|front)"
 
 
@@ -343,13 +358,13 @@ def move_request(text: str) -> "Move | None":
     if m := re.search(r"^(.+?)\b(before|after|ahead of|behind)\b (?:the )?(?:paragraph|section|part) (\d+)(?: (?:of|in) chapter (\d+))?$", body):
         ref = parse_ref(m.group(1))
         return Move(ref, int(m.group(4)) if m.group(4) else None, ("before" if m.group(2) in ("before", "ahead of") else "after", int(m.group(3)))) if ref.para is not None else None
-    if m := re.search(rf"^(.+?)\bto (?:the )?{_TOPWORD}(?: of)?(?: (?:the )?chapter (\d+))?(?: of the chapter)?$", body):
+    if m := re.search(rf"^(.+?)\bto (?:the )?{_TOPWORD}(?: of)?(?: (?:the |its |this |that )?chapter(?: (\d+))?)?(?: of the chapter)?$", body):
         ref = parse_ref(m.group(1))
         return Move(ref, int(m.group(2)) if m.group(2) else None, "start") if ref.para is not None else None
-    if m := re.search(r"^(.+?)\bto (?:the )?end(?: of)?(?: (?:the )?chapter (\d+))?(?: of the chapter)?$", body):
+    if m := re.search(r"^(.+?)\bto (?:the )?end(?: of)?(?: (?:the |its |this |that )?chapter(?: (\d+))?)?(?: of the chapter)?$", body):
         ref = parse_ref(m.group(1))
         return Move(ref, int(m.group(2)) if m.group(2) else None, "end") if ref.para is not None else None
-    if m := re.search(r"^(.+?)\b(?:to|into|in) (?:the )?(?:end of )?chapter (\d+)$", body):
+    if m := re.search(r"^(.+?)\b(?:to|into|in) (?:the )?(?:end of |start of |beginning of )?chapter (\d+)(?:,? at the (?:end|start|beginning))?$", body):
         ref = parse_ref(m.group(1))
         return Move(ref, int(m.group(2)), "end") if ref.para is not None else None
     return None
@@ -377,7 +392,7 @@ def undo_request(text: str) -> bool:
     return len(n.split()) <= 9 and bool(_UNDO.match(n))
 
 
-_DESCRIBE = re.compile(r"^{p}(?:describe|tell me about|tell me what|what(?:'s| is| does)(?: in)?|what do you see in)(?: (?:it|that|this|the))?(?: (?:picture|image|photo|illustration|drawing))?(?: again)?(?: to me| for me| please)*(?: look like| looks like| shows| is| in it| on it)?[.?!]?$".replace("{p}", _POLITE))
+_DESCRIBE = re.compile(r"^{p}(?:describe|tell me about|tell me what|what(?:'s| is| does)(?: in)?|what do you see in)(?: (?:it|that|this|the))?(?: (?:picture|image|photo|illustration|drawing))?(?: again| to me| for me| please)*(?: look like| looks like| shows| is| in it| on it)?(?: in (?:more )?detail| more)?(?: again| to me| for me| please)*[.?!]?$".replace("{p}", _POLITE))
 
 _EXPORT_NOUN = re.compile(r"\b(?:book|story|novel|manuscript)\b")
 
@@ -387,7 +402,7 @@ def export_request(text: str) -> str | None:
     n = norm(text)
     if len(n.split()) > 16 or not _EXPORT_NOUN.search(n) or re.search(r"\b(?:chapter|paragraph|wiki|picture|file i|downloaded)\b", n):
         return None
-    strong = re.match(rf"^{_POLITE}(?:export|save|download|print)\b", n)
+    strong = re.search(r"\b(?:export|save|download|print)\b", " ".join(n.split()[:6]))
     soft = re.match(rf"^{_POLITE}(?:give me|make me|send me|get me|i want|i would like|i'd like|can i have|let me have)\b", n) and \
         re.search(r"\b(?:file|epub|e ?book|pdf|html|web ?page|zip|markdown|copy|whole|entire|complete|finished|to print|to keep)\b", n)
     if not (strong or soft):

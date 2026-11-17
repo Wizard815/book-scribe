@@ -7,7 +7,7 @@ import httpx
 from providers import Profile
 from router import AllTiersFailed, NotConfigured, Router  # noqa: F401  (re-exported for main.py)
 
-DEFAULT_TIMEOUT = {"chat": 180.0, "stt": 120.0, "tts": 120.0, "embed": 60.0, "image": 240.0}
+DEFAULT_TIMEOUT = {"chat": 180.0, "stt": 120.0, "tts": 120.0, "embed": 60.0, "image": 120.0}
 
 
 def headers(p: Profile) -> dict:

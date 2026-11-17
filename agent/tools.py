@@ -89,8 +89,13 @@ def build(agent) -> Toolbox:
         b = book(ctx)
         paras = store.all_paragraphs(b)
         bible = store.bible(b)
+        per = []
+        for n in store.chapter_numbers(b):
+            ps = store.paragraphs(b, n)
+            pics = [p.image[0] for p in ps if p.image]
+            per.append({"chapter": n, "title": store.chapter_title(b, n), "paragraphs": len(ps) - len(pics), "pictures": len(pics), "picture_captions": pics})
         return {
-            "chapters": len(store.chapter_numbers(b)), "paragraphs": len(paras), "words": sum(len(p.text.split()) for p in paras),
+            "per_chapter": per, "chapters": len(store.chapter_numbers(b)), "paragraphs": len(paras), "words": sum(len(p.text.split()) for p in paras if not p.image),
             "current_chapter": ctx.sess.chapter, "characters": list(bible.characters()),
             "open_threads": [t.name for t in bible.threads().values() if str(t.state.get("status", "open")) != "resolved"],
         }
@@ -401,15 +406,20 @@ def build(agent) -> Toolbox:
             return "Give a description of the picture."
         if ctx.sess.pending:
             return "A proposal is already waiting for the writer's answer. Do not propose another."
+        import time as _t
+
         data, err = None, None
-        for _ in range(2):  # one quiet retry: a picture server that is busy often answers the second time
+        for attempt in range(2):  # one quiet retry: a picture server that is busy often answers the second time
+            started = _t.monotonic()
             try:
                 data = await agent.imagegen.generate(prompt.strip()[:900] + ". Illustration for a book, no text or letters in the picture.")
                 break
             except Exception as e:
                 err = e
+                if _t.monotonic() - started > 45:
+                    break  # a failure that took this long: do not make a tired writer wait through a second one
         if data is None:
-            return f"Error: the picture could not be made ({err.__class__.__name__}) even after a second try. Say so plainly and offer to try a different description."
+            return f"Error: the picture could not be made ({err.__class__.__name__}). Say so plainly and offer to try a different description or to find one on the web instead."
         ctx.notes.append("I made a picture for you.")
         return await agent.propose_picture(ctx.sess, ctx, data, caption or prompt[:120], _int(chapter, 0, 0, 9999) or None, prompt)
 
@@ -449,6 +459,49 @@ def build(agent) -> Toolbox:
         if not src:
             return "The original picture file is missing."
         return await agent.propose_picture(ctx.sess, ctx, src.read_bytes(), caption or m["title"], _int(chapter, 0, 0, 9999) or None, m["title"], describe=True)
+
+    async def propose_move(ctx: Ctx, paragraph=None, chapter=None, to_chapter=None, where="end"):
+        import intent
+
+        sess = ctx.sess
+        if sess.pending:
+            return "A proposal is already waiting for the writer's answer. Do not propose another."
+        try:
+            para = _int(paragraph, 0, -1, 9999)
+        except Exception:
+            para = 0
+        w = str(where or "end").strip().lower()
+        pos = "start" if w in ("start", "beginning", "top", "front", "first") else ("before" if w.startswith("before") else "after") if w.startswith(("before", "after")) else "end"
+        if pos in ("before", "after"):
+            k = re.search(r"\d+", w)
+            pos = (pos, int(k.group())) if k else "end"
+        ref = intent.Ref(chapter=_int(chapter, 0, 0, 9999) or None, para=para or None)
+        mv = intent.Move(ref, _int(to_chapter, 0, 0, 9999) or None, pos)
+        r = agent._move_reply(sess, mv, "")
+        if not sess.pending:
+            return f"Error: {r.text}"
+        return "Proposed. The app now asks the writer yes or no by itself. Say at most one short sentence."
+
+    async def propose_delete(ctx: Ctx, paragraph=None, chapter=None):
+        import intent
+
+        sess = ctx.sess
+        if sess.pending:
+            return "A proposal is already waiting for the writer's answer. Do not propose another."
+        r = agent._delete_reply(sess, intent.Ref(chapter=_int(chapter, 0, 0, 9999) or None, para=_int(paragraph, 0, -1, 9999) or None), "")
+        if not sess.pending:
+            return f"Error: {r.text}"
+        return "Proposed. The app now asks the writer yes or no by itself. Say at most one short sentence."
+
+    async def start_chapter(ctx: Ctx, number=None, title=""):
+        r = agent._new_chapter_reply(ctx.sess, _int(number, 0, 0, 9999))
+        if title and ctx.sess.chapter in store.chapter_numbers(book(ctx)) and not store.chapter_title(book(ctx), ctx.sess.chapter):
+            store.set_chapter_title(book(ctx), ctx.sess.chapter, title)
+        return r.text
+
+    async def set_chapter_title(ctx: Ctx, chapter=None, title=""):
+        r = agent._title_reply(ctx.sess, _int(chapter, 0, 0, 9999) or None, title)
+        return r.text
 
     async def use_skill(ctx: Ctx, name=""):
         s = _skills(agent).get(name.strip().lower())
@@ -510,6 +563,13 @@ def build(agent) -> Toolbox:
           use_found_picture, required=("id", "caption"), when=lambda: web_on() and agent.web.can_search),
         T("use_library_picture", "Use a picture the writer added to the library in the book (the writer must say yes).", {"title": "the picture's title", "caption": "a short caption", "chapter": "chapter number"},
           use_library_picture, required=("title", "caption")),
+        T("propose_move", "Move a paragraph or a picture: to the start or end of a chapter, into another chapter, or before/after another paragraph. The app asks the writer yes or no and one undo takes it back. "
+          "Use this whenever they ask to move something, in any words; never say you cannot.", {"paragraph": "number inside its chapter (-1 = the last)", "chapter": "the chapter it is in now (default: the one on screen)",
+          "to_chapter": "destination chapter (default: the same one)", "where": "end | start | before 3 | after 3"}, propose_move, required=("paragraph",)),
+        T("propose_delete", "Delete a paragraph or picture (the app asks yes or no; undo brings it back).", {"paragraph": "number inside its chapter (-1 = the last)", "chapter": "chapter (default: the one on screen)"},
+          propose_delete, required=("paragraph",)),
+        T("start_chapter", "Start a new chapter (the next number) and optionally name it.", {"number": "the next chapter number (optional)", "title": "the chapter's title (optional)"}, start_chapter),
+        T("set_chapter_title", "Give a chapter a title.", {"chapter": "chapter number (default: the one on screen)", "title": "the title"}, set_chapter_title, required=("title",)),
         T("use_skill", "Load a playbook for a kind of job (see SKILLS).", {"name": "skill name"}, use_skill, required=("name",)),
     ]
     return Toolbox(base + list(agent.addons.tools if agent.addons else []))
