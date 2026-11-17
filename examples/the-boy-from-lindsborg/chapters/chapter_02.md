@@ -8,16 +8,16 @@ title: "Wheat and Draft Cards"
 ## Scene 1
 
 <!-- paragraph_id: ch2_s1_p1 -->
-Everett grew up on wheat. The farm outside Lindsborg lay open to the sky on every side, and as a small boy he learned the year by the color of the field: green and short in spring, then rippling and pale, then gold and ready for the harvest. His father, Anders, who had crossed the ocean from Sweden with little more than his hands, taught him to walk a row without trampling the stalks and to rub a head of wheat between his palms and judge it by the taste of the grain. His mother, Karin, kept the kitchen and the household going, and there were chores for a boy before school and again after it, so that Everett's earliest memories were of work shared with the two of them. Nobody on that farm talked much about feelings, but a boy could read his father's pride in a nod over a straight furrow, and his mother's in the extra helping set in front of him at supper.
-
-<!-- paragraph_id: ch2_s1_p4 -->
-At home the family spoke Swedish. Anders said grace in it before supper, and Karin answered him, and Everett learned the words for bread and rain and bedtime in Swedish first. On Sundays they drove into Lindsborg for church, where the hymns were sung in the old language. At school on Monday it was English, and Everett moved between the two without thinking about it.
+The Lund farm lay a few miles outside Lindsborg, where the wheat ran flat and gold to the edge of the sky. Olof and Freja had come from Sweden to work that land, and they worked it from first light to last. Their son Everett was up before dawn every morning, pulling on his boots in the dark kitchen, then crossing the cold yard to feed the animals and carry water while the wheat stood pale and silent all around him and the east slowly turned grey.
 
 <!-- paragraph_id: ch2_s1_p2 -->
-In June 1917 the men of the county went to register for the draft, and Everett was one of them. He came home with the card in his pocket and the knowledge that his number might be called in the weeks ahead. He did not want to sit on the farm and wait to be sent for, so he decided to join the Kansas National Guard instead. He told his parents at supper. Anders listened and said little, but Karin put down her fork and asked him whether he was sure, and she asked it twice. Everett said he was, and she nodded, and went on watching him across the table long after the plates were cleared.
+On the fifth of June, 1917, Everett drove into Lindsborg with the other young men of the county to register for the draft. They stood in a long, shuffling line outside the hall, hats in their hands, joking too loudly and then falling quiet as the line moved forward. Everett said little. He was thinking of the wheat, ripening now toward harvest, and of his father Olof out in the fields with only the hired hands and a bad hip, and he wondered who would bring the crop in if the army came for him.
 
 <!-- paragraph_id: ch2_s1_p5 -->
-On the day Everett left for Camp Doniphan, Linnea Sjöberg was waiting on the platform. She stood a little apart from the other families, with her hands folded in front of her, and she did not wave until he had found a seat by the window. He could not hear what she said through the glass, so he lifted his hand and she lifted hers. The train jerked, then rolled, and the station and the town of Lindsborg slid backward. Everett kept his eyes on her until the shape of her was gone, and then he sat very straight and looked at the flat country passing, which was the only home he had ever known.
+![The Lund farm near Lindsborg, Kansas, 1917](image:a-kansas-wheat-farm-in-1917-a-wide-golde-dadc41e6.jpg)
 
-<!-- paragraph_id: ch2_s1_p6 -->
-![The wheat farm near Lindsborg, 1917](image:a-golden-wheat-field-under-a-wide-pale-b-d142f5a6.jpg)
+<!-- paragraph_id: ch2_s1_p3 -->
+That summer he made up his mind before anyone could make it for him, and joined the Kansas National Guard. He told his father at the kitchen table after supper, and Olof listened without a word, turning his coffee cup slowly on its saucer. Freja stood at the stove with her back to them. When Olof finally spoke it was only to say, in Swedish, that the wheat would wait, and Everett understood that this was as close as his father could come to saying he was proud.
+
+<!-- paragraph_id: ch2_s1_p4 -->
+The night before he left, Freja packed his canvas bag herself, folding each shirt twice and tucking wool socks into the corners, and would not let him help. When there was no room left for anything else she went to the shelf, took down the family Bible, and pressed it into his hands. Everett began to say it was too heavy to carry, but she closed his fingers around it and held them there, and whatever she meant to tell him stayed in her own language, unspoken.
