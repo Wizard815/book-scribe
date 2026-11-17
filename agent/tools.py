@@ -469,7 +469,10 @@ def build(agent) -> Toolbox:
             return "The original picture file is missing."
         return await agent.propose_picture(ctx.sess, ctx, src.read_bytes(), caption or m["title"], _int(chapter, 0, 0, 9999) or None, m["title"], describe=True, after=_after(after))
 
-    async def propose_move(ctx: Ctx, paragraph=None, chapter=None, to_chapter=None, where="end"):
+    def _is_pic(v) -> bool:
+        return str(v or "").strip().lower() in ("1", "true", "yes", "picture", "image", "photo")
+
+    async def propose_move(ctx: Ctx, paragraph=None, chapter=None, to_chapter=None, where="end", picture=None):
         import intent
 
         sess = ctx.sess
@@ -484,20 +487,22 @@ def build(agent) -> Toolbox:
         if pos in ("before", "after"):
             k = re.search(r"\d+", w)
             pos = (pos, int(k.group())) if k else "end"
-        ref = intent.Ref(chapter=_int(chapter, 0, 0, 9999) or None, para=para or None)
+        pic = _is_pic(picture)
+        ref = intent.Ref(chapter=_int(chapter, 0, 0, 9999) or None, para=para or (1 if pic else None), picture=pic)
         mv = intent.Move(ref, _int(to_chapter, 0, 0, 9999) or None, pos)
         r = agent._move_reply(sess, mv, "")
         if not sess.pending:
             return f"Error: {r.text}"
         return "Proposed. The app now asks the writer yes or no by itself. Say at most one short sentence."
 
-    async def propose_delete(ctx: Ctx, paragraph=None, chapter=None):
+    async def propose_delete(ctx: Ctx, paragraph=None, chapter=None, picture=None):
         import intent
 
         sess = ctx.sess
         if sess.pending:
             return "A proposal is already waiting for the writer's answer. Do not propose another."
-        r = agent._delete_reply(sess, intent.Ref(chapter=_int(chapter, 0, 0, 9999) or None, para=_int(paragraph, 0, -1, 9999) or None), "")
+        pic = _is_pic(picture)
+        r = agent._delete_reply(sess, intent.Ref(chapter=_int(chapter, 0, 0, 9999) or None, para=_int(paragraph, 0, -1, 9999) or (1 if pic else None), picture=pic), "")
         if not sess.pending:
             return f"Error: {r.text}"
         return "Proposed. The app now asks the writer yes or no by itself. Say at most one short sentence."
@@ -579,10 +584,10 @@ def build(agent) -> Toolbox:
         T("use_library_picture", "Use a picture the writer added to the library in the book (the writer must say yes).", {"title": "the picture's title", "caption": "a short caption", "chapter": "chapter number", "after": "optional: after this many paragraphs (0 = start; leave out for the end)"},
           use_library_picture, required=("title", "caption")),
         T("propose_move", "Move a paragraph or a picture: to the start or end of a chapter, into another chapter, or before/after another paragraph. The app asks the writer yes or no and one undo takes it back. "
-          "Use this whenever they ask to move something, in any words; never say you cannot.", {"paragraph": "number inside its chapter (-1 = the last)", "chapter": "the chapter it is in now (default: the one on screen)",
-          "to_chapter": "destination chapter (default: the same one)", "where": "end | start | before 3 | after 3"}, propose_move, required=("paragraph",)),
-        T("propose_delete", "Delete a paragraph or picture (the app asks yes or no; undo brings it back).", {"paragraph": "number inside its chapter (-1 = the last)", "chapter": "chapter (default: the one on screen)"},
-          propose_delete, required=("paragraph",)),
+          "Use this whenever they ask to move something, in any words; never say you cannot.", {"paragraph": "number of the WRITING inside its chapter (-1 = the last); pictures are not counted", "picture": "true to move the picture of the chapter (then paragraph = which picture, default 1)", "chapter": "the chapter it is in now (default: the one on screen)",
+          "to_chapter": "destination chapter (default: the same one)", "where": "end | start | before 3 | after 3"}, propose_move, required=()),
+        T("propose_delete", "Delete a paragraph or picture (the app asks yes or no; undo brings it back).", {"paragraph": "number of the WRITING inside its chapter (-1 = the last); pictures are not counted", "picture": "true to delete the picture of the chapter instead (paragraph = which picture, default 1)", "chapter": "chapter (default: the one on screen)"},
+          propose_delete, required=()),
         T("start_chapter", "Start a new chapter (the next number) and optionally name it.", {"number": "the next chapter number (optional)", "title": "the chapter's title (optional)"}, start_chapter),
         T("set_chapter_title", "Give a chapter a title.", {"chapter": "chapter number (default: the one on screen)", "title": "the title"}, set_chapter_title, required=("title",)),
         T("export_book", "Save the whole finished book (all chapters and pictures) as a file for the writer: a web page file (html, can be printed as a PDF), an e-book (epub) or a plain text folder (md). Never say you cannot.",
