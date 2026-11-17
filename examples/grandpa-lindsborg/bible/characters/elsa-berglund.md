@@ -15,5 +15,3 @@ from_family_tree: Lund Family
 Elsa Berglund (1899–1984) was born in Lindsborg, McPherson, Kansas, USA on 21 SEP 1899. Died 8 DEC 1984 in Lindsborg, McPherson, Kansas, USA. Married to: Everett Nils Lund. Children: Karl Lund, Margit Lund.
 
 *(from the family tree 'Lund Family', id lund-family:I5)*
-
-Everett's wife. Born 21 September 1899 in Lindsborg, Kansas; died 8 December 1984 in Lindsborg. Married Everett in Lindsborg in 1919 (family tree). Mother of Karl (born 1921) and Margit (born 1924).

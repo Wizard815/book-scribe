@@ -43,10 +43,11 @@ see `examples/grandpa-lindsborg/`). A line is only ticked when it has passed. Wh
 - [U/E] Remembers how the book is to be told; which chapters have pictures; what is saved.
 - [U/E] Save the whole book as an e-book and a web page with its pictures.
 
-## Status (grandpa test, round 3)
-All of sections 1, 2, 4, 6 and 7 passed end to end (uploads incl. duplicate, family tree into the wiki with the living protected, research with a kept page,
-five chapters, pictures where asked, describe/move/delete a picture, dropped drafts said out loud and restored, zoom, exports, goodbye). Remaining small
-findings were fixed afterwards and are covered by unit tests only: "the last sentence of the first paragraph" was read as the last paragraph, "hello"
-while a draft waited did not say which draft, and a wordy Wikipedia query found nothing (it now retries with shorter words).
-Known and not fixed: small invented colour in a stand-in model's prose ("faded to the brown of weak tea"), long drafts read in full, picture descriptions are
-as good as the model's own words, a real vision model is untested.
+## Status (grandpa test, round 7 of 7)
+In the last round every item in sections 1, 2, 4, 5, 6 and 7 passed end to end: uploads (incl. duplicate), family tree into the wiki with the living protected, research with a kept
+page, five chapters in the third person, pictures where asked (incl. one-answer redirects to another chapter and place), describe/move/delete a picture, sentence removal in place with
+undo, dropped drafts said out loud and restored, "ask me first" with a draft waiting, zoom, exports and goodbye. Findings from that round fixed afterwards (unit-tested only):
+"story notes" wording was taken for a paragraph draft, a change to a waiting draft was taken for an edit of an old paragraph, and a kept page was offered again.
+Known and not fixed: the stand-in model still adds small unsupported detail and repeats facts between chapters (the app warns about repeats but cannot know what is unsupported),
+a picture request while writing can go to the chapter being written rather than the one just looked at when a draft was saved in between, web pictures are described only by their
+title (nothing here can see pictures), and a real vision/writing model is untested.

@@ -8,10 +8,10 @@ title: "Camp Doniphan"
 ## Scene 1
 
 <!-- paragraph_id: ch3_s1_p1 -->
-In the end the call came, and Everett left the farm for Camp Doniphan, on the edge of Fort Sill in Oklahoma. The 35th Division was being put together there out of National Guard units from Missouri and Kansas, and a Kansas farm boy of Swedish parents found himself among thousands of strangers who spoke the same flat American as his neighbours and little like his mother's kitchen. Olof stayed behind with the wheat, and Lindsborg was a long way north. Everett was a soldier now, and the army was about to teach him what that meant.
-
-<!-- paragraph_id: ch3_s1_p2 -->
-The camp was a new city of tents and drill grounds, built in a hurry for an army that did not yet exist, and Everett spent the months there learning to be one man among many. The division sailed for France in the spring of 1918, and by autumn a different enemy was moving through the camps on both sides of the ocean. The influenza that came in September, carried along by troop movements and crowded ships, struck young men hardest. Everett was one of those young men. Some of the boys around him went to the hospital, and he did not.
+The 35th Division was formed in 1917 from National Guard units of Missouri and Kansas, and Everett, who had enlisted in the Kansas National Guard that year, served in it. The division trained at Camp Doniphan, at Fort Sill in Oklahoma, before it sailed for France in the spring of 1918.
 
 <!-- paragraph_id: ch3_s1_p3 -->
-![Army camp tents, 1917.](image:world-war-i-army-camp-tents-camp-donipha-3e493bcb.jpg)
+![Army camp tents, Camp Doniphan](image:world-war-i-army-camp-tents-camp-donipha-98632a20.jpg)
+
+<!-- paragraph_id: ch3_s1_p2 -->
+When the division left Camp Doniphan, it went overseas, and in the spring of 1918 Everett's unit sailed for France. There the division trained in the Vosges, and by the end of September it would be in the Meuse-Argonne Offensive.

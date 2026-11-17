@@ -399,3 +399,31 @@ async def test_describe_it_with_a_text_draft_waiting_does_not_describe_some_othe
     ag.session("s").pending = __import__("agent").Pending("append", "A draft paragraph about the supper table and the lamp, for the book.", 1)
     r = await ag.handle("s", "describe it")
     assert "paragraph waiting" in r.text and "barn" not in r.text.lower()
+
+
+def test_story_notes_wording_is_about_the_wiki_not_a_new_paragraph():
+    import intent
+    for t in ("write story notes for three characters including Erik Holmberg", "make wiki notes for three new characters", "describe the three characters in my story notes"):
+        assert not intent.is_draft(t) and not intent.is_edit(t), t
+    assert intent.is_draft("write the part where he reaches the station")
+
+
+@pytest.mark.asyncio
+async def test_a_change_to_the_waiting_draft_revises_it_instead_of_guessing_an_old_paragraph(books):
+    ag, store, llm = make(books)
+    A = "She lived there all her life. The farm was quiet in the evenings, and the lamp was lit before the men came in from the field."
+    ag.session("s").pending = __import__("agent").Pending("append", A, 1)
+    llm.replies = ["The farm was quiet in the evenings, and the lamp was lit before the men came in from the field."]
+    r = await ag.handle("s", "leave out the part about her living there all her life")
+    assert r.pending and "She lived there" not in ag.session("s").pending.text and "Do you mean" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_a_kept_page_is_not_offered_again(books):
+    import web as webmod
+    ag, store, llm = make(books)
+    ag.web = webmod.Web(wikipedia_url="https://wiki.test")
+    ag.library.add("demo", "m.txt", b"x", "Meuse-Argonne Offensive", "document", "Text about it.")
+    s = ag.session("s"); s.web_hits["last"] = {"title": "Meuse-Argonne Offensive", "url": "https://w/x", "text": "Text about it."}
+    out = await ag.toolbox.call("propose_save_page", {}, harness.Ctx(sess=s))
+    assert "already kept" in out and s.pending is None

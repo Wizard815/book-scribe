@@ -7,11 +7,14 @@ title: "The Return"
 
 ## Scene 1
 
-<!-- paragraph_id: ch5_s1_p1 -->
-When the war was over, Everett came home to Lindsborg and went back to the farm. The land was the same land, the wheat and the corn that Olof had kept going in his absence, and he took up the work as if he had only stepped away from it for a season. He did not leave it again.
+<!-- paragraph_id: ch5_s1_p4 -->
+Elsa Berglund was born in Lindsborg, Kansas, on 21 September 1899, and she died in Lindsborg on 8 December 1984, at the age of eighty-five, thirteen years after Everett.
 
 <!-- paragraph_id: ch5_s1_p2 -->
-In 1919 Everett married Elsa Berglund, a Lindsborg girl born in the last autumn of the old century, and together they raised two children on the farm, Karl, born in 1921, and Margit, born in 1924. He died at home on the second of March, 1971, at the age of seventy-four, and the services were held at Messiah Lutheran Church in Lindsborg. The newspaper called him a farmer and a veteran. Those who knew him remembered the collection of pressed flowers he kept, and they remembered that he never talked about the war.
+Everett died at home on 2 March 1971, at the age of seventy-four. The Lindsborg News-Record called him a farmer and veteran, and wrote that after the war he returned to the farm and worked the same land for more than fifty years. He was survived by his wife, Elsa Berglund, and by their children, Karl and Margit, and by four grandchildren, and services were held at Messiah Lutheran Church in Lindsborg.
 
 <!-- paragraph_id: ch5_s1_p3 -->
-![An old railway station, Kansas.](image:old-photograph-railway-station-kansas-19-ee8ddee2.jpg)
+In 1919 Everett married Elsa Berglund, and their son Karl was born in 1921 and their daughter Margit in 1924. The obituary says he was known for his pressed-flower collection, and the family record notes that he kept a pressed prairie flower in his Bible.
+
+<!-- paragraph_id: ch5_s1_p5 -->
+![An old photograph of a railway station](image:old-photograph-railway-station-picture-2-dfc33dc4.jpg)

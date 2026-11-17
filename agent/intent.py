@@ -206,6 +206,8 @@ def is_edit(text: str) -> bool:
 
 def is_draft(text: str) -> bool:
     n = norm(text)
+    if _WIKI_TALK.search(n) and parse_ref(text).para is None:
+        return False  # "write story notes for three characters" is about the wiki, not a new paragraph
     return not (is_question(text) or _OPINION.match(n)) and bool(_DRAFT_LEAD.match(n))
 
 
