@@ -141,3 +141,37 @@ def test_the_limit_follows_the_books_own_long_sentences():
     plain = [Paragraph(f"q{i}", "He ran. She fell. They left the house at dawn. It rained.", 1, 1) for i in range(60)]
     assert baseline_max_sentence(austen) > 70 and baseline_max_sentence(plain) == 55 and baseline_max_sentence(austen[:3]) == 55
     assert check(LONG, "strict", baseline_max_sentence(austen)) == [] and check(LONG, "strict", 55)
+
+
+# ---- the book page's own zoom (100 to 500 percent): bigger words, more pages -------------------------------------------------------
+def zoom(said, cur=100):
+    r = uisettings.parse(said, {**D, "zoom": cur})
+    return r and (r[0]["zoom"], r[0]["size"])
+
+
+def test_book_zoom_by_voice_steps_through_the_levels_and_leaves_the_rest_of_the_screen_alone():
+    assert zoom("make the book text bigger") == (125, 2)
+    assert zoom("zoom in", 200) == (250, 2)
+    assert zoom("zoom out", 200) == (150, 2)
+    assert zoom("make the words on the page a lot bigger", 100) == (150, 2)
+    assert zoom("make the story text smaller", 300) == (250, 2)
+    assert zoom("biggest book text") == (500, 2)
+
+
+def test_book_zoom_takes_a_percentage_and_snaps_to_a_level():
+    assert zoom("set the book to 300 percent") == (300, 2)
+    assert zoom("zoom to 500%") == (500, 2)
+    assert zoom("text 180 percent please") == (200, 2)
+    assert zoom("zoom back to normal", 400) == (100, 2)  # only the zoom, not the whole look
+    assert zoom("I am 100 percent sure") is None
+    assert zoom("join the zoom call") is None
+
+
+def test_plain_bigger_words_still_means_the_whole_screen():
+    assert zoom("make the words bigger") == (100, 3)
+
+
+def test_zoom_is_validated_and_set_by_the_model_tool_too():
+    assert uisettings.clean({"zoom": 9999})["zoom"] == 500 and uisettings.clean({"zoom": 3})["zoom"] == 100 and uisettings.clean({"zoom": "x"})["zoom"] == 100
+    assert uisettings.step_zoom(500, 1) == 500 and uisettings.step_zoom(100, -1) == 100
+    assert uisettings.DEFAULT["zoom"] == 100

@@ -124,3 +124,11 @@ Sources: `make_picture` (the `image` provider role, tiered like chat), `find_pic
 public-addresses-only fetcher as web pages and are validated as pictures), `use_library_picture`. A picture first becomes a *candidate*
 (`<book>/images/.candidates/`) and is shown in the chat with the big YES / NO card; only a yes moves it into the book. The model is told to describe it
 in words every time, because the writer may not look. `export.py` builds the finished book (html with embedded pictures, epub, md zip).
+
+## Reading the book (pages and zoom)
+
+`ui/simple.fragment.html`. The chapter is laid out in CSS columns the width of one page (two on a wide screen while the zoom is 200% or less) inside
+a box exactly as tall as the pane; the Next/Previous page buttons, arrow keys and swipes slide the strip along, and past the last page they move on
+to the next chapter. The zoom (`look.zoom`, 100 to 500) is part of the look in `uisettings.py`, so it is validated, saved on the server and follows
+the writer to other devices; `parse()` understands it by voice without a model call and the `set_ui` tool can set it (`setting: zoom`). It scales
+only the words on the page (`--zoom`), never the buttons. Pictures are capped at 40% of the page height (`--ph`, set from the real page height).
