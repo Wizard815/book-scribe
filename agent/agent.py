@@ -310,6 +310,8 @@ class Agent:
                 if intent.goto_chapter(text) is not None or intent.step_direction(text) or intent.is_read_aloud(text):
                     sess.pending = None  # navigation runs as usual, then the change is put back
                     r = await self._navigate_keeping(sess, text)
+                elif intent.norm(text) in ("hello", "hi", "hey", "hello there", "hi there", "are you there", "you there", "are you still there"):
+                    r = self._reply(sess, "I'm here.")  # never ask the model: it can mix up which draft is waiting
                 else:
                     r = await self._converse(sess, text)
                 sess.pending = keep
@@ -376,6 +378,8 @@ class Agent:
             return self._title_reply(sess, tc[0], tc[1])
         if (dm := intent.delete_many(text)) is not None:
             return self._delete_many_reply(sess, dm[0], dm[1])
+        if (sr := intent.sentence_removal(text)) is not None and sess.mode == "narrator":
+            return self._remove_sentence(sess, sr[0], sr[1])
         if (ref := intent.delete_request(text)) is not None:
             return self._delete_reply(sess, ref, text)
         if (mv := intent.move_request(text)) is not None:
@@ -407,6 +411,10 @@ class Agent:
                 r.highlights = self._hl(sess, [target.id])
                 return r
             return self._reply(sess, "I couldn't find that paragraph.")
+
+        if not sess.pending and sess.mode == "narrator" and re.match(r"^(?:no|nope|not that one),? (?:make|find|try|show|give) (?:it|me|one|another|a different)\b", intent.norm(text)) \
+                and any(m["role"] == "assistant" and re.search(r"\b(?:picture|illustration|photo|image)\b", m["content"], re.I) for m in sess.history[-4:]):
+            return await self._converse(sess, f"I do not want that picture. {text} (This is about the PICTURE, not the screen and not a paragraph.)")
 
         if sess.mode == "narrator" and intent.draft_first(text):
             return await self._propose_draft(sess, text)
@@ -538,6 +546,37 @@ class Agent:
         if self.index:
             self.index.schedule(sess.book)
         return self._reply(sess, f"Chapter {target} is ready. Tell me what happens in it, or say write the first paragraph.")
+
+    def _remove_sentence(self, sess: Session, ref, which: int) -> Reply:
+        """"take the last sentence of paragraph 2 out": no model needed. The shortened paragraph is shown and only a yes replaces the old one (undoable)."""
+        if sess.pending and not self._supersede(sess):
+            return self._reply(sess, "I am holding something for your yes or no. Answer that first, then ask again.")
+        if ref is not None and ref.para is not None:
+            target = self._by_ref(sess, ref)
+        elif sess.focus:
+            try:
+                target = self.store.find(sess.book, sess.focus)
+            except BookError:
+                target = None
+        else:
+            target = self.store.nth_paragraph(sess.book, self._work(sess), -1)
+        if not target or target.image:
+            return self._reply(sess, "I could not tell which paragraph. Say the chapter and paragraph, for example: take the last sentence of paragraph 2 in chapter 2 out.")
+        sentences = re.split(r"(?<=[.!?])[\"”’)]*\s+", target.text.strip())
+        if len(sentences) < 2:
+            return self._reply(sess, f"{self._where(sess, target)[0].upper() + self._where(sess, target)[1:]} is only one sentence. Say delete the paragraph if you want it gone.")
+        i = len(sentences) - 1 if which == -1 else which - 1
+        if not 0 <= i < len(sentences):
+            return self._reply(sess, f"That paragraph has {len(sentences)} sentences.")
+        removed = sentences.pop(i)
+        new = " ".join(sentences).strip()
+        sess.chapter, sess.focus = target.chapter, target.id
+        sess.pending = Pending("edit", new, target.chapter, paragraph_id=target.id)
+        self._remember(sess, "take a sentence out", f"[proposed taking a sentence out of {self._where(sess, target)}]")
+        lead = f"I will take out this sentence from {self._where(sess, target)}: {removed}"
+        r = self._reply(sess, f"{lead} It would read: {new} Should I save it?", [{"speaker": vx.ASSISTANT, "text": lead}, {"speaker": vx.ASSISTANT, "text": "Should I save the shorter paragraph?"}])
+        r.highlights = self._hl(sess, [target.id])
+        return r
 
     def _delete_reply(self, sess: Session, ref, text: str) -> Reply:
         target = self._by_ref(sess, ref)

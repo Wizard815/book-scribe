@@ -53,7 +53,7 @@ _NOISE = {
 def is_noise(text: str) -> bool:
     """Empty/near-empty audio that a speech model turned into a stock phrase. Never worth a model call."""
     n = norm(re.sub(r"[\[\(][^\]\)]*[\]\)]", " ", text))  # "[BLANK_AUDIO]", "(silence)"
-    return n == "" or n in _NOISE or (len(n) <= 2 and not n.isdigit())
+    return n == "" or n in _NOISE or (len(n) <= 2 and not n.isdigit() and n not in ("no", "ok", "hi", "go", "so"[:0] or "no"))
 
 
 # --- confirmations ---------------------------------------------------------------------------------
@@ -168,7 +168,7 @@ def parse_ref(text: str) -> Ref:
 
 # --- command shapes -----------------------------------------------------------------------------------------
 _POLITE = r"(?:(?:please|kindly|hey|ok|okay|so|now|and|then)\s+)*(?:(?:can|could|would|will) you (?:please )?|i want you to |i'd like you to |i would like you to |let's |lets |go ahead and |you should |just )?"
-_EDIT_VERBS = r"(?:take (?:that|this|it|the)(?: [a-z]+){0,4}? out|cut (?:that|this|it|the)(?: [a-z]+){0,4}? out|cut out|take out|leave out|change|make|rewrite|rephrase|reword|fix|edit|tweak|soften|tighten|revise|replace|shorten|lengthen|expand|trim|polish|improve|punch up|sharpen|simplify|modernize|modernise)"
+_EDIT_VERBS = r"(?:take (?:that|this|it|the)(?: [a-z0-9]+){0,9}? out|cut (?:that|this|it|the)(?: [a-z0-9]+){0,9}? out|cut out|take out|leave out|change|make|rewrite|rephrase|reword|fix|edit|tweak|soften|tighten|revise|replace|shorten|lengthen|expand|trim|polish|improve|punch up|sharpen|simplify|modernize|modernise)"
 _EDIT_LEAD = re.compile(rf"^{_POLITE}{_EDIT_VERBS}\b")
 _EDIT_CLAUSE = re.compile(rf"[,;]\s*(?:and |then |please )*{_EDIT_VERBS}\b|\b(?:and|then) {_EDIT_VERBS} (?:him|her|them|it|that|this|the)\b")
 _DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|next paragraph|(?:1|one) more (?:paragraph|bit|part)|(?:1|one) more(?= (?:the|a|of|about|with|where|when|\w+ing)\b)|(?:and )?(?:then |now )?the (?:part|scene|bit|moment) (?:where|when|in which|with)|another (?:paragraph|bit)|more of the story|the next (?:bit|part)|(?:the )?(?:last|final|closing|opening|first|next) paragraph (?:for|of|in) chapter \d+(?= \w)|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
@@ -594,3 +594,23 @@ def picture_position(text: str) -> int | None:
     if _POS_END.search(n):
         return -1
     return None
+
+
+_SENT_ORD = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3, "fourth": 4, "4th": 4, "last": -1, "final": -1, "closing": -1, "opening": 1}
+_SENT_RM = re.compile(r"^{p}(?:take|cut|remove|delete|drop|leave|get rid of)(?: out| away| off)? (?:just |only )?(?:that|this|the|my) (?:(first|1st|second|2nd|third|3rd|fourth|4th|last|final|closing|opening) )?sentence(?: (?:of|from|in|at the end of|at the start of) (.+?))?(?: out| away| off)?(?: for me| please)*$".replace("{p}", _POLITE))
+
+
+def sentence_removal(text: str) -> tuple["Ref | None", int] | None:
+    """"take the last sentence of paragraph 2 out" / "take that sentence out" -> (which paragraph, which sentence: 1-based, -1 = last). The paragraph is None for "that one"."""
+    n = norm(text)
+    while (m0 := re.match(r"^(?:no|nope|yes|yeah|okay|ok|well|just|so|and|now)\s+", n)):
+        n = n[m0.end():]  # "no, just take that sentence out for me"
+    m = _SENT_RM.match(n)
+    if not m:
+        return None
+    which = _SENT_ORD.get(m.group(1) or "", -1 if not m.group(1) else 1)
+    ref = parse_ref(m.group(2)) if m.group(2) else None
+    if ref is not None and ref.para is None:
+        # "of the paragraph in chapter 2" / "of the first paragraph": parse_ref found a chapter or an ordinal; a bare "paragraph" with only a chapter means paragraph 1 is unknown
+        ref = ref if (ref.chapter is not None or ref.para is not None) else None
+    return ref, which
