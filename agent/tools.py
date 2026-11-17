@@ -340,6 +340,8 @@ def build(agent) -> Toolbox:
             return "There is no page to save. Look something up first."
         if sess.pending:
             return "A question is already waiting for the writer's answer. Do not propose another."
+        if agent.library and any(m.get("title", "").lower() == str(last["title"]).lower() for m in agent.library.items(book(ctx))):
+            return "That page is already kept in the library. Tell the writer it is already saved; do NOT ask whether to keep it."
         sess.pending = Pending(kind="page", text=last["title"], chapter=sess.chapter, data={"title": last["title"], "url": last["url"], "text": last["text"]})
         return "Proposed. Ask the writer in one short sentence whether to keep this page in the library. It is saved only if they say yes."
 

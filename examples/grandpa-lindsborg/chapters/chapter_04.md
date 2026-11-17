@@ -7,11 +7,11 @@ title: "Over There"
 
 ## Scene 1
 
-<!-- paragraph_id: ch4_s1_p1 -->
-In the spring of 1918 the division crossed the Atlantic. For a boy who had grown up on land so flat that the horizon was the only fence, the ocean was a new kind of emptiness, and the troopship carried more men than he had ever seen in one place. His parents had made this crossing in the other direction once, toward Kansas, and now their son was going back across the same water, a soldier in an American uniform bound for France. When the ship at last made land, the division went on to train in the Vosges, still some way behind the guns.
+<!-- paragraph_id: ch4_s1_p2 -->
+On 14 October 1918 Everett wrote to his mother from somewhere in France. He told her he was well and hoped she and his father were the same, that he had been a long time in the mud and rain, and that he had not had a dry sock since the end of September. He could not say where they were, but he named the village on the postcard he sent with the letter, Charpentry, which he said had been a pretty place once. He told her not to worry about the wheat, because Olof would manage it, and he mentioned that the flu was going through the camps and that some of the boys had gone to the hospital. He had kept the flower she pressed in his Bible, he wrote, and read the psalm she had marked every night, and he asked her to tell his father that he had not forgotten what he said at the station.
 
 <!-- paragraph_id: ch4_s1_p3 -->
-![A big troopship crossing the Atlantic, 1918.](image:a-very-large-world-war-i-troopship-a-hug-6684bf56.jpg)
+![A large troopship crossing the Atlantic](image:an-illustration-of-a-very-large-steamshi-fa4dd6a1.jpg)
 
-<!-- paragraph_id: ch4_s1_p2 -->
-On the fourteenth of October, somewhere in France, Everett wrote to his mother. He told her that he was well and hoped she and his father were the same, and that he had not had a dry sock since the end of September. He could not say where the division was, but he sent her a postcard from the village of Charpentry, which he said had been a pretty place once. He told her not to worry about the wheat, because Olof would manage it. The flu was going through the camps, he wrote, and some of the boys had gone to the hospital. He kept the flower she had pressed in his Bible, and every night he read the psalm she had marked. Then he asked her to tell his father that he had not forgotten what he said at the station, and he signed himself her loving son.
+<!-- paragraph_id: ch4_s1_p4 -->
+For the 35th Division the offensive went badly from the start. It entered the fight on 26 September 1918, the first day, and attacked toward Exermont and Charpentry, fighting near Vauquois and Exermont, and it suffered heavy losses. The offensive went on until 11 November, and the village of Charpentry, which Everett named on his postcard, lay in the path of that first attack.

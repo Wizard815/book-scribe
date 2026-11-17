@@ -331,6 +331,9 @@ class Agent:
                 return await self._revise(sess, rest, said_yes=(kind == "yes"))  # "yes but make it shorter" / "no, make it longer": never save or drop blindly
             if not kind and (r := self._ui_reply(sess, text)):  # "bigger" while reviewing a proposal: change the screen, keep the proposal
                 return r
+            if not kind and sess.pending.kind in ("append", "edit") and intent.is_edit(text) and (rf0 := intent.parse_ref(text)).para is None and rf0.chapter is None \
+                    and not intent.is_question(text) and not intent.sentence_removal(text):
+                return await self._revise(sess, text)  # "leave out the part about her living there": a change to the draft on the table, not to an old paragraph
             if not kind and sess.pending.kind != "voice" and not self._is_new_command(text):
                 # a question, a look at the book, small talk, a vague remark, goodbye: none of these is an answer or a new job, so the change
                 # keeps waiting (the card stays up) and I remind the writer, out loud, that it is still waiting

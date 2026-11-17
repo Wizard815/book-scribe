@@ -8,10 +8,10 @@ title: "Wheat and Draft Cards"
 ## Scene 1
 
 <!-- paragraph_id: ch2_s1_p1 -->
-By the summer of 1917 Everett was twenty years old and worked his father's land, the wheat and the corn, on the rural route outside Lindsborg. He was single, and no wife or child depended on him. On the fifth of June, the day the whole country was told to register for the draft, he put his name to a Selective Service card, and under his trade he wrote the plain word farmer. It was a small piece of paper, and it was the first one that asked him to belong to something larger than the farm.
+On 5 June 1917, the day men across the country registered at their local draft boards, Everett filled in his registration card. He gave his name as Everett Nils Lund, his age as twenty, his birth date as 9 March 1896, and his home as Rural Free Delivery Route 2, Lindsborg, McPherson County, Kansas. He wrote that he was a farmer of wheat and corn, employed by his father, Nils Lund, and that he was single, with no one solely dependent on him for support. A lottery drawn in Washington on 20 July would decide the order in which men were called, and although farm work was a common reason for deferment, many farm sons were called anyway.
 
 <!-- paragraph_id: ch2_s1_p3 -->
-![The wheat field and the red barn.](image:a-kansas-wheat-field-of-ripe-golden-whea-98b68924.jpg)
+![A wheat field and a red barn](image:an-illustration-of-a-wheat-field-with-a--bd71ec3f.jpg)
 
 <!-- paragraph_id: ch2_s1_p2 -->
-After the registering came the waiting. Everett's card carried an order number of its own, 1388, and in the weeks that followed he could do nothing with it but go on working. The local board would decide who could be spared, and farm work was a common reason to be passed over, though many farm sons were called all the same. So he waited, and did the work of the season, not knowing which kind of farm son he would turn out to be.
+The card records that he already served in the Kansas National Guard, where he had enlisted in 1917, and that he did not claim exemption from the draft. The McPherson County Board gave it the serial number 412 and the order number 1388.

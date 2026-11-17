@@ -8,10 +8,10 @@ title: "The Photograph"
 ## Scene 1
 
 <!-- paragraph_id: ch1_s1_p3 -->
-![The old photograph of Everett.](image:old-photo-everett-c1fc4fb5.jpg)
+![The old photograph of Everett](image:old-photo-everett-c1fc4fb5.jpg)
 
 <!-- paragraph_id: ch1_s1_p1 -->
-The photograph of Everett is old now. The paper has gone soft at the corners and the picture has faded to the brown of weak tea, but he is still in it, waiting to be looked at. Everett Lund of Lindsborg, Kansas, born in the spring of 1896, was a young man when it was taken, and this is where his story begins.
+The old photograph is of Everett Nils Lund, who was born on 9 March 1896 in Lindsborg, Kansas. His father was Nils Lund and his mother was Sigrid Nilsson, and he had one brother, Olof.
 
 <!-- paragraph_id: ch1_s1_p2 -->
-Everett's parents were Swedes. Nils Lund was born in 1860 in Småland, and Sigrid Nilsson two years after him, and the two of them crossed an ocean with their first son, Olof, to make a life on the Kansas prairie. They settled near Lindsborg, where other Swedish families had already put down roots, and Nils took up the farming of wheat and corn. Everett was born there in 1896, a boy of the new country, and grew up between his parents' old language and the wide flat land they had chosen.
+His parents, Nils Lund and Sigrid Nilsson, came from Småland in Sweden. Nils was a farmer of twenty-four and Sigrid was twenty-two when they arrived in New York on 21 May 1884, aboard the SS Wieland, with their son Olof, who was one year old, and a destination of Kansas. They settled near Lindsborg, where Everett was born twelve years later.
