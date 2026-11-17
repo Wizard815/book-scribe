@@ -392,11 +392,15 @@ def build(agent) -> Toolbox:
         if vissue and not ctx.voice_tried:
             ctx.voice_tried = True
             return f"Problem: {vissue} Rewrite the paragraph in the book's own voice, then propose it again."
+        rissue = agent.check_repeat(sess, text)
+        if rissue and not ctx.continuity_tried:
+            ctx.continuity_tried = True
+            return f"Problem: {rissue} Write something new that moves the story forward, then propose it again."
         issue = await agent.check_continuity(sess, text, sess.last_user)
         if issue and not ctx.continuity_tried:
             ctx.continuity_tried = True
             return (f"Problem: {issue} Rewrite the paragraph so it writes exactly what the writer asked for, agrees with the book and does not retell what is already told, then propose it again.")
-        ctx.warning = issue  # still a problem after one rewrite: it is shown, and spoken, to the writer
+        ctx.warning = issue or agent.ungrounded(sess, text)  # a problem after one rewrite, or details nobody gave: shown and spoken to the writer, never saved behind their back
         nums = store.chapter_numbers(book(ctx))
         ch = _int(chapter, 0, 1, 9999) if chapter else agent._work(sess)
         if ch not in nums and ch != max(nums, default=0) + 1:

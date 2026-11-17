@@ -344,8 +344,8 @@ async def test_a_new_picture_goes_to_the_chapter_the_writer_turned_to(books):
     ag.session("s").screen_wins = False
     ag.session("s").work = 2; ag.session("s").chapter = 2
     llm.replies = ['[[tool: make_picture {"prompt": "a station", "caption": "A station"}]]', "A station."]
-    r = await ag.handle("s", "make me a picture of a station", viewing=3)  # still on 3, nothing new: where they were writing
-    assert r.pending and "chapter 2" in r.pending["ask"]
+    r = await ag.handle("s", "make me a picture of a station", viewing=3)  # the page still shows chapter 3: that is where the picture goes
+    assert r.pending and "chapter 3" in r.pending["ask"]
 
 
 def test_a_remembered_description_drops_old_placement_talk(books):
@@ -427,3 +427,34 @@ async def test_a_kept_page_is_not_offered_again(books):
     s = ag.session("s"); s.web_hits["last"] = {"title": "Meuse-Argonne Offensive", "url": "https://w/x", "text": "Text about it."}
     out = await ag.toolbox.call("propose_save_page", {}, harness.Ctx(sess=s))
     assert "already kept" in out and s.pending is None
+
+
+@pytest.mark.asyncio
+async def test_a_paragraph_that_re_says_the_book_is_sent_back_once_by_plain_word_overlap(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    old = "He returned to the farm in the spring of 1919. He worked the same land near Lindsborg for more than fifty years, never talking about the war."
+    store.append_paragraph("demo", 2, old)
+    again = "In the spring of 1919 he returned to the farm. He worked the same land near Lindsborg for more than fifty years, never talking about the war to anyone."
+    assert "repeats much of" in ag.check_repeat(ag.session("s"), again)
+    assert ag.check_repeat(ag.session("s"), "A letter came from France in October, and his mother read it twice at the kitchen table before she folded it into her apron pocket.") == ""
+    llm.replies = [f'[[tool: propose_append {{"text": "{again}", "chapter": 2}}]]', "Hmm.", f'[[tool: propose_append {{"text": "{again}", "chapter": 2}}]]', "Here."]
+    r = await ag.handle("s", "next paragraph, he came home")
+    assert "Problem: This repeats" in " ".join(str(m) for c in llm.calls for m in c)
+
+
+@pytest.mark.asyncio
+async def test_details_nobody_gave_are_flagged_and_never_saved_behind_the_writers_back(books):
+    ag, store, llm = make(books)
+    await add(ag, "draft_registration_card_1917.pdf")
+    ag.prefs = __import__("prefs").Prefs(ag.s.state_dir)
+    await ag.handle("s", "save as you go")
+    ag.session("s").history.append({"role": "user", "content": "Everett was a farmer near Lindsborg in 1917."})
+    grounded = "In June 1917 Everett registered for the draft at Lindsborg and gave his trade as a farmer, as the card says. He was twenty years old and single."
+    assert ag.ungrounded(ag.session("s"), grounded) == ""
+    inv = "In 1923 Everett bought a blue tractor from Mr Halvorsen in Wichita. He paid 400 dollars for it and drove it home through the rain."
+    out = ag.ungrounded(ag.session("s"), inv)
+    assert "1923" in out and "Halvorsen" in out
+    llm.replies = [f'[[tool: propose_append {{"text": "{inv}"}}]]', "Here."]
+    r = await ag.handle("s", "next paragraph, the tractor")
+    assert r.pending and "could not find" in r.text and "tractor" in r.pending["text"]  # not auto-saved
