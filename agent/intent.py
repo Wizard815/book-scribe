@@ -70,7 +70,7 @@ def _words(text: str) -> list[str]:
 
 _NO_DROP = re.compile(r"^(?:just )?(?:leave|keep) (?:it|that|this|them)?(?: as it was| as it is| as is| the same| alone| how it was| like it was)?(?: please)?$|^(?:forget|drop|cancel|skip|scrap) (?:it|that|this)(?: please)?$|^never ?mind(?: that| it)?$|^(?:as it was|the same|leave it)$|^(?:thanks|thank you|thank|please)$|^not now$|^(?:i )?(?:changed|change) my mind$")
 _CHANGE = re.compile(r"\b(?:make|change|different|instead|another|darker|lighter|bigger|smaller|more|less|without|but|not|no|don'?t|empty|remove|rename|call it|shorter|longer|except|only|wrong|other)\b")
-_SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| those| these| all| all of them| (?:that|this|the) (?:one|1)| the (?:paragraph|picture))?(?: in| in there| down| to the book| to chapter \d+| into the book| away)?(?: please| now| for me)?|that one|that'?s? (?:the (?:one|1)|fine|good|right|great|perfect|lovely|nice|mine|it)|(?:it'?s|this is) (?:mine|good|great|fine|right|perfect|lovely|nice|the (?:one|1))|do it|mine|(?:the )?(?:one|1)|thanks|thank you|great|perfect|lovely|good|nice|fine|right|exactly)(?:,? (?:put it in|use it|add it|save it|keep it|go ahead|please|thank you|thanks))*$")
+_SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| those| these| all| all of them| (?:that|this|the) (?:one|1)| the (?:paragraph|picture))?(?: in| in there| down| to the book| to chapter \d+| into the book| away)?(?: please| now| for me)?|that one|that'?s? (?:the (?:one|1)|fine|good|right|great|perfect|lovely|nice|mine|it)|(?:it'?s|this is) (?:mine|good|great|fine|right|perfect|lovely|nice|the (?:one|1))|do it|mine|(?:the )?(?:one|1)|that|this|it|them|those|these|all|thanks|thank you|great|perfect|lovely|good|nice|fine|right|exactly)(?:,? (?:put it in|use it|add it|save it|keep it|go ahead|please|thank you|thanks))*$")
 
 
 def confirmation(text: str) -> tuple[str | None, str]:
@@ -438,7 +438,8 @@ _EXPORT_NOUN = re.compile(r"\b(?:book|story|novel|manuscript)\b")
 def export_request(text: str) -> str | None:
     """"save my book as a file", "export the book as an e-book", "give me the whole story to print" -> "html" | "epub" | "md", else None."""
     n = norm(text)
-    if len(n.split()) > 16 or not _EXPORT_NOUN.search(n) or re.search(r"\b(?:chapter|paragraph|wiki|picture|file i|downloaded)\b", n):
+    fmt_word = re.search(r"\b(?:epub|e book|ebook|kindle|e reader|web page|webpage|html|pdf)\b", n)  # "save it as an e-book" needs no "book" noun
+    if len(n.split()) > 16 or not (_EXPORT_NOUN.search(n) or fmt_word) or re.search(r"\b(?:chapter|paragraph|wiki|picture|file i|downloaded)\b", n):
         return None
     strong = re.search(r"\b(?:export|save|download|print)\b", " ".join(n.split()[:6]))
     soft = re.match(rf"^{_POLITE}(?:give me|make me|send me|get me|i want|i would like|i'd like|can i have|let me have)\b", n) and \
