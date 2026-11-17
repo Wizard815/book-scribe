@@ -38,6 +38,15 @@ async def _look(llm, images: list[bytes]) -> str:
     return "\n\n".join((f"Page {i + 1}:\n{p}" if len(parts) > 1 else p) for i, p in enumerate(parts))
 
 
+async def describe_picture(llm, jpg: bytes) -> str:
+    """Two plain sentences about a picture, for a writer who may not look at it. "" when no vision model is available."""
+    url = "data:image/jpeg;base64," + base64.b64encode(jpg).decode()
+    msg = [{"role": "user", "content": [{"type": "text", "text": "Describe this picture in two plain sentences for someone who cannot see it: what is in it, the main colours, the mood. No introduction."},
+                                        {"type": "image_url", "image_url": {"url": url}}]}]
+    out = (await llm.chat(msg, temperature=0.2, max_tokens=160)).strip()
+    return "" if CANT_SEE.search(out[:300]) else out
+
+
 async def add_file(book: str, filename: str, data: bytes, library, llm, stt, journal=None) -> dict:
     """-> the library item's meta, plus "message": one plain sentence about what happened. Raises Unreadable for a file that cannot be read."""
     ex: Extracted = await asyncio.to_thread(ex_mod.extract, data, filename)

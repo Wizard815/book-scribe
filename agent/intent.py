@@ -138,7 +138,9 @@ _ORD = "|".join(sorted(ORDINALS, key=len, reverse=True) + ["last", "final", "ope
 def parse_ref(text: str) -> Ref:
     n = norm(text)
     r = Ref()
-    if m := re.search(r"\bchapter (\d+)\b", n):
+    # "as in chapter two", "same lady as chapter six", "like chapter 2": a chapter the writer is pointing back to, not where the work goes
+    n_dest = re.sub(r"\b(?:as in|as|like in|like|same as(?: in)?|just as in|back in|earlier in|mentioned in|remember(?: in)?|unlike(?: in)?|similar to|than in|compared (?:to|with)|the way (?:it was )?in|from earlier in|that we (?:wrote|had) in|we had in)\s+chapter\s+\d+", " ", n)
+    if m := re.search(r"\bchapter (\d+)\b", n_dest):
         r.chapter = int(m.group(1))
     if m := re.search(r"\bscene (\d+)\b", n):
         r.scene = int(m.group(1))
@@ -160,7 +162,7 @@ _EDIT_VERBS = r"(?:change|make|rewrite|rephrase|reword|fix|edit|tweak|soften|tig
 _EDIT_LEAD = re.compile(rf"^{_POLITE}{_EDIT_VERBS}\b")
 _EDIT_CLAUSE = re.compile(rf"[,;]\s*(?:and |then |please )*{_EDIT_VERBS}\b|\b(?:and|then) {_EDIT_VERBS} (?:him|her|them|it|that|this|the)\b")
 _DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|next paragraph|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
-_QUESTION = re.compile(r"^(?:so |and |but )?(how|what|why|should|do you|does|is|are|which|would|am i|did|will it|shall)\b")
+_QUESTION = re.compile(r"^(?:so |and |but )?(how|what|why|who|whom|whose|where|should|do you|does|is|are|which|would|am i|did|will it|shall)\b")
 _OPINION = re.compile(r"^(?:i |i'm |im |i've |my )?(?:hate|like|love|dislike|prefer|think|feel|want|wish|need|always|never|don't like|dont like|can't|cant)\b|^i (?:hate|like|love|dislike|prefer|think|feel|wish|really|just|always|never|don't|dont|can't|cant)\b")
 
 
@@ -375,7 +377,40 @@ def undo_request(text: str) -> bool:
     return len(n.split()) <= 9 and bool(_UNDO.match(n))
 
 
-_DESCRIBE = re.compile(r"^{p}(?:describe|tell me about|what(?:'s| is| does)|what do you see in)(?: (?:it|that|this|the))?(?: (?:picture|image|photo|illustration|drawing))?(?: again)?(?: to me| for me| please)*(?: look like| in it| on it)?[.?!]?$".replace("{p}", _POLITE))
+_DESCRIBE = re.compile(r"^{p}(?:describe|tell me about|tell me what|what(?:'s| is| does)(?: in)?|what do you see in)(?: (?:it|that|this|the))?(?: (?:picture|image|photo|illustration|drawing))?(?: again)?(?: to me| for me| please)*(?: look like| looks like| shows| is| in it| on it)?[.?!]?$".replace("{p}", _POLITE))
+
+_EXPORT_NOUN = re.compile(r"\b(?:book|story|novel|manuscript)\b")
+
+
+def export_request(text: str) -> str | None:
+    """"save my book as a file", "export the book as an e-book", "give me the whole story to print" -> "html" | "epub" | "md", else None."""
+    n = norm(text)
+    if len(n.split()) > 16 or not _EXPORT_NOUN.search(n) or re.search(r"\b(?:chapter|paragraph|wiki|picture|file i|downloaded)\b", n):
+        return None
+    strong = re.match(rf"^{_POLITE}(?:export|save|download|print)\b", n)
+    soft = re.match(rf"^{_POLITE}(?:give me|make me|send me|get me|i want|i would like|i'd like|can i have|let me have)\b", n) and \
+        re.search(r"\b(?:file|epub|e ?book|pdf|html|web ?page|zip|markdown|copy|whole|entire|complete|finished|to print|to keep)\b", n)
+    if not (strong or soft):
+        return None
+    if re.search(r"\b(?:epub|e book|ebook|kindle|e reader)\b", n):
+        return "epub"
+    if re.search(r"\b(?:markdown|zip|plain text|text folder)\b", n):
+        return "md"
+    return "html"
+
+
+_AUTO_ON = re.compile(r"^{p}(?:just )?(?:save (?:it |them |everything |each (?:one|paragraph) )?(?:as (?:you|we) go|straight away|right away|automatically|without asking)|stop asking(?: me)?(?: to save| to confirm| every time| all the time)?|don'?t (?:keep )?ask(?:ing)?(?: me)?(?: to save| every time| all the time)?|(?:keep )?saving(?: it| them| everything)?(?: as you go)?|auto ?save(?: on)?|no need to ask)(?: please)?[.!?]?$".replace("{p}", _POLITE))
+_AUTO_OFF = re.compile(r"^{p}(?:ask me (?:first|before saving|again|every time)|ask before (?:you )?sav(?:e|ing)|stop saving (?:everything|automatically|by yourself)|auto ?save off|check with me (?:first|before saving))(?: please)?[.!?]?$".replace("{p}", _POLITE))
+
+
+def autosave_mode(text: str) -> str | None:
+    """"save as you go" -> "on"; "ask me first" -> "off"; else None."""
+    n = norm(text)
+    if len(n.split()) > 10:
+        return None
+    return "on" if _AUTO_ON.match(n) else "off" if _AUTO_OFF.match(n) else None
+
+
 
 
 def describe_request(text: str) -> bool:

@@ -6,6 +6,7 @@ things in the turn's Ctx for the writer's screen (highlights, a new look, tap-to
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 import bible_import
@@ -341,8 +342,10 @@ def build(agent) -> Toolbox:
             return "A proposal is already waiting for the writer's answer. Do not propose another."
         kinds = {"character": "characters", "thread": "threads", "place": "world", "rule": "world", "title": "premise", "plot": "premise"}
         batch = []
-        for n in (notes if isinstance(notes, list) else [])[:8]:
+        skipped = []
+        for n in (notes if isinstance(notes, list) else [])[:12]:
             if not isinstance(n, dict):
+                skipped.append("not a note")
                 continue
             k = kinds.get(str(n.get("kind", "")), str(n.get("kind", "")))
             name, note = str(n.get("name", "")).strip()[:80], str(n.get("note", "")).strip()[:1200]
@@ -350,20 +353,36 @@ def build(agent) -> Toolbox:
                 name = name or "Premise"
             if k in ("characters", "threads", "world", "premise") and name and note:
                 batch.append({"kind": k, "name": name, "note": note})
+            else:
+                skipped.append(name or "a note without a name")
         if not batch:
             return 'Give notes as a list: [{"kind": "characters", "name": "...", "note": "..."}].'
+        if isinstance(notes, list) and len(notes) > 12:
+            skipped += [f"{len(notes) - 12} more beyond the first 12"]
         ctx.sess.pending = Pending(kind="wiki", text="; ".join(f"{b['name']}: {b['note']}" for b in batch)[:600], chapter=ctx.sess.chapter, data={"batch": batch})
-        return f"Proposed {len(batch)} notes together. Say in one sentence what they are and ask the writer if you should save them all. One yes saves every one."
+        names = ", ".join(b["name"] for b in batch)
+        return (f"Proposed {len(batch)} notes together ({names}). Say in one sentence which ones they are and ask the writer if you should save them all. One yes saves every one."
+                + (f" NOT included (tell the writer, and offer to add them next): {'; '.join(skipped)}." if skipped else ""))
 
     async def propose_append(ctx: Ctx, text="", chapter=None):
         from agent import Pending
 
         sess = ctx.sess
         text = (text or "").strip()
+        from agent import clean_draft
+
+        text = clean_draft(text)
         if len(text) < 30:
             return "Give the whole paragraph in text (at least a sentence or two)."
+        if len(re.findall(r"[.!?][\"”’)]*(?:\s|$)", text)) < 2 and len(text) < 170:
+            return "That is only one short sentence. Write a full paragraph of four to seven sentences (unless the writer asked for something short), then propose it again."
         if sess.pending:
             return "A proposal is already waiting for the writer's answer. Do not propose another."
+        issue = await agent.check_continuity(sess, text)
+        if issue and not ctx.continuity_tried:
+            ctx.continuity_tried = True
+            return (f"Continuity problem: {issue} Rewrite the paragraph so it agrees with the book and does not retell what is already told, then propose it again.")
+        ctx.warning = issue  # still a problem after one rewrite: it is shown, and spoken, to the writer
         nums = store.chapter_numbers(book(ctx))
         ch = _int(chapter, sess.chapter, 1, 9999) if chapter else sess.chapter
         if ch not in nums and ch != max(nums, default=0) + 1:
@@ -382,12 +401,17 @@ def build(agent) -> Toolbox:
             return "Give a description of the picture."
         if ctx.sess.pending:
             return "A proposal is already waiting for the writer's answer. Do not propose another."
-        try:
-            data = await agent.imagegen.generate(prompt.strip()[:900] + ". Illustration for a book, no text or letters in the picture.")
-        except Exception as e:
-            return f"Error: the picture could not be made ({e.__class__.__name__}). Say so plainly and offer to try again."
+        data, err = None, None
+        for _ in range(2):  # one quiet retry: a picture server that is busy often answers the second time
+            try:
+                data = await agent.imagegen.generate(prompt.strip()[:900] + ". Illustration for a book, no text or letters in the picture.")
+                break
+            except Exception as e:
+                err = e
+        if data is None:
+            return f"Error: the picture could not be made ({err.__class__.__name__}) even after a second try. Say so plainly and offer to try a different description."
         ctx.notes.append("I made a picture for you.")
-        return agent.propose_picture(ctx.sess, ctx, data, caption or prompt[:120], _int(chapter, 0, 0, 9999) or None, prompt)
+        return await agent.propose_picture(ctx.sess, ctx, data, caption or prompt[:120], _int(chapter, 0, 0, 9999) or None, prompt)
 
     async def find_pictures(ctx: Ctx, query="", n=6):
         from web import WebError
@@ -415,7 +439,7 @@ def build(agent) -> Toolbox:
             data = await agent.web.fetch_image(hit["img"])
         except WebError as e:
             return f"Error: {e}"
-        return agent.propose_picture(ctx.sess, ctx, data, caption or hit["title"], _int(chapter, 0, 0, 9999) or None, hit["title"])
+        return await agent.propose_picture(ctx.sess, ctx, data, caption or hit["title"], _int(chapter, 0, 0, 9999) or None, hit["title"], describe=True)
 
     async def use_library_picture(ctx: Ctx, title="", caption="", chapter=None):
         m = _find_item(ctx, title)
@@ -424,7 +448,7 @@ def build(agent) -> Toolbox:
         src = agent.library.source(book(ctx), m["slug"])
         if not src:
             return "The original picture file is missing."
-        return agent.propose_picture(ctx.sess, ctx, src.read_bytes(), caption or m["title"], _int(chapter, 0, 0, 9999) or None, m["title"])
+        return await agent.propose_picture(ctx.sess, ctx, src.read_bytes(), caption or m["title"], _int(chapter, 0, 0, 9999) or None, m["title"], describe=True)
 
     async def use_skill(ctx: Ctx, name=""):
         s = _skills(agent).get(name.strip().lower())
