@@ -167,7 +167,7 @@ def parse_ref(text: str) -> Ref:
 
 # --- command shapes -----------------------------------------------------------------------------------------
 _POLITE = r"(?:(?:please|kindly|hey|ok|okay|so|now|and|then)\s+)*(?:(?:can|could|would|will) you (?:please )?|i want you to |i'd like you to |i would like you to |let's |lets |go ahead and |you should |just )?"
-_EDIT_VERBS = r"(?:change|make|rewrite|rephrase|reword|fix|edit|tweak|soften|tighten|revise|replace|shorten|lengthen|expand|trim|polish|improve|punch up|sharpen|simplify|modernize|modernise)"
+_EDIT_VERBS = r"(?:take (?:that|this|it|the)(?: [a-z]+){0,4}? out|cut (?:that|this|it|the)(?: [a-z]+){0,4}? out|cut out|take out|leave out|change|make|rewrite|rephrase|reword|fix|edit|tweak|soften|tighten|revise|replace|shorten|lengthen|expand|trim|polish|improve|punch up|sharpen|simplify|modernize|modernise)"
 _EDIT_LEAD = re.compile(rf"^{_POLITE}{_EDIT_VERBS}\b")
 _EDIT_CLAUSE = re.compile(rf"[,;]\s*(?:and |then |please )*{_EDIT_VERBS}\b|\b(?:and|then) {_EDIT_VERBS} (?:him|her|them|it|that|this|the)\b")
 _DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|next paragraph|(?:1|one) more (?:paragraph|bit|part)|(?:1|one) more(?= (?:the|a|of|about|with|where|when|\w+ing)\b)|(?:and )?(?:then |now )?the (?:part|scene|bit|moment) (?:where|when|in which|with)|another (?:paragraph|bit)|more of the story|the next (?:bit|part)|(?:the )?(?:last|final|closing|opening|first|next) paragraph (?:for|of|in) chapter \d+(?= \w)|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
@@ -401,6 +401,8 @@ def delete_request(text: str) -> Ref | None:
 def move_request(text: str) -> "Move | None":
     """"move paragraph 5 to chapter 2", "move the last paragraph to the start of chapter 2", "move paragraph 4 before paragraph 1", "move it to the end"."""
     n = norm(text)
+    if re.search(r"\b(?:a|an|another|new|some) (?:picture|photo|photograph|image|illustration|map|drawing)\b", n):
+        return None  # "put a picture of the barn in chapter 2 after paragraph 1" asks for a NEW picture; moving needs "the picture"
     m0 = _MOVE_LEAD.match(n)
     if not m0 or len(n.split()) > 18:
         return None

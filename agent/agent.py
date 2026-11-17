@@ -227,8 +227,13 @@ class Agent:
         if items and not sess.pending and (k := intent.pick_number(text)) and 1 <= k <= len(items):
             text = f"Let's use this {sess.last_items_kind}: {items[k - 1]}"
 
-        if sess.last_dropped is not None and not sess.pending and re.match(r"^(?:please )?(?:bring|put|get) (?:that|it|the (?:last|other|first|dropped|old) (?:one|paragraph|draft|change)) back$|^i (?:want|wanted) (?:that|it|the (?:other|first|last) one) back$|^(?:restore|undrop) (?:that|it)$", intent.norm(text)):
-            sess.pending, sess.last_dropped = sess.last_dropped, None
+        if sess.last_dropped is not None and re.match(r"^(?:please )?(?:bring|put|get) (?:that|it|the (?:last|other|first|dropped|old) (?:one|paragraph|draft|change)) back$|^i (?:want|wanted) (?:that|it|the (?:other|first|last) one) back$|^(?:restore|undrop) (?:that|it)$", intent.norm(text)):
+            if sess.pending and sess.pending.kind in ("append", "edit", "picture"):
+                sess.pending, sess.last_dropped = sess.last_dropped, sess.pending  # swap: the one on screen is put aside in turn
+            elif not sess.pending:
+                sess.pending, sess.last_dropped = sess.last_dropped, None
+            else:
+                return self._reply(sess, "I am holding something else for your yes or no right now. Answer that first.")
             r = self._reply(sess, f"Here it is again. {sess.pending.ask or self._ask_for(sess, sess.pending)} Say yes or no.")
             return r
         if intent.describe_request(text):  # "describe it to me": words for the picture, and a waiting picture keeps waiting. Never a new paragraph.
@@ -601,6 +606,18 @@ class Agent:
         r.changed = changed
         return r
 
+    def _supersede(self, sess: Session) -> bool:
+        """A new draft or picture while an older draft/picture waits: the older one is put aside (and said out loud, and "bring it back" restores it), so the
+        writer is never told to "say no first". Changes that delete, move or save notes are never replaced this way."""
+        p = sess.pending
+        if p is None or p.kind not in ("append", "edit", "picture"):
+            return False
+        if p.kind == "picture":
+            self.images.discard(sess.book, (p.data or {}).get("candidate", ""))
+        sess.last_dropped, sess.pending = p, None
+        sess.say_first = f"I put aside the {'picture' if p.kind == 'picture' else 'paragraph' if p.kind == 'append' else 'change'} I showed you before. Say bring it back if you want it."
+        return True
+
     def _find_picture(self, sess: Session, text: str) -> Paragraph | None:
         """The picture a writer means by "the railway station picture" or "the picture in chapter 4": by chapter, by words in its caption, else the newest."""
         pics = [p for p in self.store.all_paragraphs(sess.book) if p.image]
@@ -620,7 +637,9 @@ class Agent:
         p = sess.pending
         if p and p.kind == "picture":
             d = p.data or {}
-            r = self._reply(sess, (d.get("describe") or f"It is a picture with the caption: {d.get('caption', '')}.") + " Say yes to put it in the book, or no for a different one.")
+            said = (d.get("describe") or f"It is a picture with the caption: {d.get('caption', '')}.").strip()
+            short = " ".join(re.split(r"(?<=[.!?])\s+", said)[:3])  # tired ears: the first three sentences
+            r = self._reply(sess, short + " Say yes to put it in the book, or no for a different one.")
             r.picture = self.images.info(sess.book, d["candidate"], d.get("caption", ""), candidate=True)
             return r
         named = self._find_picture(sess, text) if text else None
@@ -696,7 +715,7 @@ class Agent:
 
     async def propose_picture(self, sess: Session, ctx, data: bytes, caption: str, chapter: int | None, hint: str = "", describe: bool = False, after: int | None = None) -> str:
         """Check a picture, keep it as a candidate, and ask the writer. -> a plain message for the model."""
-        if sess.pending:
+        if sess.pending and not self._supersede(sess):
             return "A proposal is already waiting for the writer's answer. Do not propose another."
         nums = self.store.chapter_numbers(sess.book)
         ch = chapter or self._work(sess)
