@@ -256,3 +256,58 @@ async def test_a_paragraph_in_the_wrong_person_is_sent_back_once_and_long_drafts
     assert "only the start" in spoken and "ate quickly" not in spoken
     r = await ag.handle("s", "read it all")
     assert "ate quickly" in " ".join(x["text"] for x in r.speech) and r.pending
+
+
+@pytest.mark.asyncio
+async def test_take_the_last_sentence_out_edits_in_place_with_no_model_and_is_undoable(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    store.append_paragraph("demo", 2, "He registered on the fifth of June. He was twenty years old. The war had his name.")
+    store.append_paragraph("demo", 2, "A lottery in Washington set the order. Farm work was a reason to ask for a deferment.")
+    ag.session("s").chapter = 5 if False else 1
+    n0 = len(store.paragraphs("demo", 2))
+    r = await ag.handle("s", "take the last sentence of the first paragraph out of chapter 2")
+    assert r.pending and r.pending["kind"] == "edit" and "The war had his name." in r.text and not llm.calls
+    await ag.handle("s", "yes")
+    paras = store.paragraphs("demo", 2)
+    assert len(paras) == n0 and paras[0].text == "He registered on the fifth of June. He was twenty years old." and paras[1].text.startswith("A lottery")
+    await ag.handle("s", "undo that")
+    assert store.paragraphs("demo", 2)[0].text.endswith("The war had his name.")
+    r = await ag.handle("s", "no, just take the first sentence of paragraph 2 out for me")
+    assert r.pending and "A lottery in Washington set the order." in r.text
+    await ag.handle("s", "no")
+    assert len(store.paragraphs("demo", 2)) == n0
+
+
+@pytest.mark.asyncio
+async def test_hello_while_a_draft_waits_is_answered_without_the_model_and_no_is_not_noise(books):
+    import intent
+    assert not intent.is_noise("no") and intent.is_noise("you")
+    ag, store, llm = make(books)
+    A = "The first draft is about the walk down to the lake. The cold wind came in with the evening, and the road ahead of him was quiet."
+    llm.replies = [f'[[tool: propose_append {{"text": "{A}"}}]]', "Here."]
+    await ag.handle("s", "next paragraph, the walk down")
+    calls = len(llm.calls)
+    r = await ag.handle("s", "hello")
+    assert "I'm here." in r.text and "The first draft is about the walk" in r.text and len(llm.calls) == calls
+
+
+@pytest.mark.asyncio
+async def test_no_make_it_a_bigger_ship_after_a_picture_is_about_the_picture(books):
+    ag, store, llm = make(books)
+    ag.session("s").history.append({"role": "assistant", "content": "I made a picture of a troopship. Would you like a different picture?"})
+    llm.replies = ['[[tool: make_picture {"prompt": "a very large troopship", "caption": "A bigger troopship"}]]', "A much bigger ship, crowded with men."]
+    r = await ag.handle("s", "no, make it a bigger ship")
+    assert r.pending and r.pending["kind"] == "picture" and r.ui is None
+
+
+@pytest.mark.asyncio
+async def test_the_model_can_replace_a_saved_paragraph_in_place(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2); store.append_paragraph("demo", 2, "The old paragraph is here and it will be replaced soon enough.")
+    s = ag.session("s")
+    out = await ag.toolbox.call("propose_edit_paragraph", {"chapter": 2, "paragraph": 1, "text": "The new paragraph is here, and it replaces the old one entirely."}, harness.Ctx(sess=s))
+    assert s.pending and s.pending.kind == "edit", out
+    await ag.handle("s", "yes")
+    paras = store.paragraphs("demo", 2)
+    assert len(paras) == 1 and paras[0].text.startswith("The new paragraph")

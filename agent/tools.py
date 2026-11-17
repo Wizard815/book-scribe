@@ -499,6 +499,24 @@ def build(agent) -> Toolbox:
             return f"Error: {r.text}"
         return "Proposed. The app now asks the writer yes or no by itself. Say at most one short sentence."
 
+    async def propose_edit_paragraph(ctx: Ctx, paragraph=None, chapter=None, text=""):
+        """Replace a saved paragraph with new text (the app asks yes or no; one undo restores the old one)."""
+        from agent import Pending
+        import intent
+
+        sess = ctx.sess
+        text = (text or "").strip()
+        if len(text) < 20:
+            return "Give the whole new paragraph in text."
+        if sess.pending and not agent._supersede(sess):
+            return "A proposal is already waiting for the writer's answer. Do not propose another."
+        target = agent._by_ref(sess, intent.Ref(chapter=_int(chapter, 0, 0, 9999) or None, para=_int(paragraph, 0, -1, 9999) or None))
+        if not target or target.image:
+            return "Error: I could not find that paragraph of writing."
+        sess.chapter, sess.focus = target.chapter, target.id
+        sess.pending = Pending("edit", text, target.chapter, paragraph_id=target.id)
+        return "Proposed. The app shows the new version and asks the writer yes or no by itself. Do NOT repeat the paragraph; say at most one short sentence."
+
     async def propose_delete(ctx: Ctx, paragraph=None, chapter=None, picture=None):
         import intent
 
@@ -590,6 +608,8 @@ def build(agent) -> Toolbox:
         T("propose_move", "Move a paragraph or a picture: to the start or end of a chapter, into another chapter, or before/after another paragraph. The app asks the writer yes or no and one undo takes it back. "
           "Use this whenever they ask to move something, in any words; never say you cannot.", {"paragraph": "number of the WRITING inside its chapter (-1 = the last); pictures are not counted", "picture": "true to move the picture of the chapter (then paragraph = which picture, default 1)", "chapter": "the chapter it is in now (default: the one on screen)",
           "to_chapter": "destination chapter (default: the same one)", "where": "end | start | before 3 | after 3"}, propose_move, required=()),
+        T("propose_edit_paragraph", "Replace a SAVED paragraph with new text (a rewrite, or the same paragraph with something taken out). Never use propose_append for that: it would add a second copy. The app asks yes or no.",
+          {"paragraph": "number of the WRITING inside its chapter (pictures not counted)", "chapter": "chapter number", "text": "the complete new paragraph"}, propose_edit_paragraph, required=("paragraph", "text")),
         T("propose_delete", "Delete a paragraph or picture (the app asks yes or no; undo brings it back).", {"paragraph": "number of the WRITING inside its chapter (-1 = the last); pictures are not counted", "picture": "true to delete the picture of the chapter instead (paragraph = which picture, default 1)", "chapter": "chapter (default: the one on screen)"},
           propose_delete, required=()),
         T("start_chapter", "Start a new chapter (the next number) and optionally name it.", {"number": "the next chapter number (optional)", "title": "the chapter's title (optional)"}, start_chapter),
