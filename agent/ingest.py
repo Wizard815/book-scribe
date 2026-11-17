@@ -49,6 +49,15 @@ async def describe_picture(llm, jpg: bytes) -> str:
 
 async def add_file(book: str, filename: str, data: bytes, library, llm, stt, journal=None) -> dict:
     """-> the library item's meta, plus "message": one plain sentence about what happened. Raises Unreadable for a file that cannot be read."""
+    import hashlib
+
+    digest = hashlib.sha1(data).hexdigest()
+    for m in library.items(book):  # the same file again: say so, rather than keeping two copies
+        if m.get("sha1") == digest:
+            m = dict(m)
+            m["message"] = f"You already added this one: {m['title']}. I will use that copy."
+            m["duplicate"] = True
+            return m
     ex: Extracted = await asyncio.to_thread(ex_mod.extract, data, filename)
     text, status, notes = ex.text, "read", list(ex.notes)
 
@@ -58,8 +67,8 @@ async def add_file(book: str, filename: str, data: bytes, library, llm, stt, jou
             text = (text + "\n\n" if text.strip() else "") + seen if ex.kind == "scan" else seen
         except Exception as e:
             status = "unread"
-            notes.append("I kept the picture but could not read it: it needs a chat model that can look at pictures. Ask the administrator to choose one."
-                         if "cannot read pictures" in str(e) or "400" in str(e) or "422" in str(e) else "I kept the picture but could not read it just now. I can try again later.")
+            notes.append("I kept your picture, and you can still put it in the book, but I cannot see pictures yet, so I cannot tell you what is in it."
+                         if "cannot read pictures" in str(e) or "400" in str(e) or "422" in str(e) else "I kept your picture, but I could not look at it just now. You can still put it in the book.")
     elif ex.kind == "audio":
         try:
             text = await stt.transcribe(ex.audio or b"", ex.audio_name or filename)
@@ -70,7 +79,7 @@ async def add_file(book: str, filename: str, data: bytes, library, llm, stt, jou
             status = "unread"
             notes.append("I kept the recording but could not turn it into words just now.")
 
-    meta = library.add(book, filename, data, ex.title, ex.kind, text, status=status, notes=notes, pages=ex.pages, tree=ex.tree)
+    meta = library.add(book, filename, data, ex.title, ex.kind, text, status=status, notes=notes, pages=ex.pages, tree=ex.tree, sha1=digest)
     meta["message"] = _message(meta, ex)
     if journal:
         journal.append(book, "note", f"The writer added a file to the library: {meta['title']} ({meta['kind'].replace('_', ' ')}). " + (text[:300].replace("\n", " ") if status == "read" else ""))
@@ -80,7 +89,7 @@ async def add_file(book: str, filename: str, data: bytes, library, llm, stt, jou
 def _message(meta: dict, ex: Extracted) -> str:
     t = meta["title"]
     if meta["status"] != "read":
-        return f"I saved {t}, but {meta['notes'][-1][0].lower() + meta['notes'][-1][1:] if meta['notes'] else 'I could not read it yet.'}"
+        return f"I added {t}. " + (meta["notes"][-1] if meta["notes"] else "I could not read it yet.")
     if meta["kind"] == "family_tree" and ex.tree:
         return f"I added the family tree {t}: {ex.tree.summary()}. Ask me about anyone in it."
     if meta["kind"] == "database":

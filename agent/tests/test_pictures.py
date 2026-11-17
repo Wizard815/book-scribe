@@ -421,3 +421,90 @@ def test_more_ways_to_ask_for_a_description_and_the_picture_is_not_a_paragraph_t
     import intent
     for s in ["tell me what it looks like", "what is in the picture", "describe the picture to me", "describe it again", "what does it look like?"]:
         assert intent.describe_request(s), s
+
+
+# ------------------------------------------------------------------------------------------------ round four: what the half-sighted writer still hit
+@pytest.mark.asyncio
+async def test_yes_that_is_mine_put_it_in_saves_the_picture_and_does_not_reject_it(books):
+    import intent
+    ag, store, llm = make(books)
+    ag.library.add("demo", "p.png", png(400, 300), "Edwin Photo", "image", "x")
+    ctx = harness.Ctx(sess=ag.session("s"))
+    await ag.toolbox.call("use_library_picture", {"title": "Edwin Photo", "caption": "Dozmary Pool"}, ctx)
+    for yes in ["Yes, that's mine, put it in", "yes that's the one", "yes, lovely, thanks"]:
+        assert intent.confirmation(yes) == ("yes", ""), yes
+    n = len(llm.calls)
+    r = await ag.handle("s", "Yes, that's mine, put it in")
+    assert "in chapter 1" in r.text and store.paragraphs("demo", 1)[-1].image[0] == "Dozmary Pool" and len(llm.calls) == n  # saved; the model was not asked anything
+    await ag.toolbox.call("use_library_picture", {"title": "Edwin Photo", "caption": "Again"}, ctx)
+    llm.replies = ["Sure."]
+    await ag.handle("s", "yes but make it darker")  # a real change request is still a change request
+    assert ag.session("s").pending is None and not (ag.images.cand_dir("demo") / "x").exists()  # the picture was set aside; nothing was added to the book
+    assert sum(1 for p in store.paragraphs("demo", 1) if p.image) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_model_never_has_to_refuse_a_move_or_a_delete_or_a_new_chapter(books):
+    ag, store, llm = make(books)
+    ctx = harness.Ctx(sess=ag.session("s"))
+    first = lambda: [p.text[:9] for p in store.paragraphs("demo", 1)]
+    out = await ag.toolbox.call("propose_move", {"paragraph": -1, "where": "start"}, ctx); assert "Proposed" in out and ag.session("s").pending.kind == "move"
+    await ag.handle("s", "yes"); assert first() == ["At the ca", "Mira step", "The expre"]
+    assert "already waiting" in (await ag.toolbox.call("propose_delete", {"paragraph": 1}, harness.Ctx(sess=ag.session("s"))) if ag.session("s").pending else "already waiting")
+    out = await ag.toolbox.call("propose_move", {"paragraph": 9, "to_chapter": 2}, ctx); assert out.startswith("Error")  # no such paragraph: a plain reason, not a crash
+    out = await ag.toolbox.call("propose_delete", {"paragraph": 2}, ctx); assert "Proposed" in out and ag.session("s").pending.kind == "delete"
+    await ag.handle("s", "no")
+    assert "Chapter 2 is ready" in await ag.toolbox.call("start_chapter", {"title": "The Stone"}, ctx) and store.chapter_title("demo", 2) == "The Stone"
+    assert "Chapter 2 is now called The Boy" in await ag.toolbox.call("set_chapter_title", {"chapter": 2, "title": "The Boy"}, ctx)
+    info = json.loads(await ag.toolbox.call("book_info", {}, ctx))
+    assert [c["chapter"] for c in info["per_chapter"]] == [1, 2] and info["per_chapter"][1]["title"] == "The Boy" and info["per_chapter"][0]["pictures"] == 0
+    name = ag.images.save("demo", png(), "x"); store.append_image("demo", 2, name, "A lake")
+    assert json.loads(await ag.toolbox.call("book_info", {}, ctx))["per_chapter"][1]["picture_captions"] == ["A lake"]  # "which chapters have pictures?" can now be answered
+
+
+@pytest.mark.asyncio
+async def test_start_chapter_and_name_it_in_one_sentence_and_last_paragraph_for_a_chapter_is_a_new_paragraph(books):
+    import intent
+    ag, store, llm = make(books)
+    r = await ag.handle("s", "start chapter 2 and call it The Stone")
+    assert "Chapter 2, The Stone, is ready" in r.text and store.chapter_title("demo", 2) == "The Stone" and r.chapter == 2
+    r = await ag.handle("s", "begin chapter 3, The Round Table"); assert store.chapter_title("demo", 3) == "The Round Table"
+    r = await ag.handle("s", "start chapter 4"); assert store.chapter_title("demo", 4) == "" and "Chapter 4 is ready" in r.text
+    t = "Last paragraph for chapter 2: Mordred falls and Arthur lies wounded on the field"
+    assert intent.is_draft(t) and not intent.is_edit(t) and not intent.is_draft("rewrite the last paragraph of chapter 2 to be shorter")
+    for phrase, want in [("move the last paragraph to the start of its chapter", "start"), ("move paragraph 2 to the front", "start"), ("move paragraph 3 of chapter 8 into chapter 9, at the end please", "end")]:
+        assert intent.move_request(phrase).where == want, phrase
+    for phrase in ["describe that picture to me again", "describe it in more detail", "tell me what it looks like"]:
+        assert intent.describe_request(phrase), phrase
+
+
+@pytest.mark.asyncio
+async def test_uploading_the_same_photo_twice_keeps_one_copy_and_sir_kay_is_the_same_page_as_kay(books):
+    import ingest
+    ag, store, llm = make(books)
+    a = await ingest.add_file("demo", "photo.png", png(300, 200), ag.library, llm, None, ag.journal)
+    b = await ingest.add_file("demo", "photo again.png", png(300, 200), ag.library, llm, None, ag.journal)
+    assert b["duplicate"] and b["slug"] == a["slug"] and len(ag.library.items("demo")) == 1
+    bible = store.bible("demo")
+    for kind, name, note in [("characters", "Kay", "Arthur's foster brother."), ("characters", "Sir Kay", "Sharp-tongued, loyal."), ("characters", "The Lady of the Lake", "Gives the sword.")]:
+        ag._save_note(bible, kind, name, note)
+    names = list(bible.entries("characters"))
+    assert names.count("Kay") == 1 and "Sir Kay" not in names and "Lady of the Lake" not in names and "The Lady of the Lake" in names
+    assert "Sharp-tongued" in bible.entries("characters")["Kay"].body and "foster brother" in bible.entries("characters")["Kay"].body
+
+
+@pytest.mark.asyncio
+async def test_a_saved_paragraph_is_read_back_briefly_and_names_follow_the_book_s_setting(books):
+    ag, store, llm = make(books)
+    ag.prefs = __import__("prefs").Prefs(ag.s.state_dir); ag.prefs.update({"auto_save": "on"})
+    long = ("The table came in the spring. It was oak, black with age. A hundred and fifty places were cut into the rim. Each had a name in gilt. Bedivere found his own.")
+    llm.replies = [f'[[tool: propose_append {{"text": "{long}"}}]]', "ok"]
+    r = await ag.handle("s", "next paragraph, the table")
+    spoken = " ".join(s["text"] for s in r.speech)
+    assert long in r.text and "Each had a name" not in spoken and "The table came in the spring. It was oak, black with age." in spoken and "read it to me" in spoken
+    import ideas_data as D
+    ag.journal.append("demo", "user", "I want a book about King Arthur and Excalibur told by old Bedivere")  # said in conversation, not yet in the wiki
+    fit = {w for c in ("welsh", "english") for k in ("female", "male") for w in D.NAMES[c][k]}
+    ag2, store2, llm2 = make(books)
+    ag2.journal.append("demo", "user", "I want a book about King Arthur and Excalibur told by old Bedivere")
+    r = await ag2.handle("s", "give me three names for a minor knight"); assert all(i.split()[0] in fit for i in r.ideas), r.ideas
