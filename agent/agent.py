@@ -248,6 +248,10 @@ class Agent:
         if sess.pending and intent.undo_request(text) and sess.pending.kind not in ("voice",):  # "undo that" while a proposal waits: drop the proposal
             sess.pending = None
             return self._reply(sess, "Okay, I dropped that. Nothing in your book was changed.")
+        if sess.pending and (mode := intent.autosave_mode(text)) is not None:  # "ask me first from now on" with a draft waiting: the setting changes, the draft keeps waiting
+            if self.prefs:
+                self.prefs.update({"auto_save": mode})
+            return self._reply(sess, "Okay. I will save each paragraph straight away from now on. The one waiting still needs your yes." if mode == "on" else "Okay. I will ask you before I save anything I write. The one waiting is still waiting for your yes.")
         # Answers to a pending proposal come first, so "okay" confirms rather than being discarded as noise.
         if sess.pending and sess.pending.kind == "file":
             done = await self._file_pending(sess, text)
@@ -269,6 +273,14 @@ class Agent:
             kind, rest = intent.confirmation(text)
             if kind == "yes" and len(rest.split()) > 8 and not intent._CHANGE.search(rest) and sess.pending.kind != "confirm_target":
                 kind = None  # a long remark that merely starts with "right" or "yes" is conversation, not an answer and not a change request
+            if sess.pending.kind == "append" and kind != "yes" and not intent.is_question(text):
+                said_p = rest if kind else text
+                pos_p = intent.picture_position(said_p)
+                if pos_p is not None and not re.search(r"\b(?:make|different|another|instead|shorter|longer|rewrite|sadder|change|new)\b", intent.norm(said_p)) and len(said_p.split()) <= 10:
+                    sess.pending.data = {**(sess.pending.data or {}), "where": pos_p}  # "no, put it first": the paragraph is fine, only its place was wrong
+                    sess.pending.ask = ""
+                    place = "at the very start" if pos_p == 0 else "at the end" if pos_p < 0 else f"after paragraph {pos_p}"
+                    return self._reply(sess, f"Okay, it will go {place} of chapter {sess.pending.chapter}. Say yes to add it.")
             if sess.pending.kind == "picture" and not intent.is_question(text):
                 said = rest if kind else text
                 nums_ = self.store.chapter_numbers(sess.book)
@@ -729,6 +741,8 @@ class Agent:
     def _describe_picture(self, sess: Session, text: str = "") -> Reply | None:
         """Put a picture into words: the one waiting for a yes, else the one the writer was last looking at."""
         p = sess.pending
+        if p and p.kind in ("append", "edit") and not self._find_picture(sess, text):
+            return self._reply(sess, "That is a paragraph waiting for your yes, not a picture. Say read it all to hear it again, or yes, or tell me what to change.")
         if p and p.kind == "picture":
             d = p.data or {}
             said = (d.get("describe") or f"It is a picture with the caption: {d.get('caption', '')}.").strip()
@@ -740,7 +754,7 @@ class Agent:
         if named:
             sess.chapter, sess.focus = named.chapter, named.id
             kept = self.images.note(sess.book, named.image[1]) if len(named.image) > 1 else ""
-            r = self._reply(sess, f"It is the picture in chapter {named.chapter}, called: {named.image[0]}." + (f" {' '.join(re.split(r'(?<=[.!?])\s+', kept)[:2])}" if kept else ""))
+            r = self._reply(sess, f"It is the picture called {named.image[0]}." + (f" {' '.join(re.split(r'(?<=[.!?])\s+', kept)[:2])}" if kept else ""))
             r.highlights = self._hl(sess, [named.id])
             return r
         if sess.focus:
@@ -815,7 +829,7 @@ class Agent:
             return "A proposal is already waiting for the writer's answer. Do not propose another."
         nums = self.store.chapter_numbers(sess.book)
         named = intent.parse_ref(sess.last_user).chapter if re.search(r"\bchapter \d+", intent.norm(sess.last_user)) else None
-        ch = named or chapter or (sess.chapter if sess.screen_wins and sess.chapter in nums else self._work(sess))  # the chapter the writer named, else the one they turned to, else where they are writing
+        ch = named or (sess.chapter if sess.screen_wins and sess.chapter in nums else (chapter or self._work(sess)))  # the chapter the writer named, else the one they turned to (not the model's guess), else where they are writing
         if ch not in nums and ch != max(nums, default=0) + 1:
             ch = self._work(sess)
         try:
@@ -1562,7 +1576,13 @@ class Agent:
             else:
                 if p.chapter not in self.store.chapter_numbers(sess.book):
                     self.store.create_chapter(sess.book, p.chapter)
-                para = self.store.append_paragraph(sess.book, p.chapter, p.text, p.scene)
+                where = (p.data or {}).get("where")
+                paras_ = self.store.paragraphs(sess.book, p.chapter)
+                texts_ = [i for i, q in enumerate(paras_) if not q.image]
+                if where is not None and where >= 0 and paras_ and (at := 0 if where == 0 else (texts_[where - 1] + 1 if 0 < where <= len(texts_) else len(paras_))) < len(paras_):
+                    para = self.store.insert_paragraph(sess.book, p.chapter, p.text, before_id=paras_[at].id)
+                else:
+                    para = self.store.append_paragraph(sess.book, p.chapter, p.text, p.scene)
                 sess.work = p.chapter
         except BookError as e:
             return self._reply(sess, f"I couldn't save that: {e}")
