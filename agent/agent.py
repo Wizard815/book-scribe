@@ -186,10 +186,11 @@ class Agent:
         """One turn. Everything said is written to the journal (so nothing is ever lost when working memory is trimmed)."""
         sess = self.session(sid, book)
         sess.via, sess.interrupted = via, interrupted
-        if viewing and viewing != sess.last_viewing:  # the writer turned to another chapter: what they say next is about the chapter they are looking at
-            sess.last_viewing, sess.screen_wins = viewing, True
-            if viewing in self.store.chapter_numbers(sess.book):
+        if viewing:  # the page says which chapter it shows: what the writer says next is about the chapter they are looking at
+            if viewing != sess.last_viewing and viewing in self.store.chapter_numbers(sess.book):
                 sess.chapter = viewing
+            sess.last_viewing = viewing
+            sess.screen_wins = True
         reply = await self._handle(sid, user_text, book)
         if self.journal and reply.text and user_text.strip():
             sess = self.session(sid, book)
@@ -715,6 +716,56 @@ class Agent:
             return "This book is told in the first person (I, my), but the paragraph tells it as he or she."
         return ""
 
+    def check_repeat(self, sess: Session, text: str) -> str:
+        """A new paragraph that mostly re-says one already in the book (any chapter) -> a short reason, else "". Plain word-overlap, no model."""
+        def shingles(t: str) -> set:
+            w = re.findall(r"[a-z0-9']+", imgs.plain(t).lower())
+            return {" ".join(w[i:i + 4]) for i in range(max(0, len(w) - 3))}
+        new = shingles(text)
+        if len(new) < 8:
+            return ""
+        for p in self.store.all_paragraphs(sess.book):
+            if p.image:
+                continue
+            old = shingles(p.text)
+            if old and len(new & old) / min(len(new), len(old)) >= 0.35:
+                return f"This repeats much of {self._where(sess, p)}, which already tells it."
+        return ""
+
+    def ungrounded(self, sess: Session, text: str) -> str:
+        """Specific facts (years, dates, numbers, names) that appear nowhere in the book, the wiki, the library, or what the writer said -> a plain list, else "".
+        A paragraph about a real family should not carry details nobody gave."""
+        corpus = [imgs.plain(p.text) for p in self.store.all_paragraphs(sess.book) if not p.image]
+        corpus += [m["content"] for m in sess.history if m.get("role") == "user" and isinstance(m.get("content"), str)]
+        try:
+            b = self.store.bible(sess.book)
+            corpus += [b.read("premise")] + [f"{n} {e.body} {' '.join(map(str, e.state.values()))}" for k in ("characters", "world", "threads") for n, e in b.entries(k).items()]
+        except Exception:
+            pass
+        if self.library:
+            for m in self.library.items(sess.book)[:40]:
+                try:
+                    corpus.append(self.library.text(sess.book, m["slug"])[:60000])
+                except Exception:
+                    pass
+            corpus.append(sess.last_user or "")
+        hay = " ".join(corpus).lower()
+        if len(hay) < 200:
+            return ""
+        bare = re.sub(r'["“”][^"“”]*["“”]', " ", text)
+        found: list[str] = []
+        for m in re.finditer(r"\b(1[5-9]\d\d|20\d\d)\b|\b\d{2,}\b", bare):
+            tok = m.group(0)
+            if tok.lower() not in hay and tok not in found:
+                found.append(tok)
+        for m in re.finditer(r"(?<![.!?\"“]\s)(?<!^)\b([A-Z][a-z]{3,})\b", bare):
+            tok = m.group(1)
+            if tok.lower() not in hay and tok not in found:
+                found.append(tok)
+        if not found:
+            return ""
+        return "I could not find " + ", ".join(found[:4]) + " in your documents, your notes or what you told me."
+
     def _supersede(self, sess: Session) -> bool:
         """A new draft or picture while an older draft/picture waits: the older one is put aside (and said out loud, and "bring it back" restores it), so the
         writer is never told to "say no first". Changes that delete, move or save notes are never replaced this way."""
@@ -832,7 +883,7 @@ class Agent:
             return "A proposal is already waiting for the writer's answer. Do not propose another."
         nums = self.store.chapter_numbers(sess.book)
         named = intent.parse_ref(sess.last_user).chapter if re.search(r"\bchapter \d+", intent.norm(sess.last_user)) else None
-        ch = named or (sess.chapter if sess.screen_wins and sess.chapter in nums else (chapter or self._work(sess)))  # the chapter the writer named, else the one they turned to (not the model's guess), else where they are writing
+        ch = named or (sess.last_viewing if sess.last_viewing in nums else (chapter or self._work(sess)))  # the chapter the writer named, else the one the page shows (not the model's guess), else where they are writing
         if ch not in nums and ch != max(nums, default=0) + 1:
             ch = self._work(sess)
         try:
