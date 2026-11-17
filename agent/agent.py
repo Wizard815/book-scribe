@@ -246,7 +246,7 @@ class Agent:
             if kind == "yes" and not rest:
                 return await self._accept(sess)
             if kind == "yes" and rest and sess.pending.kind in ("picture", "wiki", "delete", "move", "file", "family", "page") and not intent.is_question(rest) \
-                    and not intent._CHANGE.search(rest):
+                    and not intent._CHANGE.search(rest) and len(rest.split()) <= 5:
                 return await self._accept(sess)  # "yes, put that one in" / "yes, save them" / "yes delete all four": more yes, not a change
             if kind == "yes" and rest and (intent.is_question(rest) or text.strip().endswith("?")) and sess.pending.kind in ("edit", "append", "wiki", "picture", "delete", "move"):
                 done = await self._accept(sess)  # "yes, and who was Kay's father?": save it, then answer
@@ -658,6 +658,8 @@ class Agent:
             except Exception:
                 seen = ""
         sess.pending.data["describe"] = seen
+        if not describe:
+            sess.pending.data["gen_prompt"] = (hint or "")[:300]
         how = (f" A vision model says the picture shows: {seen}" if seen else " You cannot see this picture and no vision model could: say so honestly and describe only what its title and caption tell you.") if describe else ""
         return ("Proposed. The app shows the picture to the writer and asks yes or no by itself. In your reply, DESCRIBE the picture in one or two plain sentences "
                 "(the writer may not look at the screen) and do not ask about saving." + how)
@@ -1125,9 +1127,11 @@ class Agent:
         out = out or "I'm not sure what to say to that. Could you tell me a little more?"
         if ctx.picture and sess.pending and sess.pending.kind == "picture":  # the model made or found a picture: show it, describe it, ask
             cap = ctx.picture["caption"]
-            lead = (out.strip() + " ") if out.strip() and len(out.strip()) <= 320 else f"I have a picture for you: {cap}. "
-            if sess.pending.data is not None:
-                sess.pending.data["describe"] = out.strip()  # what the model said about it, kept so "describe it to me" can say it again
+            gp = (sess.pending.data or {}).get("gen_prompt", "")
+            described = len(out.strip()) >= 40 and out.strip().lower().rstrip('.') != cap.lower().rstrip('.')  # a real description, not just "Here you go" or the caption
+            lead = (out.strip() + " ") if described and len(out.strip()) <= 360 else (f"I made a picture: {gp[:200].rstrip('. ')}. " if gp else f"I have a picture for you, called {cap}. ")
+            if sess.pending.data is not None:  # what was said about the picture, kept so "describe it to me" can say it again
+                sess.pending.data["describe"] = out.strip() if described else (gp or sess.pending.data.get("describe", ""))
             sess.history.append({"role": "assistant", "content": "[proposed a picture]"})
             reply = self._reply(sess, f"{lead}Should I put it in chapter {sess.pending.chapter}?")
             reply.picture = self.images.info(sess.book, ctx.picture["candidate"], cap, candidate=True)
@@ -1137,7 +1141,7 @@ class Agent:
             lead = (out.strip() + " ") if out.strip() and len(out.strip()) <= 220 and out.strip() != "I'm not sure what to say to that. Could you tell me a little more?" else ""
             sess.history.append({"role": "assistant", "content": "[proposed a new paragraph]"})
             warn = f" A warning: {ctx.warning}" if ctx.warning else ""
-            if self._pref("auto_save", "off") == "on":
+            if self._pref("auto_save", "off") == "on" and not ctx.warning:  # a paragraph the app itself flags is never saved behind the writer's back
                 return self._attach(sess, await self._autosave(sess, ctx.drafted, lead, warn), ctx, "", text)
             reply = self._reply(sess, f"{lead}Here's a draft: {ctx.drafted}{warn} {tail}", await self._speech_text(sess, ctx.drafted, f"{lead}Here's a draft:", f"{warn} {tail}".strip()))
             return self._attach(sess, reply, ctx, "", text)
@@ -1166,6 +1170,12 @@ class Agent:
         if new.strip().upper().startswith("NOT_FOUND"):
             return self._reply(sess, "I did not change anything. " + (new.split(":", 1)[1].strip() if ":" in new else "That is not in this paragraph.") + " Tell me what you want instead.")
         new = clean_draft(new)
+        if re.sub(r"\s+", " ", new).strip() == re.sub(r"\s+", " ", target.text).strip():  # an "edit" that changes nothing: try once more, then say so
+            msgs2 = msgs + [{"role": "assistant", "content": new}, {"role": "user", "content": "That is identical to the original. Make a real change that does what the writer asked. Output only the new paragraph."}]
+            new, _ = await self._gated(msgs2)
+            new = clean_draft(new)
+            if re.sub(r"\s+", " ", new).strip() == re.sub(r"\s+", " ", target.text).strip():
+                return self._reply(sess, "I tried, but I could not find a way to change it. Tell me exactly what you want different, for example a word to replace or a feeling to add.")
         sess.chapter, sess.focus = target.chapter, target.id
         sess.pending = Pending("edit", new, target.chapter, paragraph_id=target.id)
         self._remember(sess, text, f"[proposed a rewrite of {where}]")
@@ -1196,7 +1206,7 @@ class Agent:
         tail = f"Should I add it to chapter {sess.chapter}?" if sess.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.chapter} with it?"
         issue = ctx.warning if ctx.drafted else await self.check_continuity(sess, new, text)  # a paragraph proposed through the tool was already checked there
         warn = f" A warning: {issue}" if issue else ""
-        if self._pref("auto_save", "off") == "on":
+        if self._pref("auto_save", "off") == "on" and not issue:
             return self._attach(sess, await self._autosave(sess, new, "", warn), ctx, "", text)
         reply = self._reply(sess, f"Here's a draft: {new}{warn} {tail}", await self._speech_text(sess, new, "Here's a draft:", f"{warn} {tail}".strip()))
         reply.notes += [f"Style note: {i}" for i in issues]
