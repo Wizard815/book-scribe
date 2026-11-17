@@ -102,7 +102,8 @@ class ParagraphIndex:
         return docs
 
     def _docs(self, book: str) -> dict[str, str]:
-        docs = {p.id: p.text for p in self.store.all_paragraphs(book)}
+        from images import plain
+        docs = {p.id: plain(p.text) for p in self.store.all_paragraphs(book)}  # a picture is searched by its caption
         docs.update(self.bible_docs(book))
         for src in self.sources:
             try:

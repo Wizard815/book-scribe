@@ -161,6 +161,7 @@ label { display: block; margin: 8px 0; color: var(--muted); font-weight: 700; }
     stt: ["Speech-to-text", "Whisper or any /v1/audio/transcriptions server."],
     tts: ["Text-to-speech", "Optional. Without one, the browser's built-in voice reads replies. List the voices it offers to give each character their own."],
     embed: ["Embeddings", "Used for finding paragraphs by meaning and for long-term memory. No fallback: different models make incompatible vectors, so only the highest-priority one is used."],
+    image: ["Pictures", "Optional. Any OpenAI-compatible /v1/images/generations server (a local Stable Diffusion or Flux box, or a cloud model). Without one the agent can still use pictures from your library or a web search."],
     graph: ["Story graph (graphify)", "Optional. Builds the story's relationship graph in the background. Leave empty to reuse the chat tiers."],
   };
   let snap = null, models = {};

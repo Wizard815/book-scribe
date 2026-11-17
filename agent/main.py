@@ -1,6 +1,7 @@
 """Book Scribe agent API (FastAPI)."""
 from __future__ import annotations
 
+import re
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -22,7 +23,9 @@ from agent import Agent
 from auth import (ADMIN_TTL, COOKIE, WRITER_TTL, AccountStore, AuthError, LoginLimiter, Sessions, admin_password_ok,
                   check_password_rules, check_username_rules)
 from book_store import BookError, BookStore
-from clients import LLM, STT, TTS, AllTiersFailed, NotConfigured, Router, probe
+from clients import LLM, STT, TTS, AllTiersFailed, ImageGen, NotConfigured, Router, probe
+import export as export_mod
+import images as images_mod
 from kg import StoryKG
 from memory.store import MemoryManager
 from providers import ProviderError, Registry
@@ -185,7 +188,7 @@ class ProfileIn(BaseModel):
     tier: int | None = None
 
 
-def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=None, check_drift=True, require_auth=True, embed_http=None, web_http=None) -> FastAPI:
+def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=None, check_drift=True, require_auth=True, embed_http=None, web_http=None, imagegen=None) -> FastAPI:
     s = settings or load_settings()
     store = BookStore(s.project_dir)
     store.ensure_book(s.default_book)
@@ -212,6 +215,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     addons = Addons(s, s.addons_dir).load()
     agent = Agent(s, store, llm, mem, StoryKG(store), graph, check_drift, voices, prefs, index, journal, library, addons)
     agent.stt = stt
+    agent.imagegen = imagegen or ImageGen(router)
     agent.web = Web(s.searxng_url, s.wikipedia_url, web_http) if (s.searxng_url or s.wikipedia_url) else None
 
     @asynccontextmanager
@@ -543,7 +547,7 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         return d
 
     def apply_engines() -> None:
-        router.prefer.update(chat=prefs.get("chat_engine", "auto"), stt=prefs.get("listen_engine", "auto"), tts=prefs.get("voice_engine", "auto"))
+        router.prefer.update(chat=prefs.get("chat_engine", "auto"), stt=prefs.get("listen_engine", "auto"), tts=prefs.get("voice_engine", "auto"), image=prefs.get("chat_engine", "auto"))
 
     apply_engines()
 
@@ -879,16 +883,54 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
     @app.get("/api/books/{book}/chapters", dependencies=[Depends(writer)])
     async def chapters(book: str):
         try:
-            return {"chapters": store.chapter_numbers(book)}
+            nums = store.chapter_numbers(book)
+            return {"chapters": nums, "titles": {str(n): store.chapter_title(book, n) for n in nums}}
         except BookError as e:
             raise HTTPException(400, str(e))
 
     @app.get("/api/books/{book}/chapters/{n}", dependencies=[Depends(writer)])
     async def chapter(book: str, n: int):
         try:
-            return {"chapter": n, "paragraphs": [asdict(p) for p in store.paragraphs(book, n)]}
+            paras = []
+            for p in store.paragraphs(book, n):
+                d = asdict(p)
+                d["image"] = agent.images.info(book, p.image[1], p.image[0]) if p.image else None
+                paras.append(d)
+            return {"chapter": n, "title": store.chapter_title(book, n), "paragraphs": paras}
         except BookError as e:
             raise HTTPException(404, str(e))
+
+    # --- pictures in the book ----------------------------------------------------------------------------------------
+    def send_picture(book: str, name: str, candidate: bool) -> Response:
+        try:
+            path = agent.images.path(book_or_400(book), name, candidate)
+        except FileNotFoundError:
+            raise HTTPException(404, "No such picture.")
+        return Response(path.read_bytes(), media_type=images_mod.TYPES.get(path.suffix.lower(), "application/octet-stream"),
+                        headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self'", "Cache-Control": "private, max-age=300"})
+
+    @app.get("/api/books/{book}/images/candidate/{name}", dependencies=[Depends(writer)])
+    async def candidate_picture(book: str, name: str):
+        return send_picture(book, name, True)
+
+    @app.get("/api/books/{book}/images/{name}", dependencies=[Depends(writer)])
+    async def book_picture(book: str, name: str):
+        return send_picture(book, name, False)
+
+    @app.get("/api/books/{book}/export", dependencies=[Depends(writer)])
+    async def export_book(book: str, format: str = "html"):
+        """The finished book as one file: html (pictures embedded; prints to PDF), epub (e-readers) or md (a zip with the pictures beside it)."""
+        book_or_400(book)
+        title = re.sub(r"[^A-Za-z0-9._-]+", "-", export_mod.book_title(store, book)).strip("-")[:60] or "book"
+        if format == "html":
+            body, ctype, ext = export_mod.to_html(store, agent.images, book).encode("utf-8"), "text/html; charset=utf-8", "html"
+        elif format == "epub":
+            body, ctype, ext = export_mod.to_epub(store, agent.images, book), "application/epub+zip", "epub"
+        elif format in ("md", "markdown"):
+            body, ctype, ext = export_mod.to_markdown_zip(store, agent.images, book), "application/zip", "zip"
+        else:
+            raise HTTPException(400, "Formats: html, epub, md.")
+        return Response(body, media_type=ctype, headers={"Content-Disposition": f'attachment; filename="{title}.{ext}"', "X-Content-Type-Options": "nosniff"})
 
     @app.put("/api/books/{book}/paragraphs/{pid}", dependencies=[Depends(writer)])
     async def put_paragraph(book: str, pid: str, body: EditIn):

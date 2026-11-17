@@ -110,6 +110,48 @@ class Web:
         title = str(page.get("title") or titles[0])
         return {"title": title, "url": f"{self.wikipedia_url}/wiki/{title.replace(' ', '_')}", "text": text[:chars], "more": len(text) > chars}
 
+    async def image_search(self, query: str, n: int = 6) -> list[dict]:
+        """Picture results from SearXNG: [{title, img (the picture's address), page (where it was found)}]."""
+        if not self.can_search:
+            raise WebError("Web search is not set up.")
+        data = await self._json(f"{self.searxng}/search", {"q": query[:200], "format": "json", "categories": "images", "safesearch": 1})
+        out = []
+        for r in (data.get("results") if isinstance(data, dict) else None) or []:
+            img = r.get("img_src") if isinstance(r, dict) else None
+            if img and str(img).startswith(("http://", "https://")):
+                out.append({"title": re.sub(r"\s+", " ", str(r.get("title") or "picture"))[:120], "img": str(img)[:500], "page": str(r.get("url") or "")[:500]})
+            if len(out) >= max(1, min(n, 10)):
+                break
+        return out
+
+    async def fetch_image(self, url: str, max_bytes: int = 12_000_000) -> bytes:
+        """The bytes of one picture, from a public address only (every redirect is checked). The caller still validates it as a picture."""
+        for _ in range(4):
+            u = urlparse(url)
+            if u.scheme not in ("http", "https") or not u.hostname:
+                raise WebError("That is not a web address I can open.")
+            if u.port not in (None, 80, 443) and u.hostname not in self._trusted:
+                raise WebError("I only open ordinary web pages.")
+            if u.hostname not in self._trusted and not await asyncio.to_thread(_is_public, u.hostname):
+                raise WebError("I will not open that address: it is not on the public internet.")
+            try:
+                async with self.http.stream("GET", url, timeout=self.timeout, follow_redirects=False, headers={"User-Agent": UA}) as r:
+                    if 300 <= r.status_code < 400 and r.headers.get("location"):
+                        url = urljoin(url, r.headers["location"])
+                        continue
+                    r.raise_for_status()
+                    if not r.headers.get("content-type", "").lower().startswith("image/"):
+                        raise WebError("That address is not a picture.")
+                    body = b""
+                    async for chunk in r.aiter_bytes():
+                        body += chunk
+                        if len(body) > max_bytes:
+                            raise WebError("That picture is too big.")
+                    return body
+            except httpx.HTTPError as e:
+                raise WebError(f"I could not fetch that picture ({e.__class__.__name__}).")
+        raise WebError("That address keeps redirecting.")
+
     # --- any other page: public addresses only ----------------------------------------------------------------------------
     async def read(self, url: str, chars: int = 6000) -> str:
         for _ in range(4):  # follow at most three redirects, checking each one

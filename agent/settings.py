@@ -21,6 +21,8 @@ class Settings:
     tts_url: str = ""
     tts_model: str = ""
     tts_voice: str = ""
+    image_url: str = ""  # an OpenAI-compatible image generation server (IMAGE_URL), for pictures in the book
+    image_model: str = ""
     project_dir: Path = Path("/data/books")
     default_book: str = "demo"
     mem_backend: str = "mem0"  # mem0 | file
@@ -67,6 +69,8 @@ def load_settings(config_path: str | None = None) -> Settings:
         tts_url=_env("TTS_URL").rstrip("/"),
         tts_model=_env("TTS_MODEL"),
         tts_voice=_env("TTS_VOICE"),
+        image_url=_env("IMAGE_URL").rstrip("/"),
+        image_model=_env("IMAGE_MODEL"),
         project_dir=Path(os.getenv("PROJECT_DIR", "/data/books")),
         default_book=os.getenv("DEFAULT_BOOK", "demo"),
         mem_backend=os.getenv("MEM_BACKEND", "mem0"),
