@@ -32,6 +32,7 @@ class Ctx:
     ideas: list[str] = field(default_factory=list)  # generated options the UI can show as tap-to-use buttons
     notes: list[str] = field(default_factory=list)  # short notices for the writer ("I looked up Excalibur on Wikipedia.")
     picture: dict | None = None  # a picture the model has made or found and proposed for the book: {"candidate", "caption", "chapter"}
+    download: dict | None = None  # the book as a file, for the page to save: {"url", "label"}
     warning: str = ""  # a continuity problem found in the paragraph the model proposed (spoken to the writer)
     continuity_tried: bool = False
     drafted: str = ""  # a paragraph the model proposed for the book through propose_append

@@ -294,7 +294,7 @@ async def test_a_chapter_the_writer_points_back_to_is_not_where_the_paragraph_go
     assert intent.parse_ref("write paragraph 2 of chapter 3").chapter == 3 and intent.parse_ref("move paragraph 3 from chapter 1 to chapter 2").chapter == 1
     ag, store, llm = make(books)
     store.create_chapter("demo", 2); store.append_paragraph("demo", 2, "A second chapter paragraph about the stone and the crowd.")
-    s = ag.session("s"); s.chapter = 1
+    s = ag.session("s"); s.chapter = s.work = 1
     llm.replies = ["He threw it, and the lake took it."]
     r = await ag.handle("s", "write the next paragraph, the same lady as in chapter 2 but sadder")
     assert r.pending["ask"] == "Add this paragraph to chapter 1?"
@@ -368,7 +368,7 @@ async def test_a_paragraph_that_contradicts_the_book_is_caught_once_and_then_war
     llm.replies = [f'[[tool: propose_append {{"text": "{bad}"}}]]', "CONFLICT: Bedivere never asked why in chapter 1.", f'[[tool: propose_append {{"text": "{bad}"}}]]',
                    "CONFLICT: still asks why.", "A draft for you."]
     r = await ag.handle("s", "next paragraph, he asks why")
-    assert "Continuity problem" in " ".join(str(m) for c in llm.calls for m in c) and r.pending["kind"] == "append" and "A warning: still asks why" in r.text  # warned, never silently saved
+    assert "Problem: Bedivere never asked why" in " ".join(str(m) for c in llm.calls for m in c) and r.pending["kind"] == "append" and "A warning: still asks why" in r.text  # warned, never silently saved
     ag2, store2, llm2 = make(books)
     assert await ag2.check_continuity(ag2.session("s"), "x") == ""  # a book this short is not checked
     for t in ("a", "b"):
@@ -508,3 +508,83 @@ async def test_a_saved_paragraph_is_read_back_briefly_and_names_follow_the_book_
     ag2, store2, llm2 = make(books)
     ag2.journal.append("demo", "user", "I want a book about King Arthur and Excalibur told by old Bedivere")
     r = await ag2.handle("s", "give me three names for a minor knight"); assert all(i.split()[0] in fit for i in r.ideas), r.ideas
+
+
+# ------------------------------------------------------------------------ round five: the chapter being written in must not drift
+@pytest.mark.asyncio
+async def test_looking_at_or_editing_another_chapter_never_changes_where_new_writing_goes(books):
+    ag, store, llm = make(books)
+    for n in (2, 3, 4):
+        store.create_chapter("demo", n); store.append_paragraph("demo", n, f"Chapter {n} first paragraph, long enough to be a real line of the story here.")
+    await ag.handle("s", "go to chapter 4"); s = ag.session("s"); assert s.work == 4
+    llm.replies = ["Not sure which part you mean."]
+    await ag.handle("s", "rewrite paragraph 1 of chapter 2 to be sadder")           # looks at chapter 2 (and may ask "do you mean...?")
+    await ag.handle("s", "no"); await ag.handle("s", "read chapter 1 paragraph 2"); await ag.handle("s", "move paragraph 1 of chapter 3 to chapter 2"); await ag.handle("s", "no")
+    assert s.work == 4 and ag._work(s) == 4
+    llm.replies = ["The lords made him try three times, and each time the stone gave."]
+    r = await ag.handle("s", "one more paragraph, the lords make him try three times")
+    assert r.pending["ask"] == "Add this paragraph to chapter 4?"
+    await ag.handle("s", "yes"); assert "try three times" in store.read_chapter_raw("demo", 4) and "try three times" not in store.read_chapter_raw("demo", 2)
+    assert "writing in chapter 4" in ag._book_state(s) and "looking at chapter" in ag._book_state(s)
+    ag2, _, _ = make(books)
+    assert ag2._work(ag2.session("z")) == 4  # after a restart, writing continues at the end of the book, not in chapter 1
+
+
+@pytest.mark.asyncio
+async def test_a_picture_goes_where_the_writer_is_writing_not_where_they_last_looked(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2); store.append_paragraph("demo", 2, "A paragraph in the second chapter, long enough to count as real text.")
+    await ag.handle("s", "go to chapter 2"); await ag.handle("s", "read chapter 1 paragraph 1")  # looking at chapter 1 again
+    llm.replies = ['[[tool: make_picture {"prompt": "a stone in a churchyard", "caption": "The stone"}]]', "A grey stone in a churchyard."]
+    r = await ag.handle("s", "make a picture of the stone")
+    assert r.pending["ask"] == "Put this picture in chapter 2?"
+
+
+@pytest.mark.asyncio
+async def test_several_paragraphs_can_be_deleted_at_once_and_one_undo_brings_them_all_back(books):
+    import intent
+    ag, store, _ = make(books)
+    for i in range(4, 8):
+        store.append_paragraph("demo", 1, f"Extra paragraph number {i} of the first chapter, long enough to count.")
+    before = store.read_chapter_raw("demo", 1)
+    assert intent.delete_many("delete paragraphs 2 to 4") == (None, [2, 3, 4]) and intent.delete_many("remove paragraphs 2, 3 and 5 of chapter 1") == (1, [2, 3, 5])
+    assert intent.delete_many("delete the last 3 paragraphs") == (None, [-3, -2, -1]) and intent.delete_many("delete paragraph 2") is None
+    r = await ag.handle("s", "delete paragraphs 2 to 4")
+    assert r.pending["kind"] == "delete" and r.pending["ask"] == "Delete these 3 paragraphs of chapter 1?" and len(r.highlights) == 3 and store.read_chapter_raw("demo", 1) == before
+    r = await ag.handle("s", "yes delete all three"); assert "Deleted 3 paragraphs" in r.text and len(store.paragraphs("demo", 1)) == 4  # "yes ..." is just yes
+    r = await ag.handle("s", "undo that"); assert "put back the paragraphs I deleted" in r.text and store.read_chapter_raw("demo", 1) == before
+    r = await ag.handle("s", "delete the last 2 paragraphs"); await ag.handle("s", "no, wait")
+    assert store.read_chapter_raw("demo", 1) == before
+    r = await ag.handle("s", "delete paragraphs 7 to 20"); assert r.pending is not None or "does not have" in r.text
+
+
+@pytest.mark.asyncio
+async def test_natural_yes_answers_are_yes_and_a_waiting_picture_is_never_lost_to_one(books):
+    import intent
+    for s in ["Yes, save them.", "yes put that one in", "Yes, put that one in", "yes delete all four", "yes, that's mine, put it in", "yes please"]:
+        assert intent.confirmation(s)[0] == "yes" and (intent.confirmation(s)[1] == "" or not intent._CHANGE.search(intent.confirmation(s)[1])), s
+    ag, store, llm = make(books)
+    llm.replies = ['[[tool: make_picture {"prompt": "a stone", "caption": "The stone"}]]', "A grey stone."]
+    await ag.handle("s", "make a picture of the stone")
+    r = await ag.handle("s", "Yes, put that one in"); assert "in chapter 1" in r.text and store.paragraphs("demo", 1)[-1].image[0] == "The stone"
+    ctx = harness.Ctx(sess=ag.session("s"))
+    await ag.toolbox.call("propose_wiki_notes", {"notes": [{"kind": "characters", "name": "A", "note": "x"}, {"kind": "characters", "name": "B", "note": "y"}]}, ctx)
+    r = await ag.handle("s", "Yes, save them."); assert "Saved to the wiki: A, B" in r.text
+
+
+@pytest.mark.asyncio
+async def test_the_model_can_always_save_the_book_and_a_draft_is_checked_against_what_was_asked(books):
+    ag, store, llm = make(books)
+    ctx = harness.Ctx(sess=ag.session("s"))
+    out = await ag.toolbox.call("export_book", {"format": "web page"}, ctx)
+    assert ctx.download["url"] == "/api/books/demo/export?format=html" and "downloads" in out
+    r = ag._attach(ag.session("s"), ag._reply(ag.session("s"), "Saving."), ctx, "", "x"); assert r.download["url"].endswith("format=html")
+    for t in ("a first long paragraph about the stone in the churchyard.", "a second long paragraph about the king.", "a third paragraph that is long enough."):
+        store.append_paragraph("demo", 1, t)
+    s = ag.session("s"); s.last_user = "next paragraph, the oath at the round table"
+    para = "A stone stood in the churchyard and the boy pulled the sword from it while the lords watched in silence. Nobody spoke for a long while after."
+    llm.replies = ["MISSED: it is not the oath scene."]
+    issue = await ag.check_continuity(s, para, s.last_user)
+    assert "it does not do what you asked: it is not the oath scene" in issue and "THE WRITER ASKED FOR: next paragraph, the oath" in str(llm.calls[-1][-1]["content"])
+    assert "chapter 1 paragraph 1:" in str(llm.calls[-1][-1]["content"])  # the whole book's outline is in front of the checker, so a retelling in another chapter is visible
+    llm.replies = ["CONFLICT: the pull was told in chapter 2."]; assert "pull was told" in await ag.check_continuity(s, para, "")

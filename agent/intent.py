@@ -68,7 +68,8 @@ def _words(text: str) -> list[str]:
     return norm(text).split()
 
 
-_SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| the (?:paragraph|picture))?(?: in| in there| down| to the book| to chapter \d+| into the book| away)?(?: please| now| for me)?|that one|that'?s? (?:the (?:one|1)|fine|good|right|great|perfect|lovely|nice|mine|it)|(?:it'?s|this is) (?:mine|good|great|fine|right|perfect|lovely|nice|the (?:one|1))|do it|mine|(?:the )?(?:one|1)|thanks|thank you|great|perfect|lovely|good|nice|fine|right|exactly)(?:,? (?:put it in|use it|add it|save it|keep it|go ahead|please|thank you|thanks))*$")
+_CHANGE = re.compile(r"\b(?:make|change|different|instead|another|darker|lighter|bigger|smaller|more|less|without|but|not|no|don'?t|empty|remove|rename|call it|shorter|longer|except|only|wrong|other)\b")
+_SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| those| these| all| all of them| (?:that|this|the) (?:one|1)| the (?:paragraph|picture))?(?: in| in there| down| to the book| to chapter \d+| into the book| away)?(?: please| now| for me)?|that one|that'?s? (?:the (?:one|1)|fine|good|right|great|perfect|lovely|nice|mine|it)|(?:it'?s|this is) (?:mine|good|great|fine|right|perfect|lovely|nice|the (?:one|1))|do it|mine|(?:the )?(?:one|1)|thanks|thank you|great|perfect|lovely|good|nice|fine|right|exactly)(?:,? (?:put it in|use it|add it|save it|keep it|go ahead|please|thank you|thanks))*$")
 
 
 def confirmation(text: str) -> tuple[str | None, str]:
@@ -161,7 +162,7 @@ _POLITE = r"(?:(?:please|kindly|hey|ok|okay|so|now|and|then)\s+)*(?:(?:can|could
 _EDIT_VERBS = r"(?:change|make|rewrite|rephrase|reword|fix|edit|tweak|soften|tighten|revise|replace|shorten|lengthen|expand|trim|polish|improve|punch up|sharpen|simplify|modernize|modernise)"
 _EDIT_LEAD = re.compile(rf"^{_POLITE}{_EDIT_VERBS}\b")
 _EDIT_CLAUSE = re.compile(rf"[,;]\s*(?:and |then |please )*{_EDIT_VERBS}\b|\b(?:and|then) {_EDIT_VERBS} (?:him|her|them|it|that|this|the)\b")
-_DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|next paragraph|(?:the )?(?:last|final|closing|opening|first|next) paragraph (?:for|of|in) chapter \d+(?= \w)|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
+_DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|next paragraph|(?:1|one) more (?:paragraph|bit|part)|another (?:paragraph|bit)|more of the story|the next (?:bit|part)|(?:the )?(?:last|final|closing|opening|first|next) paragraph (?:for|of|in) chapter \d+(?= \w)|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
 _QUESTION = re.compile(r"^(?:so |and |but )?(how|what|why|who|whom|whose|where|should|do you|does|is|are|which|would|am i|did|will it|shall)\b")
 _OPINION = re.compile(r"^(?:i |i'm |im |i've |my )?(?:hate|like|love|dislike|prefer|think|feel|want|wish|need|always|never|don't like|dont like|can't|cant)\b|^i (?:hate|like|love|dislike|prefer|think|feel|wish|really|just|always|never|don't|dont|can't|cant)\b")
 
@@ -190,6 +191,13 @@ def is_edit(text: str) -> bool:
 def is_draft(text: str) -> bool:
     n = norm(text)
     return not (is_question(text) or _OPINION.match(n)) and bool(_DRAFT_LEAD.match(n))
+
+
+def draft_first(text: str) -> bool:
+    """A request for NEW text ("next paragraph, the lords try three times", "one more paragraph...") must not be taken for an edit of an old paragraph just because
+    it mentions a chapter or a verb like "make". It stays an edit when it names a paragraph or says again / instead / rewrite."""
+    n = norm(text)
+    return is_draft(text) and parse_ref(text).para is None and not re.search(r"\b(?:again|instead|rewrite|redo|change|fix|replace|shorten|lengthen|expand|trim|polish)\b", n)
 
 
 _GOTO = re.compile(r"^(?:(?:please|ok|okay|now|and)\s+)*(?:(?:go|jump|skip|turn|flip|take me|back|switch|move)(?: back| ahead| forward)?(?: to| over to)?|open|show(?: me)?|read(?: me)?|start(?: at| from)?|let's (?:go to|read)) (?:the )?(?:start of )?chapter (\d+)(?: again)?$")
@@ -326,6 +334,33 @@ def title_chapter(text: str) -> tuple[int | None, str] | None:
     if not m or (not m.group(1) and not m.group(2)):  # "call the chapter house" is not naming a chapter
         return None
     return (int(m.group(2)) if m.group(2) else None, m.group(3).strip())
+
+
+_RANGE = re.compile(r"\bparagraphs? (\d+) (?:to|through|thru|until|till) (\d+)\b")
+_LIST = re.compile(r"\bparagraphs? ((?:\d+(?:,? (?:and )?)?)+)(?: (?:of|in) chapter (\d+))?$")
+_LASTN = re.compile(r"\bthe (?:last|final) (\d+) paragraphs\b")
+
+
+def delete_many(text: str) -> tuple[int | None, list[int]] | None:
+    """"delete paragraphs 2 to 4", "remove paragraphs 2, 3 and 5 of chapter 3", "delete the last 3 paragraphs" -> (chapter or None, numbers; negative = from the end)."""
+    n = norm(text)
+    m0 = re.match(rf"^{_POLITE}(?:delete|remove|cut|scrap|erase|get rid of|take out)\b(.+)$", n)
+    if not m0 or len(n.split()) > 18:
+        return None
+    body = m0.group(1)
+    ch = parse_ref(body).chapter
+    if m := _RANGE.search(body):
+        a, b = int(m.group(1)), int(m.group(2))
+        return (ch, list(range(a, b + 1))) if a < b and b - a < 30 else None
+    if m := _LASTN.search(body):
+        k = int(m.group(1))
+        return (ch, [-i for i in range(k, 0, -1)]) if 2 <= k <= 20 else None
+    if m := _LIST.search(body):
+        nums = [int(x) for x in re.findall(r"\d+", m.group(1))]
+        if m.group(2):
+            nums = [int(x) for x in re.findall(r"\d+", m.group(1))]
+        return (int(m.group(2)) if m.group(2) else ch, nums) if len(nums) >= 2 else None
+    return None
 
 
 _DELETE = re.compile(rf"^{_POLITE}(?:delete|remove|cut|scrap|erase|get rid of|take out)\b(.+)$")
