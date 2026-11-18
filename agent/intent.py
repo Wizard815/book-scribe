@@ -18,6 +18,7 @@ _WORD = re.compile(r"[a-z']+|\d+|[^a-z'\d]+")
 
 def norm(text: str) -> str:
     """Lowercase, spoken numbers -> digits ("twenty one" -> 21), titles unified, punctuation dropped."""
+    text = re.sub(r"(?<=\d)\s*[-\u2013\u2014]\s*(?=\d)", " to ", text)  # "paragraphs 2-4" means 2 to 4
     toks = _WORD.findall(text.lower().replace("’", "'"))
     out: list[str] = []
     i = 0
@@ -159,10 +160,13 @@ def parse_ref(text: str) -> Ref:
         r.para = 1
     if r.para is not None and r.chapter is None and re.search(r"\b(of|in) the (book|novel|story)\b|\bopening\b|\bvery first\b", n):
         r.chapter, r.whole_book = 1, True
-    if re.search(r"\b(?:the |that |this |my |its |last |first )?(?:picture|photo|photograph|image|illustration|drawing)\b", n) and not re.search(rf"\b{_PARA_WORD} \d+\b", n):
-        r.picture = True  # "delete the picture in chapter 3" (never "paragraph 2")
-        if r.para is None:
-            r.para = -1 if re.search(r"\blast (?:picture|photo|image)\b", n) else 1
+    pic = r"(?:picture|photo|photograph|image|illustration|drawing)"
+    if re.search(rf"\b{_PARA_WORD}s? (?:right )?(?:before|after|above|below|next to|beside|under|over|around) (?:the |that |this )?{pic}\b", n):
+        r.para, r.picture = None, False  # "the paragraph before the picture": a paragraph, which one the writer has not said
+    elif re.search(rf"\b(?:the |that |this |my |its |last |first )?{pic}\b", n):
+        if not re.search(rf"\b{_PARA_WORD} \d+\b", n) or re.search(rf"\b{pic} (?:after|before|in|at|following|near|beside|next to|under|over)\b", n):
+            r.picture = True  # "delete the picture in chapter 3" and "the picture after paragraph 2" (the picture, whatever number follows)
+            r.para = -1 if re.search(rf"\blast {pic}\b", n) else 1
     return r
 
 
@@ -355,7 +359,7 @@ def title_chapter(text: str) -> tuple[int | None, str] | None:
 
 
 _RANGE = re.compile(r"\bparagraphs? (\d+) (?:to|through|thru|until|till) (\d+)\b")
-_LIST = re.compile(r"\bparagraphs? ((?:\d+(?:,? (?:and )?)?)+)(?: (?:of|in) chapter (\d+))?$")
+_LIST = re.compile(r"\bparagraphs? (\d{1,3}(?:,? (?:and )?\d{1,3}){0,12})(?: (?:of|in) chapter (\d+))?$")
 _LASTN = re.compile(r"\bthe (?:last|final) (\d+) paragraphs\b")
 
 
@@ -581,10 +585,33 @@ _POS_BEFORE = re.compile(r"\bbefore (?:the )?(?:paragraph|para|part) (\d+)\b|\bb
 _POS_BETWEEN = re.compile(r"\bbetween (?:paragraphs? )?(?:the )?(\d+)(?:st|nd|rd|th)?(?: paragraph)? and (?:paragraph )?(?:the )?(\d+)\b")
 
 
-def picture_position(text: str) -> int | None:
+_STRICT_START = re.compile(r"\b(?:(?:at|to|in) the (?:very )?(?:start|beginning|top|front|opening) of (?:the |this )?(?:chapter|page|story)(?: \d+)?|(?:at|to|in) the very (?:start|beginning|top|front)\b(?! of the \w+ of)|before (?:the )?(?:first|1) (?:paragraph|one))\b")
+_STRICT_END = re.compile(r"\b(?:(?:at|to|in) the (?:very )?(?:end|bottom|back) of (?:the |this )?(?:chapter|page|story)(?: \d+)?|(?:at|to|in) the very (?:end|bottom)\b|after (?:the )?last (?:paragraph|one))\b")
+_PLACE_CMD = re.compile(r"^(?:(?:no|yes|ok|okay|yeah|nope)\s+)*(?:please\s+)?(?:(?:put|place|move|make|have|let|add|stick|set|send|i want|i'd like|i would like)\b|(?:at|in|to) the (?:very )?(?:start|beginning|top|front|end|bottom|back)(?: of (?:the |this )?(?:chapter|page|story)(?: \d+)?)?(?: please)?$|(?:first|last)(?: please)?$|after (?:the )?(?:paragraph|para|part)\b|before (?:the )?(?:paragraph|para|part)\b|between\b)")
+
+
+def placement_command(text: str) -> bool:
+    """Is this short utterance an instruction about WHERE something goes ("put it first", "at the end", "after paragraph 2"), rather than story talk?"""
+    n = norm(text)
+    return len(n.split()) <= 12 and bool(_PLACE_CMD.match(n))
+
+
+def picture_position(text: str, strict: bool = False) -> int | None:
     """Where in the chapter a picture should go, as the number of paragraphs that come BEFORE it: 0 = the very start, -1 = the end, 3 = after paragraph 3.
     None when the writer said nothing about it (the end of the chapter is the default). "put it at the start of chapter 1", "after paragraph 2", "before paragraph 3"."""
     n = norm(text)
+    if strict:  # a request for a NEW picture: "of the church at the top of the hill" is the subject, not the place
+        if (m := _POS_BETWEEN.search(n)):
+            return min(int(m.group(1)), int(m.group(2)))
+        if (m := _POS_AFTER.search(n)):
+            return int(m.group(1) or m.group(2))
+        if (m := _POS_BEFORE.search(n)):
+            return max(0, int(m.group(1)) - 1 if m.group(1) else int(m.group(2)) - 1)
+        if _STRICT_START.search(n):
+            return 0
+        if _STRICT_END.search(n):
+            return -1
+        return None
     if (m := _POS_BETWEEN.search(n)):
         return min(int(m.group(1)), int(m.group(2)))
     if (m := _POS_AFTER.search(n)):
@@ -612,6 +639,9 @@ def sentence_removal(text: str) -> tuple["Ref | None", int] | None:
         return None
     which = _SENT_ORD.get(m.group(1) or "", -1 if not m.group(1) else 1)
     ref = parse_ref(m.group(2)) if m.group(2) else None
+    if m.group(2) and not re.fullmatch(r"(?:that|this|it|the|that paragraph|this paragraph|the paragraph|the draft|the one (?:on the screen|above))", m.group(2).strip()) \
+            and ref is not None and ref.para is None and ref.chapter is None:
+        return None  # "take the last sentence of the letter and ...": story talk, not a paragraph reference
     if ref is not None and ref.para is None:
         # "of the paragraph in chapter 2" / "of the first paragraph": parse_ref found a chapter or an ordinal; a bare "paragraph" with only a chapter means paragraph 1 is unknown
         ref = ref if (ref.chapter is not None or ref.para is not None) else None

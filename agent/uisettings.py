@@ -61,7 +61,7 @@ def clean(look: dict | None) -> dict:
     return out
 
 
-_UI_NOUN = r"(?:text|words?|letters?|print|font|writing|type|screen|display|buttons?|everything|page|it|them|these|things|lines?|colou?rs?)"
+_UI_NOUN = r"(?:text|words?|letters|print|font|writing|type|screen|display|buttons?|everything|page|it|them|these|things|lines?|colou?rs?)"
 _BIGGER = re.compile(r"\b(?:bigger|larger|enlarge|increase|big(?:ger)? words|zoom in|make (?:it|them|everything) big)\b")
 _SMALLER = re.compile(r"\b(?:smaller|shrink|zoom out|too (?:big|large|huge)|not so big)\b")
 _MUCH = re.compile(r"\b(?:much|way|a lot|lot|really|very|so much|huge|hugely|far|a great deal)\b")
@@ -83,7 +83,7 @@ _BOLD = re.compile(r"\b(?:bold|bolder|thicker|heavier|thick letters|fatter)\b")
 _NOT_BOLD = re.compile(r"\b(?:not bold|no bold|thinner|lighter letters|normal weight|stop the bold)\b")
 _SPACE_MORE = re.compile(r"\b(?:more (?:space|spacing|room)|space (?:it |them )?out|spread (?:it |them )?out|lines? (?:are )?too close|cramped|too crowded)\b")
 _SPACE_LESS = re.compile(r"\b(?:less (?:space|spacing)|tighter|closer together|too (?:spread|spaced))\b")
-_SIMPLE = re.compile(r"\b(?:simple(?:r)? (?:screen|mode|page|view)|too many buttons|too busy|too cluttered|hide the buttons|keep it simple|just the chat|only the chat|simplify)\b")
+_SIMPLE = re.compile(r"\b(?:simple(?:r)? (?:screen|mode|page|view)|too many buttons|too busy|too cluttered|hide the buttons|keep it simple|just the chat|only the chat|simplify (?:the |this )?(?:screen|page|view|display|app))\b")
 _NOT_SIMPLE = re.compile(r"\b(?:show everything|all the buttons|full screen|normal screen|not simple|bring back the buttons|show the buttons)\b")
 _SLOWER = re.compile(r"\b(?:slower|slow down|too fast|more slowly)\b")
 _FASTER = re.compile(r"\b(?:faster|speed up|too slow|more quickly)\b")
@@ -139,7 +139,7 @@ def _book_zoom(n: str, cur: int, raw: str = "") -> tuple[int, str] | None:
 
 
 def _has_ui_target(n: str, words: int) -> bool:
-    return bool(re.search(rf"\b{_UI_NOUN}\b", n)) or words <= 3
+    return bool(re.search(rf"\b{_UI_NOUN}\b", n)) or words <= 2
 
 
 def parse(text: str, look: dict | None) -> tuple[dict, str] | None:
@@ -149,6 +149,8 @@ def parse(text: str, look: dict | None) -> tuple[dict, str] | None:
         return None
     cur, new, said = clean(look), clean(look), []
     words = len(n.split())
+    if re.search(r"\bparagraphs? \d+\b|\b(?:he|she|they|him|them|his|her|their)\b|\bchapter \d+\b|\b(?:the|a|an) \w+ (?:is|was|looked|seemed|felt|were)\b", n) and not re.search(r"\b(?:screen|buttons?|display|everything)\b", n):
+        return None  # about a paragraph or a person in the story, not the screen: "simplify paragraph 2", "make him speak slower", "he was bold"
 
     def size(delta: int | None = None, to: int | None = None):
         new["size"] = max(0, min(SIZE_MAX, (to if to is not None else new["size"] + delta)))
