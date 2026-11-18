@@ -940,13 +940,18 @@ figure.para figcaption { font-size: calc(var(--fs) * .72 * min(var(--zoom), 1.8)
   }
   // --- pages: the book strip is cut into columns as wide as the page; "view" is the page (or the two pages of a spread) on show
   const pager = { view: 0, views: 1, cols: 1, step: 0, atEnd: false };
+  let tooSmallWarned = false;
   function layoutBook(keep) {
-    const box = $("book"), w = box.clientWidth, h = box.clientHeight;
+    const box = $("book"), rect = box.getBoundingClientRect(), w = rect.width, h = box.clientHeight;  // the exact (fractional) width: the browser lays columns out at it, and rounding drifts the pages left
     if (!w || !h) return;
     const keepFrac = keep && pager.views > 1 ? pager.view / pager.views : 0;
     const gap = 48, zoom = state.look.zoom || 100;
     const cols = w >= 1000 && zoom <= 200 ? 2 : 1;  // a wide screen shows a two-page spread, like an open book, until the words get big
-    const colW = Math.floor((w - gap * (cols - 1)) / cols);
+    const colW = (w - gap * (cols - 1)) / cols;
+    // too short for even two lines of these words (a squat pane at big print): give the book the whole window, once, and say so
+    if (h < 2.3 * 1.5 * (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--fs")) || 26) * (zoom / 100) && ui.layout !== "book" && !ui.floats.book && !tooSmallWarned) {
+      tooSmallWarned = true; setStatus("Book only, so the big words fit"); setLayout("book"); return;
+    }
     box.style.columnWidth = colW + "px"; box.style.columnGap = gap + "px";
     $("bookWrap").style.setProperty("--ph", h + "px");
     pager.cols = cols; pager.step = w + gap;
@@ -1037,8 +1042,9 @@ figure.para figcaption { font-size: calc(var(--fs) * .72 * min(var(--zoom), 1.8)
   $("pgPrev").onclick = () => turnPage(-1); $("pgNext").onclick = () => turnPage(1);
   const zoomTo = (z) => applyLook({ ...currentLook(), zoom: z });
   const ZSTEPS = [100, 125, 150, 200, 250, 300, 400, 500];
-  $("zmIn").onclick = () => zoomTo(ZSTEPS[Math.min(ZSTEPS.length - 1, ZSTEPS.indexOf(state.look.zoom) + 1)]);
-  $("zmOut").onclick = () => zoomTo(ZSTEPS[Math.max(0, ZSTEPS.indexOf(state.look.zoom) - 1)]);
+  const zIdx = () => ZSTEPS.reduce((b, z, i) => (Math.abs(z - state.look.zoom) < Math.abs(ZSTEPS[b] - state.look.zoom) ? i : b), 0);  // the nearest step, even for an odd saved value
+  $("zmIn").onclick = () => zoomTo(ZSTEPS[Math.min(ZSTEPS.length - 1, zIdx() + 1)]);
+  $("zmOut").onclick = () => zoomTo(ZSTEPS[Math.max(0, zIdx() - 1)]);
   $("zmLabel").onclick = () => zoomTo(100);
   $("bookWrap").addEventListener("keydown", (e) => {
     if (e.target.tagName === "TEXTAREA") return;

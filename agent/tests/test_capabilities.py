@@ -245,7 +245,7 @@ async def test_a_wordy_wikipedia_query_is_retried_with_shorter_words():
 @pytest.mark.asyncio
 async def test_a_paragraph_in_the_wrong_person_is_sent_back_once_and_long_drafts_are_read_from_the_start(books):
     ag, store, llm = make(books)
-    store.bible("demo").write("premise", "A family history told in the third person by a storyteller who never appears.") if hasattr(store.bible("demo"), "write") else None
+    store.bible("demo").write_doc("premise", "A family history told in the third person by a storyteller who never appears.")
     first = "I remember my great-uncle standing in the field. I could see the wheat and I loved it."
     third = ("He stood in the field at the edge of the farm. The wheat ran to the road in gold waves. His father called him in for supper, twice. "
              "The lamp was lit in the kitchen before he came. He ate quickly and said nothing about the day.")
@@ -514,3 +514,115 @@ async def test_describe_the_picture_in_a_chapter_with_two_pictures_says_both(boo
         n = ag.images.stage("demo", png(color=(len(cap), 50, 90)), cap); ag.images.accept("demo", n); store.append_image("demo", 2, n, cap)
     r = await ag.handle("s", "describe the picture in chapter 2 to me")
     assert "2 pictures" in r.text and "railway station" in r.text and "wheat field" in r.text
+
+
+# ---- the audit: confirmed bugs, each with its repro ------------------------------------------------------------------------------------
+def test_audit_ranges_with_hyphens_and_huge_numbers_are_safe():
+    import time
+    import intent
+    assert intent.delete_many("delete paragraphs 2-4")[1] == [2, 3, 4] and intent.delete_many("delete paragraphs 2 - 4")[1] == [2, 3, 4]
+    t = time.time(); intent.delete_many("delete paragraph " + "1" * 40 + "x"); assert time.time() - t < 0.5
+
+
+def test_audit_sentences_keep_quotes_and_do_not_split_on_abbreviations():
+    from agent import split_sentences
+    s = split_sentences('He said "Go." Then she left. Mr. Bennet sat down. She was born on 1 Jan. in St. Paul. The end.')
+    assert s[0] == 'He said "Go."' and s[1] == "Then she left." and s[2] == "Mr. Bennet sat down." and s[3].startswith("She was born on 1 Jan.") and s[-1] == "The end." and len(s) == 5
+
+
+def test_audit_picture_words_and_story_talk():
+    import intent
+    assert intent.parse_ref("delete the picture after paragraph 2").picture and intent.parse_ref("remove the picture before paragraph 3").picture
+    r = intent.parse_ref("delete the paragraph before the picture"); assert not r.picture and r.para is None
+    assert intent.picture_position("make me a picture of the church at the top of the hill", strict=True) is None
+    assert intent.picture_position("make a picture of the sailor at the start of his journey", strict=True) is None
+    assert intent.picture_position("put a picture of a lake at the very start of chapter 1", strict=True) == 0
+    assert not intent.placement_command("In the end she forgave him") and intent.placement_command("put it first")
+    assert intent.sentence_removal("take the last sentence of the letter and make it the title") is None
+    assert intent.sentence_removal("take the last sentence of chapter 1 out")[0].para is None
+
+
+def test_audit_screen_words_in_story_talk_are_left_alone():
+    import uisettings
+    D = uisettings.DEFAULT
+    for t in ("simplify paragraph 2", "make him speak slower", "he was bold", "rewrite paragraph 2, the words are too small", "the wall is too small", "he looked too busy", "make the letter bigger for her"):
+        assert uisettings.parse(t, D) is None, t
+    assert uisettings.parse("make the buttons bigger", D) is not None and uisettings.parse("simplify the screen", D) is not None
+
+
+@pytest.mark.asyncio
+async def test_audit_a_stale_dropped_draft_is_not_brought_back_over_an_undo(books):
+    ag, store, llm = make(books)
+    A = "The first draft is about the sea. The waves rolled in grey and slow, and the gulls wheeled over the empty harbour all morning."
+    B = "The second draft is about the sky. The clouds piled up over the hills, and the light went yellow before the rain came down."
+    llm.replies = [f'[[tool: propose_append {{"text": "{A}"}}]]', "A."]
+    await ag.handle("s", "write a paragraph about the sea")
+    llm.replies = [f'[[tool: propose_append {{"text": "{B}"}}]]', "B."]
+    await ag.handle("s", "write another paragraph about the sky")
+    await ag.handle("s", "yes")
+    assert B in store.read_chapter_raw("demo", 1)
+    r = await ag.handle("s", "bring it back")  # B was just saved: this is an undo, not a revival of the dropped A
+    assert A not in store.read_chapter_raw("demo", 1) and (ag.session("s").pending is None or ag.session("s").pending.text != A)
+
+
+@pytest.mark.asyncio
+async def test_audit_hold_greeting_and_read_after_an_agreeing_word_do_not_rewrite_the_draft(books):
+    ag, store, llm = make(books)
+    A = "The first draft is about the sea. The waves rolled in grey and slow, and the gulls wheeled over the empty harbour all morning."
+    ag.session("s").pending = __import__("agent").Pending("append", A, 1)
+    n = len(llm.calls)
+    for t in ("okay hold on", "good night", "good morning", "yes please read it", "sure, let me think about it", "okay read it to me"):
+        r = await ag.handle("s", t)
+        assert ag.session("s").pending is not None and ag.session("s").pending.text == A, t
+    assert len(llm.calls) == n
+
+
+@pytest.mark.asyncio
+async def test_audit_yes_put_it_first_places_the_paragraph_and_a_remark_is_not_a_placement(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    for t in ("Alpha is here for the book.", "Bravo is here for the book."):
+        store.append_paragraph("demo", 2, t)
+    NEW = "The new paragraph is about the supper table. His mother counted out the plates by the lamp for the whole family."
+    ag.session("s").pending = __import__("agent").Pending("append", NEW, 2)
+    r = await ag.handle("s", "yes, put it first")
+    assert store.paragraphs("demo", 2)[0].text == NEW and not llm.calls
+    ag.session("s").pending = __import__("agent").Pending("append", NEW, 2)
+    llm.replies = ["Noted."]
+    await ag.handle("s", "In the end she forgave him")
+    assert ag.session("s").pending is not None and (ag.session("s").pending.data or {}).get("where") is None
+
+
+@pytest.mark.asyncio
+async def test_audit_a_command_about_the_waiting_draft_shortens_that_draft(books):
+    ag, store, llm = make(books)
+    store.append_paragraph("demo", 1, "A saved paragraph with two sentences. The second one is here.")
+    before = store.paragraphs("demo", 1)[-1].text
+    D = "The draft starts here. It has a middle part. It ends with this last sentence."
+    ag.session("s").pending = __import__("agent").Pending("append", D, 1)
+    r = await ag.handle("s", "take the last sentence out")
+    assert ag.session("s").pending.text == "The draft starts here. It has a middle part." and store.paragraphs("demo", 1)[-1].text == before
+
+
+@pytest.mark.asyncio
+async def test_audit_a_picture_request_does_not_move_the_writing_chapter(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2); store.append_paragraph("demo", 2, "Alpha here for the book.")
+    ag.session("s").work = 2
+    llm.replies = ['[[tool: make_picture {"prompt": "a lake", "caption": "A lake"}]]', "A lake."]
+    await ag.handle("s", "make me a picture of a lake", viewing=1)
+    await ag.handle("s", "no")
+    assert ag.session("s").work == 2
+
+
+def test_audit_voice_repeat_and_grounding_false_positives(books):
+    ag, store, llm = make(books)
+    store.bible("demo").write_doc("premise", "A story told in the third person.")
+    sess = ag.session("s")
+    for t in ("Henry I ruled for many years and was feared.", "Part I begins with a storm over the sea.", "'I will go,' she said, and went out into the cold.",
+              "She thought: I must go. The road was long and the night was cold around her."):
+        assert ag.check_voice(sess, t) == "", t
+    assert ag.check_voice(sess, "I walked down to the lake and I saw the old boat there that morning.") != ""
+    store.create_chapter("demo", 2); store.append_paragraph("demo", 2, "It was raining again.")
+    assert ag.check_repeat(sess, "At noon the carter came by the gate with the post, and he said it was raining again over the hills and the whole valley road.") == ""
+    assert ag.ungrounded(sess, "On Tuesday in October a man called Bergman arrived in Lisbon with 12 trunks and a very long story to tell about the sea.") == ""  # no documents: a novel is not gated
