@@ -46,9 +46,8 @@ def import_text(store: BookStore, book: str, text: str, max_chapters: int | None
         if max_chapters and i > max_chapters:
             break
         store.create_chapter(book, i, title)
-        for p in paras:
-            store.append_paragraph(book, i, p)
-        n_ch, n_par = n_ch + 1, n_par + len(paras)
+        n_par += store.fill_new_chapter(book, i, paras)  # one write per chapter, no undo copy per paragraph
+        n_ch += 1
     return n_ch, n_par
 
 

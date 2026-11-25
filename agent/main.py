@@ -1,6 +1,7 @@
 """Book Scribe agent API (FastAPI)."""
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from contextlib import asynccontextmanager
@@ -596,7 +597,12 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         store.ensure_book(book)
         if store.chapter_numbers(book):
             raise HTTPException(409, "That book already has chapters. Import into a new book instead.")
-        chapters, paragraphs = import_text(store, book, body.text, body.max_chapters)
+        try:
+            chapters, paragraphs = await asyncio.to_thread(import_text, store, book, body.text, body.max_chapters)  # a long draft must not freeze the server
+        except Exception as e:
+            for n in store.chapter_numbers(book):  # never leave a half-imported book that cannot be imported again
+                store.chapter_path(book, n).unlink(missing_ok=True)
+            raise HTTPException(400, f"I could not import that text: {e}")
         index.schedule(book)
         if not chapters:
             raise HTTPException(400, "I could not find any chapters. Start each chapter with a line like: Chapter 1")
@@ -658,17 +664,26 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         reply = agent.inbox_check(book_or_400(book))
         return {"text": "", "pending": None} if reply is None else {"user_text": "", **asdict(reply), "served_by": {}}
 
+    inbox_locks: dict[str, asyncio.Lock] = {}
+
     @app.post("/api/books/{book}/inbox/add", dependencies=[Depends(writer)])
     async def inbox_add(book: str, body: InboxAddIn):
         book_or_400(book)
-        try:
-            path = agent.inbox.path(book, body.name)
-            meta = await ingest.add_file(book, path.name, path.read_bytes(), library, llm, stt, journal)
-        except FileNotFoundError:
-            raise HTTPException(404, "That file is not in the inbox any more.")
-        except extract_mod.Unreadable as e:
-            raise HTTPException(400, str(e))
-        agent.inbox.done(book, path.name)
+        lock = inbox_locks.setdefault(book, asyncio.Lock())
+        async with lock:  # the Yes button and a spoken "yes" at the same moment must not add the file twice
+            try:
+                path = agent.inbox.path(book, body.name)
+                meta = await ingest.add_file(book, path.name, path.read_bytes(), library, llm, stt, journal)
+            except FileNotFoundError:
+                raise HTTPException(404, "That file is not in the inbox any more.")
+            except extract_mod.Unreadable as e:
+                raise HTTPException(400, str(e))
+            except Exception as e:
+                raise HTTPException(400, f"I could not read {body.name}: it may be damaged.") from e
+            try:
+                agent.inbox.done(book, path.name)
+            except FileNotFoundError:
+                pass
         index.schedule(book)
         return meta
 
@@ -741,7 +756,15 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
             raise HTTPException(404, "That person is not in the tree.")
         state = {k: v for k, v in {"gender": person.sex, "born": " ".join(x for x in person.birth if x), "died": " ".join(x for x in person.death if x),
                                    "from_family_tree": library.meta(book, slug)["title"]}.items() if v}
-        e = store.bible(book).upsert("characters", person.name or "Unknown", state, tree.describe(person.id))
+        import bible_import
+        from bible import slugify
+        bib = store.bible(book)
+        old = {slugify(x.name): x for x in bib.entries("characters").values()}.get(slugify(person.name or "Unknown"))
+        if old:  # the writer already has a page with this name: add the tree's facts below theirs, never over them
+            e = bib.upsert("characters", old.name, {k: v for k, v in state.items() if k not in old.state},
+                           bible_import._append_section(old.body, slug, "From the family tree: " + tree.describe(person.id)))
+        else:
+            e = bib.upsert("characters", person.name or "Unknown", state, tree.describe(person.id))
         index.schedule(book)
         return {"slug": e.slug, "name": e.name}
 
@@ -925,22 +948,29 @@ def create_app(settings=None, llm=None, stt=None, tts=None, memory=None, graph=N
         """The finished book as one file: html (pictures embedded; prints to PDF), epub (e-readers) or md (a zip with the pictures beside it)."""
         book_or_400(book)
         title = re.sub(r"[^A-Za-z0-9._-]+", "-", export_mod.book_title(store, book)).strip("-")[:60] or "book"
-        if format == "html":
-            body, ctype, ext = export_mod.to_html(store, agent.images, book).encode("utf-8"), "text/html; charset=utf-8", "html"
-        elif format == "epub":
-            body, ctype, ext = export_mod.to_epub(store, agent.images, book), "application/epub+zip", "epub"
-        elif format in ("md", "markdown"):
-            body, ctype, ext = export_mod.to_markdown_zip(store, agent.images, book), "application/zip", "zip"
-        else:
+        if format not in ("html", "epub", "md", "markdown"):
             raise HTTPException(400, "Formats: html, epub, md.")
+        if not store.chapter_numbers(book):
+            raise HTTPException(400, "There is nothing to export yet. Write a chapter first.")
+        try:
+            if format == "html":
+                body, ctype, ext = export_mod.to_html(store, agent.images, book).encode("utf-8"), "text/html; charset=utf-8", "html"
+            elif format == "epub":
+                body, ctype, ext = export_mod.to_epub(store, agent.images, book), "application/epub+zip", "epub"
+            else:
+                body, ctype, ext = export_mod.to_markdown_zip(store, agent.images, book), "application/zip", "zip"
+        except BookError as e:
+            raise HTTPException(400, f"I could not export the book: {e}")
         return Response(body, media_type=ctype, headers={"Content-Disposition": f'attachment; filename="{title}.{ext}"', "X-Content-Type-Options": "nosniff"})
 
     @app.put("/api/books/{book}/paragraphs/{pid}", dependencies=[Depends(writer)])
     async def put_paragraph(book: str, pid: str, body: EditIn):
         try:
-            return asdict(store.replace_paragraph(book, pid, body.text))
+            out = asdict(store.replace_paragraph(book, pid, body.text))
         except BookError as e:
             raise HTTPException(404, str(e))
+        index.schedule(book)  # meaning-based search must see the hand edit
+        return out
 
     ui_dir = os.getenv("UI_DIR")  # dev convenience; in Docker nginx serves the UI
     if ui_dir:

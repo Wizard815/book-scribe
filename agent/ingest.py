@@ -60,6 +60,9 @@ async def add_file(book: str, filename: str, data: bytes, library, llm, stt, jou
             return m
     ex: Extracted = await asyncio.to_thread(ex_mod.extract, data, filename)
     text, status, notes = ex.text, "read", list(ex.notes)
+    if getattr(ex, "unread", ""):  # a scan with no way to look at its pages: never "read, about 0 words"
+        status = "unread"
+        notes.append(ex.unread)
 
     if ex.kind in ("image", "scan"):
         try:

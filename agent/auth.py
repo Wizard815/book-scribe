@@ -91,7 +91,7 @@ class AccountStore:
         check_password_rules(password)
         with self._lock:
             old = self._load()
-            data = {"username": username, "hash": hash_password(password), "version": (old["version"] + 1) if old else 1, "updated": int(time.time())}
+            data = {"username": username, "hash": hash_password(password), "version": (old["version"] + 1) if old else int(time.time() * 1000), "updated": int(time.time())}
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps(data))
             tmp.chmod(0o600)

@@ -153,7 +153,12 @@ def decode_text(raw: bytes) -> str:
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
-        return raw.decode("cp1252", errors="replace")  # old GEDCOM (ANSI/ANSEL) files: close enough for names and places
+        pass
+    loose = raw.decode("utf-8", errors="replace")
+    bad, high = loose.count("\ufffd"), sum(1 for b in raw if b >= 0x80)
+    if re.search(rb"(?m)^\s*1 CHAR\s+UTF-?8", raw[:4000], re.I) or high - bad >= 4 * bad:
+        return loose  # a UTF-8 file with a stray bad byte or two: keep "Zoë Müller", lose only the bad byte
+    return raw.decode("cp1252", errors="replace")  # old GEDCOM (ANSI/ANSEL) files: close enough for names and places
 
 
 class _Node:

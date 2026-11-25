@@ -48,6 +48,7 @@ class Extracted:
     audio_name: str = ""
     tree: genealogy.Tree | None = None
     notes: list[str] = field(default_factory=list)
+    unread: str = ""  # set when nothing could be read (a scan with no way to look at it): the library shows "not read yet" and Try again
 
 
 # addon-provided readers: [(extensions tuple, fn(bytes, filename) -> Extracted | None)]; later entries win
@@ -154,6 +155,8 @@ def _pdf(raw: bytes) -> Extracted:
             ex.kind, ex.images, ex.text = "scan", imgs, text
             if len(pages) > len(imgs):
                 ex.notes.append(f"Only the first {len(imgs)} of {len(pages)} pages were read as pictures.")
+        elif not text.strip():
+            ex.unread = "This PDF looks like scanned pages, and I could not turn them into pictures to read. I kept it; say try again later."
     return ex
 
 
@@ -338,7 +341,7 @@ def _zip(data: bytes, depth: int) -> Extracted:
             with z.open(info) as fh:
                 blob = fh.read(MAX_BYTES + 1)  # the size in the header can lie; never read more than the limit
             sub = extract(blob, info.filename, depth + 1)
-        except Unreadable:
+        except Exception:  # one damaged file inside must not lose the good ones
             notes.append(f"Skipped {Path(info.filename).name}: could not read it.")
             continue
         parts.append(f"=== {Path(info.filename).name} ===\n{sub.text}")

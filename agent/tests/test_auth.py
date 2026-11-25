@@ -173,8 +173,13 @@ def test_forged_and_expired_sessions_are_rejected(books):
         assert c.get("/api/books").status_code == 401  # bad signature
         c.cookies.set("bs_session", sess.issue("writer", "writer", 1, -10))
         assert c.get("/api/books").status_code == 401  # expired
-        c.cookies.set("bs_session", sess.issue("writer", "writer", 1, 60))
+        from auth import AccountStore
+        v = AccountStore(books / ".state").version()
+        c.cookies.set("bs_session", sess.issue("writer", "writer", v, 60))
         assert c.get("/api/books").status_code == 200  # a genuine one for the current account version
+        c.cookies.set("bs_session", sess.issue("writer", "writer", 1, 60))
+        assert c.get("/api/books").status_code == 401  # version 1 could belong to a deleted account: a new account never reuses it
+
 
 
 def test_cross_site_posts_are_refused(books):

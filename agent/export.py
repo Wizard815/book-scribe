@@ -93,9 +93,15 @@ def to_markdown_zip(store, istore, book: str) -> bytes:
     return buf.getvalue()
 
 
+_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
 def to_epub(store, istore, book: str) -> bytes:
+    import time
     title = book_title(store, book)
-    esc = html.escape
+
+    def esc(t: str) -> str:  # XHTML must be well-formed: a stray control character from pasted text makes readers reject the whole book
+        return html.escape(_CTRL.sub(" ", str(t)))
     chapters, manifest, spine, nav, files = [], [], [], [], {}
     for n, ct, paras in _chapters(store, book):
         head = f"Chapter {n}" + (f": {ct}" if ct else "")
@@ -107,7 +113,7 @@ def to_epub(store, istore, book: str) -> bytes:
                     files[img[1]] = istore.path(book, img[1]).read_bytes()
                     parts.append(f'<figure><img src="images/{esc(img[1])}" alt="{esc(img[0])}"/><figcaption>{esc(img[0])}</figcaption></figure>')
                 except FileNotFoundError:
-                    pass
+                    parts.append(f'<p class="missing">[Picture missing: {esc(img[0])}]</p>')
             else:
                 parts.append(f"<p>{esc(p.text)}</p>")
         doc = (f'<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>{esc(head)}</title>'
@@ -123,7 +129,7 @@ def to_epub(store, istore, book: str) -> bytes:
         z.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip")
         z.writestr("META-INF/container.xml", '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>')
         z.writestr("nav.xhtml", f'<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Contents</title></head><body><nav epub:type="toc"><h1>{esc(title)}</h1><ol>{"".join(nav)}</ol></nav></body></html>')
-        z.writestr("content.opf", f'<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">book-scribe-{esc(book)}</dc:identifier><dc:title>{esc(title)}</dc:title><dc:language>en</dc:language></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>{"".join(manifest)}</manifest><spine>{"".join(spine)}</spine></package>')
+        z.writestr("content.opf", f'<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">book-scribe-{esc(book)}</dc:identifier><dc:title>{esc(title)}</dc:title><dc:language>en</dc:language><meta property="dcterms:modified">{time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>{"".join(manifest)}</manifest><spine>{"".join(spine)}</spine></package>')
         for name, doc in chapters:
             z.writestr(name, doc)
         for name, data in files.items():

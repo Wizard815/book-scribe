@@ -163,6 +163,8 @@ class Bible:
         self.ensure()
         new = slugify(name)
         e = Entry(new, name.strip(), dict(state or {}), body)
+        if not slug and self._path(kind, new).exists():
+            raise BibleError(f"There is already an entry called {name!r}. Open that one to change it.")  # a NEW entry never replaces an old one
         if slug and slug != new:
             old = self._path(kind, slug)
             if old.exists():

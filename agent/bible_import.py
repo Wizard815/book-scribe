@@ -104,6 +104,8 @@ def _place_name(place: str) -> str:
 
 def plan(tree: Tree, title: str, slug: str, root: str | None = None, ancestors: int = 2, descendants: int = 2, siblings: bool = True, privacy: str = "alias",
          existing: set[str] | None = None, max_people: int = DEFAULT_MAX, existing_places: set[str] | None = None, ideas: Ideas | None = None) -> Plan:
+    from bible import slugify
+    existing_slugs = {slugify(e) for e in (existing or set())}  # "Zoe Ward" in the tree is the writer's "Zoë Ward"
     existing = {e.lower() for e in (existing or set())}
     existing_places = {e.lower() for e in (existing_places or set())}
     ideas = ideas or Ideas()
@@ -178,7 +180,7 @@ def plan(tree: Tree, title: str, slug: str, root: str | None = None, ancestors: 
         if not live:  # a living person's notes can hold private details: they are not copied
             bits += [f"Note from the family record: {n[:300]}" for n in p.notes[:2]]
         body = " ".join(bits) + f"\n\n*(from the family tree '{title}', id {slug}:{pid.strip('@')})*"
-        out.characters.append({"id": pid, "name": nm, "status": "exists" if nm.lower() in existing else ("aliased" if live else "new"), "state": state, "body": body})
+        out.characters.append({"id": pid, "name": nm, "status": "exists" if nm.lower() in existing or slugify(nm) in existing_slugs else ("aliased" if live else "new"), "state": state, "body": body})
         if p.birth[1]:
             note_place(p.birth[1], f"{nm} was born here" + (f" ({y_b})" if y_b and not live else "") + ".")
         if p.death[1] and not live:
@@ -218,9 +220,16 @@ def apply(bible, pl: Plan) -> dict:
     """Write the plan into the bible. Existing pages keep everything they had."""
     bible.ensure()
     made = merged = 0
+    from bible import slugify
     have = {e.name.lower(): e for e in bible.entries("characters").values()}
+    by_slug = {slugify(e.name): e for e in bible.entries("characters").values()}  # "Zoe Ward" and the writer's "Zoë Ward" are one page file
+    written: set[str] = set()
     for c in pl.characters:
-        old = have.get(c["name"].lower())
+        old = have.get(c["name"].lower()) or (by_slug.get(slugify(c["name"])) if slugify(c["name"]) not in written else None)
+        if slugify(c["name"]) in written:  # two different people in the tree with one name (John Smith senior and junior): keep both
+            born = re.search(r"\d{4}", str(c["state"].get("born", "")))
+            c = {**c, "name": f'{c["name"]} ({born.group() if born else len(written) + 1})'}
+            old = None
         if old:
             state = {k: v for k, v in c["state"].items() if k not in old.state}  # never overwrite what the writer already decided
             body = _append_section(old.body, pl.slug, "From the family tree: " + c["body"])
@@ -229,6 +238,7 @@ def apply(bible, pl: Plan) -> dict:
         else:
             bible.upsert("characters", c["name"], c["state"], c["body"])
             made += 1
+        written.add(slugify(c["name"]))
     places_made = 0
     wh = {e.name.lower(): e for e in bible.entries("world").values()}
     for pl_ in pl.places:

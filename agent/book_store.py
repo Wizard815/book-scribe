@@ -50,6 +50,7 @@ def clean_paragraph(text: str) -> str:
     if parse_image(text.strip()):
         return text.strip()  # a picture paragraph is kept exactly as written
     s = re.sub(r"<!--.*?-->", " ", text, flags=re.S)
+    s = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x1c-\x1e\u2028\u2029]", " ", s)  # pasted or PDF control characters break the chapter file and the EPUB
     s = re.sub(r"\s*\n\s*", " ", s.strip())
     s = re.sub(r"^#+\s*", "", s)
     s = re.sub(r"\s{2,}", " ", s).strip()
@@ -148,7 +149,16 @@ class BookStore:
         d = self.book_dir(book) / "chapters"
         if not d.is_dir():
             return []
-        nums = [int(m.group(1)) for f in d.iterdir() if (m := CHAPTER_FILE_RE.search(f.name))]
+        nums = set()
+        for f in d.iterdir():
+            if m := re.fullmatch(r"chapter_(\d+)\.md", f.name):
+                n = int(m.group(1))
+                if f.name != f"chapter_{n:02d}.md" and not (d / f"chapter_{n:02d}.md").exists():
+                    try:
+                        f.rename(d / f"chapter_{n:02d}.md")  # "chapter_1.md" made by hand: give it the name the app uses
+                    except OSError:
+                        continue
+                nums.add(n)
         return sorted(nums)
 
     def chapter_path(self, book: str, n: int) -> Path:
@@ -185,6 +195,30 @@ class BookStore:
             self._fresh = getattr(self, "_fresh", set()) | {(book, n)}
         return n
 
+    SCENE_BREAK = re.compile(r"^\s*(?:#|\*\s*\*\s*\*|\*{3,}|-{3,}|~{3,}|#\s*#\s*#)\s*$")
+
+    def fill_new_chapter(self, book: str, chapter: int, paras: list[str]) -> int:
+        """Write all the paragraphs of a freshly imported chapter at once. A lone "#" or "* * *" line is a scene break; empty paragraphs are skipped.
+        -> how many paragraphs were written."""
+        path = self.chapter_path(book, chapter)
+        raw = _read(path).rstrip("\n")
+        scene, k, n = 1, 0, 0
+        for p in paras:
+            if self.SCENE_BREAK.match(p):
+                if k:
+                    scene, k = scene + 1, 0
+                    raw += f"\n\n## Scene {scene}"
+                continue
+            try:
+                text = clean_paragraph(p)
+            except BookError:
+                continue
+            k += 1
+            n += 1
+            raw += f"\n\n<!-- paragraph_id: ch{chapter}_s{scene}_p{k} -->\n{text}"
+        path.write_text(raw + "\n")
+        return n
+
     def append_image(self, book: str, chapter: int, filename: str, caption: str) -> Paragraph:
         """Put a picture at the end of a chapter (undoable like any change)."""
         from images import markdown
@@ -205,9 +239,9 @@ class BookStore:
             raise BookError("A title needs some words.")
         path = self.chapter_path(book, n)
         raw = _read(path)
+        raw = re.sub(r'^title:\s*".*"\s*$', lambda _m: f'title: "{title}"', raw, count=1, flags=re.M)  # a function: a backslash in the title is just a character
+        raw = re.sub(r"^# Chapter \d+.*$", lambda _m: f"# Chapter {n}: {title}", raw, count=1, flags=re.M)
         self._snapshot(book, n, "title", "")
-        raw = re.sub(r'^title:\s*".*"\s*$', f'title: "{title}"', raw, count=1, flags=re.M)
-        raw = re.sub(r"^# Chapter \d+.*$", f"# Chapter {n}: {title}", raw, count=1, flags=re.M)
         path.write_text(raw)
         self._stamp(book)
         return title
@@ -391,6 +425,8 @@ class BookStore:
             last = rows[-1]
             last["after"] = hashlib.sha1(_read(self.chapter_path(book, last["chapter"])).encode()).hexdigest()
             rows[-1] = last
+            for old in rows[: -self.HISTORY_KEEP]:  # rows that fall off the end of undo: their chapter copies go too
+                (self._hist(book) / str(old.get("file", ""))).unlink(missing_ok=True) if old.get("file") and "/" not in str(old["file"]) else None
             log.write_text("".join(json.dumps(r) + "\n" for r in rows[-self.HISTORY_KEEP:]), encoding="utf-8")
         except (OSError, ValueError, IndexError, KeyError):
             pass
