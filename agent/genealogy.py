@@ -54,10 +54,22 @@ class Tree:
     source: str = ""
 
     # --- relationships ------------------------------------------------------------------------------------
+    def _fams(self, pid: str) -> list[str]:
+        """Families where this person is a parent: their own FAMS links, and any family that names them as husband or wife
+        (exported trees often have one side of the link missing)."""
+        p = self.people.get(pid)
+        out = list(p.fams) if p else []
+        return out + [k for k, f in self.families.items() if pid in (f.husb, f.wife) and k not in out]
+
+    def _famc(self, pid: str) -> list[str]:
+        p = self.people.get(pid)
+        out = list(p.famc) if p else []
+        return out + [k for k, f in self.families.items() if pid in f.children and k not in out]
+
     def parents(self, pid: str) -> list[str]:
         p = self.people.get(pid)
         out: list[str] = []
-        for f in (self.families.get(x) for x in (p.famc if p else [])):
+        for f in (self.families.get(x) for x in self._famc(pid)):
             if f:
                 out += [x for x in (f.husb, f.wife) if x and x in self.people and x not in out]
         return out
@@ -65,7 +77,7 @@ class Tree:
     def spouses(self, pid: str) -> list[str]:
         p = self.people.get(pid)
         out: list[str] = []
-        for f in (self.families.get(x) for x in (p.fams if p else [])):
+        for f in (self.families.get(x) for x in self._fams(pid)):
             if f:
                 out += [x for x in (f.husb, f.wife) if x and x != pid and x in self.people and x not in out]
         return out
@@ -73,7 +85,7 @@ class Tree:
     def children(self, pid: str) -> list[str]:
         p = self.people.get(pid)
         out: list[str] = []
-        for f in (self.families.get(x) for x in (p.fams if p else [])):
+        for f in (self.families.get(x) for x in self._fams(pid)):
             if f:
                 out += [c for c in f.children if c in self.people and c not in out]
         return out
@@ -81,7 +93,7 @@ class Tree:
     def siblings(self, pid: str) -> list[str]:
         p = self.people.get(pid)
         out: list[str] = []
-        for f in (self.families.get(x) for x in (p.famc if p else [])):
+        for f in (self.families.get(x) for x in self._famc(pid)):
             if f:
                 out += [c for c in f.children if c != pid and c in self.people and c not in out]
         return out

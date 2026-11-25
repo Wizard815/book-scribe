@@ -956,7 +956,15 @@ figure.para figcaption { font-size: calc(var(--fs) * .72 * min(var(--zoom), 1.8)
     box.style.columnWidth = colW + "px"; box.style.columnGap = gap + "px";
     $("bookWrap").style.setProperty("--ph", h + "px");
     pager.cols = cols; pager.step = w + gap;
-    const columns = Math.max(1, Math.round((box.scrollWidth + gap) / (colW + gap)));
+    box.querySelectorAll(".colpad").forEach((e) => e.remove());
+    let columns = Math.max(1, Math.round((box.scrollWidth + gap) / (colW + gap)));
+    if (cols > 1 && columns % cols) {  // an odd last page: an empty page after it, or the last spread could not scroll that far and would show a page twice
+      const pad = document.createElement("div");
+      pad.className = "colpad"; pad.setAttribute("aria-hidden", "true");
+      pad.style.cssText = "break-before:column;-webkit-column-break-before:always;height:1px;margin:0;padding:0";
+      box.appendChild(pad);
+      columns = Math.max(1, Math.round((box.scrollWidth + gap) / (colW + gap)));
+    }
     pager.views = Math.max(1, Math.ceil(columns / cols));
     pager.view = Math.min(pager.views - 1, keepFrac ? Math.round(keepFrac * pager.views) : pager.view);
     showView();

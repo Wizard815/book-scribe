@@ -870,3 +870,70 @@ async def test_r9_a_page_the_writer_already_said_yes_to_is_kept_without_asking_a
     s.last_user = "Yes, keep the Swedish emigration page."
     out = await ag.toolbox.call("propose_save_page", {"title": "Swedish emigration"}, harness.Ctx(sess=s))
     assert "Do NOT ask" in out and s.pending is None and any("emigration" in m["title"].lower() for m in ag.library.items("demo"))
+
+
+# ---------------------------------------------------------------------------------------------- grandpa round 10 (regressions)
+@pytest.mark.asyncio
+async def test_r10_a_yes_with_remarks_around_it_is_still_a_yes(books):
+    ag, store, llm = make(books)
+    n = len(store.paragraphs("demo", 1))
+    _wait(ag)
+    llm.replies = ["Inside the station the air was warm and smelled of coal smoke, and the clerk nodded to him from behind the ledger."] * 4
+    await ag.handle("s", "That's good. Yes, put the draft one in. Then write about him going to the station.")
+    assert len(store.paragraphs("demo", 1)) == n + 1 and DRAFT in store.read_chapter_raw("demo", 1)
+    assert ag.session("s").pending and "coal smoke" in ag.session("s").pending.text
+    ag.session("s").pending = None
+    for t in ("Oh that's nice. Yes, add it.", "Yes, that's him all the same. Put it in.", "Yes. Put the picture in."):
+        d = f"A different paragraph for {t[:12]}: the harvest came in late that year and the barn smelled of dust."
+        _wait(ag, text=d)
+        await ag.handle("s", t)
+        assert d in store.read_chapter_raw("demo", 1), t
+
+
+@pytest.mark.asyncio
+async def test_r10_two_commands_in_one_breath(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    await ag.handle("s", "Call chapter one Over There. Then go to chapter two.")
+    assert store.chapter_title("demo", 1) == "Over There" and ag.session("s").chapter == 2
+    await ag.handle("s", "Fix the name of chapter one, it should just be The Platform. And start chapter three.")
+    assert store.chapter_title("demo", 1) == "The Platform" and 3 in store.chapter_numbers("demo")
+    llm.replies = ["He came home in the spring of 1919, thinner, and walked the last mile from the station to the farm with his bag."] * 3
+    r = await ag.handle("s", "Start chapter four. He comes home from France in nineteen nineteen.")
+    s = ag.session("s")
+    assert 4 in store.chapter_numbers("demo") and s.pending and s.pending.kind == "append" and s.pending.chapter == 4
+
+
+@pytest.mark.asyncio
+async def test_r10_you_cant_see_anything_about_a_picture_is_not_the_screen(books):
+    ag, store, llm = make(books)
+    llm.replies = ['[[tool: make_picture {"prompt": "soldiers in the rain", "caption": "Soldiers", "after": 1}]]', "Here it is: soldiers walking in the rain."]
+    await ag.handle("s", "make a picture of soldiers in the rain")
+    r = await ag.handle("s", "Hm. I don't like that one much, you can't see anything. Well, put it in anyway, at the end of the chapter.")
+    assert not r.ui and store.paragraphs("demo", 1)[-1].image
+
+
+@pytest.mark.asyncio
+async def test_r10_bring_it_back_and_put_it_in_saves_the_dropped_draft(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    A = "The draft card came in June. Everett filled it in at the courthouse in a careful hand and folded the copy into his coat."
+    B = "At the training camp the winter came early, and the tents snapped in the wind all night along the long rows."
+    s = ag.session("s")
+    s.pending = __import__("agent").Pending("append", A, 2)
+    assert ag._supersede(s)
+    s.pending = __import__("agent").Pending("append", B, 2)
+    await ag.handle("s", "No, no. I said yes to that one. Bring it back and put it in chapter two.")
+    assert A in store.read_chapter_raw("demo", 2) and s.pending and s.pending.text == B
+
+
+def test_r10_the_tree_finds_a_child_whose_father_lacks_the_family_link():
+    import genealogy
+    t = genealogy.parse_gedcom(genealogy.decode_text((FILES / "lund_family.ged").read_bytes()))
+    karl = next(p for p in t.people.values() if p.name.startswith("Karl"))
+    assert any(t.people[c].name.startswith("Dorothy") for c in t.children(karl.id))
+
+
+def test_r10_undo_with_a_reason_and_plurals_of_known_words():
+    import intent
+    assert intent.undo_request("Undo that, I liked cold better.")

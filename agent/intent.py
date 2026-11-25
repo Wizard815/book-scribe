@@ -285,7 +285,7 @@ def draft_first(text: str) -> bool:
     return is_draft(text) and parse_ref(text).para is None and not re.search(r"\b(?:again|instead|rewrite|redo|change|fix|replace|shorten|lengthen|expand|trim|polish)\b", n)
 
 
-_GOTO = re.compile(r"^(?:(?:please|ok|okay|now|and)\s+)*(?:(?:go|jump|skip|turn|flip|take me|back|switch|move)(?: back| ahead| forward)?(?: to| over to)?|open|show(?: me)?|read(?: me)?|start(?: at| from)?|let's (?:go to|read)) (?:the )?(?:start of )?chapter (\d+)(?: again)?$")
+_GOTO = re.compile(r"^(?:(?:please|ok|okay|now|and|then|so|um|uh)\s+)*(?:(?:go|jump|skip|turn|flip|take me|back|switch|move)(?: back| ahead| forward)?(?: to| over to)?|open|show(?: me)?|read(?: me)?|start(?: at| from)?|let's (?:go to|read)) (?:the )?(?:start of )?chapter (\d+)(?: again)?$")
 _STEP = re.compile(r"^(?:(?:please|ok|okay|now|and)\s+)*(?:(?:go|read|show|move|skip)(?: me)?(?: to| on to)? )?(?:the )?(next|previous|prior|following|one before) (?:paragraph|section|part|one)$|^(next|previous|continue reading|read on|go back|back|go on|keep reading)$")
 
 
@@ -443,6 +443,7 @@ def title_chapter(text: str) -> tuple[int | None, str] | None:
     q = r"[\"'“]?(.{2,70}?)[\"'”]?[.!?]?$"
     m2 = re.match(rf"(?i)^{_POLITE}(?:(?:change|set|make|switch)\s+)?the (?:name|title) (?:of|for) (?:(?:the|this) chapter|chapter (\d+))\s+(?:to(?: be)?|into|as)\s+{q}", raw) \
         or re.match(rf"(?i)^(?:i want|i'd like|i would like|let's have|let's make|make)?\s*(?:the )?(?:(?:this )?chapter(?: (\d+))?(?:'s)? (?:title|name)|(?:title|name) of (?:the |this )?chapter(?: (\d+))?)\s+(?:to be|should be|will be|is|be|to)\s+{q}", raw)
+    m2 = m2 or re.match(rf"(?i)^{_POLITE}(?:fix|change|correct)\s+the (?:name|title) of (?:(?:the|this) chapter|chapter (\d+))[,:]?\s+(?:it|that) (?:should|must|has to|ought to|will|is to)(?: just| only)? be\s+{q}", raw)
     if m2:
         g = [x for x in m2.groups()]
         num = next((x for x in g[:-1] if x), None)
@@ -544,6 +545,8 @@ _UNDO = re.compile(r"^(?:please |ok |okay |no |oh |hey )*(?:can you |could you )
 def undo_request(text: str) -> bool:
     """"undo that", "put it back", "take that back": the writer wants the last saved change reversed."""
     n = norm(text)
+    if not _UNDO.match(n) and (first := re.split(r"[,.;!]\s+|\s+(?:because|i liked|i like|i prefer)\b", text.strip(), maxsplit=1)[0]) != text.strip():
+        n = norm(first)  # "Undo that, I liked cold better."
     return len(n.split()) <= 9 and bool(_UNDO.match(n))
 
 
