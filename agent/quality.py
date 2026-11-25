@@ -13,9 +13,10 @@ AI_ISMS = [
     "searing pain", "crushing weight", "cut a wide swath", "in their wake", "hues of", "a new beginning", "man of the earth", "a lifeline",
     "distant roar", "fading dream", "harsh reality", "would never be the same", "forever changed", "a stark reminder", "bittersweet",
     "etched with", "dust motes", "voice thick with", "a constant companion", "a constant reminder", "practiced ease", "a wave of", "truly home",
-    "knot in his stomach", "settled in his gut", "eyes closed for the last time",
+    "knot in his stomach", "settled in his gut", "eyes closed for the last time", "breath plumed", "the silence stretched", "words hung heavy",
+    "lump in his throat", "lump forming in his throat", "tracing a path down", "understanding passed between", "understanding passing between",
 ]
-SUMMING_UP = re.compile(r"\b(?:no more, but|a reminder of|a symbol of|forever (?:changed|marked)|would never be the same|shaped by both|a new chapter|the end of an era|nothing would ever)\b", re.I)
+SUMMING_UP = re.compile(r"\b(?:no more, but|a reminder of|a symbol of|forever (?:changed|marked)|would never be the same|shaped by both|a new chapter|the end of an era|nothing would ever|unknown future|into the future|(?:a|the) future (?:that|which)|still demanded|would always (?:remember|carry)|never (?:forget|forgot)|began at last|had only just begun|at last,? (?:home|free|at peace))\b", re.I)
 TELLING = re.compile(r"\b(she|he|they|i)\s+(felt|was feeling|realized|knew that|couldn't believe)\b", re.I)
 PASSIVE = re.compile(r"\b(was|were|been|being|is|are)\s+\w+ed\s+by\b", re.I)
 

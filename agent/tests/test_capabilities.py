@@ -1298,3 +1298,33 @@ async def test_rm9_copied_history_is_not_story_and_a_chat_revision_replaces_the_
     await ag.handle("s", "Make him count the fence posts the way his father taught him.")
     await ag.handle("s", "yes")
     assert "counting the fence posts" in store.read_chapter_raw("demo", 1)
+
+
+@pytest.mark.asyncio
+async def test_rm10_correction_is_a_revision_bring_it_back_never_undoes_and_delete_yes_forms(books):
+    ag, store, llm = make(books)
+    s = ag.session("s")
+    _wait(ag, text=DRAFT)
+    llm.replies = ["The wind came off the prairie, and little Ruth rode on her father's shoulders to the station while Everett walked beside them with his bag."]
+    r = await ag.handle("s", "Thomas only had a girl, Ruth. Make it little Ruth on her father's shoulders.")
+    assert s.pending and "little Ruth" in s.pending.text and "dropped" not in r.text
+    before = store.read_chapter_raw("demo", 1)
+    s.pending = None
+    s.last_dropped, s.dropped_stale = __import__("agent").Pending("append", DRAFT, 1), False
+    await ag.handle("s", "Bring it back.")
+    assert store.read_chapter_raw("demo", 1) == before and s.pending and s.pending.text == DRAFT
+    s.pending = None
+    await ag.handle("s", "delete paragraph 2")
+    await ag.handle("s", "Yes, delete it.")
+    assert len(store.paragraphs("demo", 1)) == len([p for p in before.split("paragraph_id") if p]) - 2 or store.read_chapter_raw("demo", 1) != before
+
+
+@pytest.mark.asyncio
+async def test_rm10_library_offer_is_never_rescued_into_the_book(books):
+    ag, store, llm = make(books)
+    s = ag.session("s")
+    s.history.append({"role": "assistant", "content": "The Dependent and Disability Pension Act of 1890 gave pensions to Union veterans who had served ninety days and could not do manual labor, whether or not the disability came from the war, and by 1893 nearly a million veterans and widows were on the rolls. I can save these two pages to your library."})
+    n = len(store.paragraphs("demo", 1))
+    llm.replies = ["Okay."]
+    await ag.handle("s", "Yes.")
+    assert len(store.paragraphs("demo", 1)) == n

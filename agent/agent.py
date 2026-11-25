@@ -505,6 +505,10 @@ class Agent:
             if not kind and not (sess.pending.kind == "picture" and re.search(r"\byou can'?t see\b|\bcan'?t see (?:anything|much|a thing|what)\b|\b(?:picture|photo|that 1|this 1)\b", intent.norm(text))) \
                     and (r := self._ui_reply(sess, text)):  # "bigger" while reviewing a proposal: change the screen, keep the proposal
                 return r
+            if not kind and sess.pending.kind in ("append", "edit") and not intent.is_question(text) and not self._standalone_command(text) \
+                    and intent.parse_ref(text).para is None and intent.parse_ref(text).chapter is None and not intent.is_draft(text) \
+                    and re.search(r"\b(?:make (?:it|him|her|them|the)|have (?:him|her|them)|change|say (?:that|it)|put in|leave out|take out|instead|should be|only had|wasn'?t|isn'?t|didn'?t|not (?:a|the|his|her)|it was (?:a|his|her)|no,? it)\b", intent.norm(text)):
+                return await self._revise(sess, text)  # "Thomas only had a girl, Ruth. Make it little Ruth on her father's shoulders."
             if not kind and sess.pending.kind in ("append", "edit") and intent.is_edit(text) and (rf0 := intent.parse_ref(text)).para is None and rf0.chapter is None \
                     and not intent.is_question(text) and not intent.sentence_removal(text):
                 return await self._revise(sess, text)  # "leave out the part about her living there": a change to the draft on the table, not to an old paragraph
@@ -528,6 +532,9 @@ class Agent:
                         r = self._reply(sess, f"Here is the new version: {para_} {keep.ask}", await self._draft_speech(sess, para_, "Here is the new version:", keep.ask))
                         return r
                 sess.pending = keep
+                if self._CLAIM.search(r.text or ""):  # "Yes, it's saved now" while it is still waiting: never say both
+                    r.text = " ".join(x for x in re.split(r"(?<=[.!?])\s+", r.text) if not self._CLAIM.search(x)).strip()
+                    r.speech = [{"speaker": vx.ASSISTANT, "text": r.text}] if r.text else []
                 r.pending = {"kind": keep.kind, "text": keep.text, "paragraph_id": keep.paragraph_id, "ask": keep.ask}
                 if keep.ask and keep.kind != "page" and not re.search(r"\b(?:still waiting|waiting for your (?:yes|answer)|say yes or no)\b", r.text, re.I):
                     beg = f" It begins: {excerpt(keep.text, 10)}" if keep.kind in ("append", "edit") and keep.text else ""
@@ -544,7 +551,7 @@ class Agent:
             else:
                 dropped, sess.pending = sess.pending, None  # anything else is a new command; the unsaved proposal is abandoned, and we say so
                 sess.notices.append("I let go of the draft you had not saved.")
-                sess.last_dropped = dropped
+                sess.last_dropped, sess.dropped_stale = dropped, False
                 sess.say_first = f"I dropped the {'paragraph' if dropped.kind == 'append' else 'change'} I showed you before, because you moved on. Say bring it back if you wanted it."
 
         if not sess.pending and (draft := self._draft_to_rescue(sess, text)):  # "yes, add it" to a draft that was shown without a proposal
@@ -735,7 +742,8 @@ class Agent:
             return ""
         last = sess.history[-1]["content"].strip()
         if not re.match(r"^(?:yes|yeah|yep|save|add|put|keep)\b", intent.norm(text)) or last.startswith("Here is your picture") \
-                or re.search(r"(?i)\b(?:picture|photo|photograph|portrait|tintype|image|illustration)\b", last[:200]):
+                or re.search(r"(?i)\b(?:picture|photo|photograph|portrait|tintype|image|illustration)\b", last[:200]) \
+                or re.search(r"(?i)\b(?:library|wiki|story notes|page|pages|looked up|look it up|author'?s note)\b", last):
             return ""  # only a plain yes saves a paragraph that was shown without a card, and never a picture's description
         if (para_ := self._paragraph_in(last)) and not last.startswith(("Here's a draft for chapter", "Here is your picture")) and not re.search(r"\bShould I (?:add|save) it\?$", last) \
                 and not re.search(r"(?i)\b(?:picture|photo|photograph|portrait|tintype|image)\b", last[:200]) and re.match(r"^(?:yes|yeah|yep|save|add|put)\b", intent.norm(text)):
@@ -968,6 +976,8 @@ class Agent:
             return "neutral"
         if sess.pending.kind in ("delete", "move") and re.search(r"\b(?:keep|leave|don'?t|do not|wait|stop)\b", n):
             return "no"  # "No, wait. Keep it." refuses the delete
+        if sess.pending.kind in ("delete", "move") and re.match(r"^(?:(?:yes|yeah|ok|okay|please)\s+)*(?:delete|remove|take out|move|do) (?:it|that|this|them|that 1|this 1)(?: out)?(?: please| now)?$", n):
+            return "yes"
         if self._SAVE_PHRASE.match(n) and not intent._CHANGE.search(re.sub(r"\bin\b", "", n)):
             return "yes"
         k, r = intent.confirmation(s)
@@ -2007,7 +2017,7 @@ class Agent:
         want = toks(text)
         imgs_ = [m for m in self.library.items(sess.book) if m.get("kind") in ("image", "scan")]
         best = max(imgs_, key=lambda m: len(want & toks(m["title"] + " " + m.get("filename", ""))), default=None)
-        if not best or not want & toks(best["title"] + " " + best.get("filename", "")) or sess.pending:
+        if not best or not want & toks(best["title"] + " " + best.get("filename", "")) or (sess.pending and not self._supersede(sess)):
             return None
         ctx = harness.Ctx(sess=sess)
         pos = intent.picture_position(text, strict=True)
@@ -2022,6 +2032,16 @@ class Agent:
         sess.history.append({"role": "user", "content": text})
         sess.history.append({"role": "assistant", "content": r.text})
         return self._attach(sess, r, ctx, "", text)
+
+    @staticmethod
+    def _copied_research(sess: Session, text: str) -> bool:
+        mine = re.findall(r"[a-z']+", (text or "").lower())
+        for h in list(sess.research.values())[-12:]:
+            src = re.findall(r"[a-z']+", str(h.get("text", "")).lower())
+            grams = {" ".join(src[i:i + 8]) for i in range(max(0, len(src) - 7))}
+            if grams and sum(1 for i in range(max(0, len(mine) - 7)) if " ".join(mine[i:i + 8]) in grams) >= 3:
+                return True
+        return False
 
     @staticmethod
     def _para_count(text: str) -> int:
@@ -2302,6 +2322,12 @@ class Agent:
             p.text = clean_draft(p.text) or p.text  # the last guard: no lead-in, no "Should I save it?", no wrapping quotes ever reach the book
             if self._is_talk(p.text):
                 return self._reply(sess, "That was my own talk, not a paragraph for the book, so I did not save it. Ask me again and I will write the paragraph itself.")
+            if p.kind == "append" and self._copied_research(sess, p.text):
+                return self._reply(sess, "That was the history I looked up, copied, not a story paragraph, so I did not put it in the book. Say keep that page in the library to keep it there.")
+            last_a = next((m["content"] for m in reversed(sess.history) if m.get("role") == "assistant"), "")
+            if p.kind == "append" and p.text[:60] in last_a and re.search(r"(?i)\bauthor'?s note\b|\bat the (?:very )?front\b|\bbefore chapter (?:1|one)\b", last_a.replace(p.text, " ")[-500:] + " " + (p.ask or "")):
+                self.store.bible(sess.book).write_doc("authors_note", p.text + "\n")  # an author's note offered as a paragraph: it belongs at the front, never in a chapter
+                return self._reply(sess, "Saved as the author's note. It is printed at the front of the book, before chapter 1.")
             if p.kind == "append" and re.match(r"(?i)^author'?s note\b", p.text):
                 note = re.sub(r"(?i)^author'?s note[:.\s-]*", "", p.text).strip()
                 self.store.bible(sess.book).write_doc("authors_note", note + "\n")
