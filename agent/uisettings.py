@@ -139,7 +139,7 @@ def _book_zoom(n: str, cur: int, raw: str = "") -> tuple[int, str] | None:
 
 
 def _has_ui_target(n: str, words: int) -> bool:
-    return bool(re.search(rf"\b{_UI_NOUN}\b", n)) or words <= 2
+    return bool(re.search(rf"\b{_UI_NOUN}\b", n)) or words <= 2 or bool(re.fullmatch(r"(?:(?:a|just a|a bit|a little|little|bit|tiny|tad|touch|please|now|again|some)\s+)*(?:bigger|smaller|larger)(?:\s+(?:please|again|now|still))*", n))
 
 
 def parse(text: str, look: dict | None) -> tuple[dict, str] | None:

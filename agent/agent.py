@@ -66,10 +66,16 @@ def split_sentences(text: str) -> list[str]:
     return [o for o in out if o.strip()]
 
 
+_DRAFT_JUNK_HEAD = re.compile(r"^(?:\s*(?:propose_append|propose_edit_paragraph|start_chapter|make_picture|text)\s*:\s*|\s*(?:the writer (?:asked|wants|said)|you asked|as requested)[^\n.]{0,200}[.:]\s*)+", re.I)
+_DRAFT_JUNK_TAIL = re.compile(r"(?:\s+(?:how does (?:this|that) sound|does (?:this|that) (?:work|sound)|is (?:this|that) (?:what|alright|okay|ok)|what do you think|let me know|would you like|shall i|should i|want me to)[^.!?]*[.!?]?\s*)+$", re.I)
+
+
 def clean_draft(text: str) -> str:
     """Strip the model's own talk to the writer ("I gave Arthur a small wink. Want me to change it?") from a paragraph meant for the book. Only a trailing
     block that clearly addresses the writer is removed; the paragraph itself is never cut into."""
     t = text.strip().strip("`").strip()
+    t = _DRAFT_JUNK_HEAD.sub("", t).strip().strip('"').strip()  # "propose_append: …", "The writer asked for a new paragraph…"
+    t = _DRAFT_JUNK_TAIL.sub("", t).strip()  # "… How does this sound for your book?"
     # an apology or explanation before the paragraph ("My apologies. I had proposed it, but... Here is the paragraph I drafted:")
     t = re.sub(r"^(?:(?:my apologies|i apologi[sz]e|sorry|i'?m sorry|okay|ok|sure|of course|certainly|alright|understood|you'?re right)\b[^\n]{0,300}?(?:here(?:'s| is)[^\n:]{0,80}:|\n\n))\s*", "", t, flags=re.I).strip()
     t = re.sub(r"^(?:here(?:'s| is)[^\n:]{0,60}:|sure[,!.][^\n]{0,40}\n)\s*", "", t, flags=re.I).strip()
@@ -898,11 +904,11 @@ class Agent:
         n = intent.norm(s)
         if not n:
             return "neutral"
+        if sess.pending.kind in ("delete", "move") and re.search(r"\b(?:keep|leave|don'?t|do not|wait|stop)\b", n):
+            return "no"  # "No, wait. Keep it." refuses the delete
         if self._SAVE_PHRASE.match(n) and not intent._CHANGE.search(re.sub(r"\bin\b", "", n)):
             return "yes"
         k, r = intent.confirmation(s)
-        if sess.pending.kind in ("delete", "move") and re.search(r"\b(?:keep|leave|don'?t|do not)\b", n):
-            return "no"
         if k == "no" and not r:
             return "no"
         if k == "yes" and not r and re.search(r"\b(?:yes|yeah|yep|yup|save|add|keep|put|go ahead|do it|please do|sure)\b", n):
@@ -924,7 +930,8 @@ class Agent:
         at = next((i for i, k in enumerate(kinds) if k in ("yes", "no")), None)
         if at is None or {"yes", "no"} <= set(kinds):
             return None
-        if at > 0 and not re.match(r"^(?:yes|yeah|yep|yup|no|nope)\b", intent.norm(sents[at])) and not self._SAVE_PHRASE.match(intent.norm(sents[at])):
+        if at > 0 and not re.match(r"^(?:yes|yeah|yep|yup|no|nope)\b", intent.norm(sents[at])) and not self._SAVE_PHRASE.match(intent.norm(sents[at])) \
+                and not (kinds[at] == "no" and sess.pending.kind in ("delete", "move")):
             return None  # after other talk, only a plain "Yes, …" / "Put it in." counts as the answer
         k = kinds[at]
         # what comes before the answer: a remark ("I can't see his face so good") is dropped; a request ("Put her in too, and Karin") is done afterwards
@@ -1739,6 +1746,31 @@ class Agent:
 
     _MEMORY_ASK = re.compile(r"\b(remember|remind|earlier|before|last (time|week|month|year)|ages ago|a while ago|back when|i (said|mentioned|told)|you (said|mentioned|told)|forgot|forgotten|what was (that|the)|did (i|we)|we (talked|discussed|decided))\b", re.I)
 
+    _DOC_TALK = re.compile(r"\b(?:papers?|documents?|files?|letters?|obituar(?:y|ies)|card|cards|pension|muster|enlist\w*|records?|certificates?|newspaper|clipping|family tree|tree|what (?:does|do|did) (?:it|they) say|word for word|read (?:me )?(?:the|that|his|her))\b")
+
+    def _doc_extracts(self, sess: Session, text: str, budget: int = 7000) -> str:
+        """The writer asks what their papers say: hand the model the papers' actual text (the ones named, else all of them, shortest first)."""
+        if not self.library or not self._DOC_TALK.search(intent.norm(text)):
+            return ""
+        items = [m for m in self.library.items(sess.book) if m.get("status") == "read" and m.get("kind") in ("document", "text", "scan", "family_tree")]
+        if not items:
+            return ""
+        n = set(re.findall(r"[a-z]{4,}", intent.norm(text)))
+        named = [m for m in items if n & set(re.findall(r"[a-z]{4,}", (m.get("title", "") + " " + m.get("filename", "")).lower().replace("_", " ")))]
+        pick = named or sorted(items, key=lambda m: m.get("chars", 0))
+        out, left = [], budget
+        for m in pick:
+            try:
+                t = self.library.text(sess.book, m["slug"])
+            except Exception:
+                continue
+            piece = t[: max(400, min(len(t), left // max(1, len(pick))))]
+            out.append(f"=== {m['title']} ===\n{piece}")
+            left -= len(piece)
+            if left <= 400:
+                break
+        return ("THE WRITER'S OWN PAPERS (the real text; when you say what they say, use only these words, never guess or fill in):\n" + "\n\n".join(out)) if out else ""
+
     async def _recall(self, sess: Session, text: str) -> str:
         """Older conversation and library passages that are close in meaning to what the writer just said ("that old lighthouse I described")."""
         if not (self.journal or self.library) or len(text.split()) < 4:
@@ -1769,7 +1801,10 @@ class Agent:
         sess.history.append({"role": "user", "content": text})
         ctx = harness.Ctx(sess=sess)
         canon = await self._canon_by_meaning(sess, text)
-        msgs = self._context(sess, text, canon=canon, sparks=self._sparks(sess, text), tools=True, recall=await self._recall(sess, text))
+        recall = await self._recall(sess, text)
+        if docs := self._doc_extracts(sess, text):  # "what do the papers say": the real words in front of the model, so it cannot make them up
+            recall = (recall + "\n\n" if recall else "") + docs
+        msgs = self._context(sess, text, canon=canon, sparks=self._sparks(sess, text), tools=True, recall=recall)
         had_pending, sig0 = sess.pending is not None, self._book_sig(sess.book)
         out, _ = await harness.run(self.llm, msgs, self.toolbox, ctx, max_steps=3, temperature=self._temperature())
         if re.fullmatch(r"\s*[\[(][^\]\)]{0,160}[\])]\s*", out or "") and not ctx.drafted and not ctx.picture:
@@ -1808,7 +1843,20 @@ class Agent:
                 and re.match(r"^(?:and |ok |okay |now |please )*(?:one more|another|next|more|then|continue|write|and then)\b", intent.norm(text))):
             sess.history.pop()  # the model wrote prose into the chat instead of proposing it: ask again through the proper draft path, so it is checked, shown and can be saved
             return await self._propose_draft(sess, text)
+        if not sess.pending and not ctx.drafted and sess.mode == "narrator" and re.search(r"\b(?:write|paragraph|draft|story|scene|next part|chapter)\b", intent.norm(text)) \
+                and not intent.is_question(text) and (para_ := self._paragraph_in(out)):
+            await self.toolbox.call("propose_append", {"text": para_}, ctx)  # the model wrote the paragraph into the chat: offer it properly, with a card and a yes
+            if ctx.drafted and sess.pending and sess.pending.kind == "append":
+                tail = f"Should I add it to chapter {sess.pending.chapter}?"
+                sess.history.append({"role": "assistant", "content": f"(Note for me: the app now shows this draft and asks yes or no: \u201c{excerpt(ctx.drafted, 25)}\u201d)"})
+                return self._attach(sess, self._reply(sess, f"Here's a draft: {ctx.drafted} {tail}", await self._draft_speech(sess, ctx.drafted, "Here's a draft:", tail)), ctx, "", text)
         if not sess.pending and self._book_sig(sess.book) == sig0 and self._CLAIM.search(out) and not set(ctx.calls) & {"start_chapter", "set_chapter_title", "set_ui", "export_book"}:
+            again, _ = await harness.run(self.llm, msgs + [{"role": "assistant", "content": out}, {"role": "user", "content":
+                    "You said it is done, but nothing in the book changed and nothing is waiting for a yes. Do it now by calling the right tool "
+                    "(propose_append, propose_edit_paragraph, propose_wiki_notes, use_library_picture, make_picture, export_book…). Do not say it is done."}],
+                self.toolbox, ctx, max_steps=2, temperature=self._temperature())
+            if sess.pending or self._book_sig(sess.book) != sig0 or ctx.download or ctx.picture or ctx.drafted:
+                return await self._after_retry(sess, ctx, again or "", text)
             # the model says it saved, moved or undid something, but nothing happened: never let the writer believe it
             out = ("I have not changed anything yet" + (" — nothing was waiting for your yes" if not had_pending else "") +
                    ". Tell me again what you want, and I will show it to you first.")
@@ -1824,7 +1872,30 @@ class Agent:
         except Exception:
             return ()
 
-    _CLAIM = re.compile(r"\b(?:i(?:'ve| have)? (?:now )?(?:saved|added|updated|changed|moved|deleted|removed|put (?:it|that|the|this|them)\b[^.]{0,40}\bin|undone|undid|corrected|fixed|replaced|taken out|took out)|(?:is|are|has been|have been) (?:now )?(?:saved|added|updated|in (?:the|your) book|back in|undone|moved|removed)|(?:now|is) back (?:in|where)|it'?s (?:saved|in the book|done))\b", re.I)
+    async def _after_retry(self, sess: Session, ctx, out: str, text: str) -> Reply:
+        """The model did it after all on the second ask: show it the usual way."""
+        if ctx.drafted and sess.pending and sess.pending.kind == "append":
+            tail = f"Should I add it to chapter {sess.pending.chapter}?"
+            return self._attach(sess, self._reply(sess, f"Here's a draft: {ctx.drafted} {tail}", await self._draft_speech(sess, ctx.drafted, "Here's a draft:", tail)), ctx, "", text)
+        if ctx.picture and sess.pending and sess.pending.kind == "picture":
+            r = self._reply(sess, f"{(out.strip() + ' ') if out.strip() else ''}Should I put it in chapter {sess.pending.chapter}?")
+            r.picture = self.images.info(sess.book, ctx.picture["candidate"], ctx.picture["caption"], candidate=True)
+            return self._attach(sess, r, ctx, "", text)
+        msg = out.strip() if out.strip() and not self._CLAIM.search(out) else ""
+        if sess.pending and not msg:
+            msg = sess.pending.ask or self._ask_for(sess, sess.pending)
+        return self._attach(sess, self._reply(sess, msg or "Done."), ctx, msg, text)
+
+    def _paragraph_in(self, out: str) -> str:
+        """A story paragraph written into a chat reply, without the talk around it; "" when there is none."""
+        blocks = [b.strip() for b in re.split(r"\n\s*\n", out or "") if b.strip()]
+        for b in sorted(blocks, key=len, reverse=True)[:1]:
+            b = clean_draft(b).strip('"\u201c\u201d ')
+            if len(b.split()) >= 45 and self._looks_like_paragraph(b) and not re.search(r"\b(?:you|your|walter|i can|i will|i'?ll|shall i|would you)\b", b[:120].lower()):
+                return b
+        return ""
+
+    _CLAIM = re.compile(r"\b(?:i(?:'ve| have)? (?:now )?(?:saved|added|updated|changed|moved|deleted|removed|put (?:it|that|the|this|them)\b[^.]{0,40}\bin|undone|undid|corrected|fixed|replaced|taken out|took out)|(?:is|are|has been|have been) (?:now )?(?:saved|added|updated|in (?:the|your) book|back in|undone|moved|removed)|(?:now|is) back (?:in|where)|it'?s (?:saved|in the book|done)|(?:successfully )?exported|ready (?:for you )?to (?:download|print)|on your screen now)\b", re.I)
 
     @staticmethod
     def _looks_like_paragraph(out: str) -> bool:
@@ -2293,11 +2364,20 @@ class Agent:
         if PREF.search(text):
             self.memory.add(f"Writer said: {text[:300]}", "preference")
 
+    @staticmethod
+    def _plain_talk(text: str) -> str:
+        """Spoken replies carry no markdown: no stars, no bullet marks, no headings (they would be read out or shown as symbols)."""
+        t = re.sub(r"\*\*(.+?)\*\*|__(.+?)__", lambda m: m.group(1) or m.group(2), text or "")
+        t = re.sub(r"(?m)^\s*(?:[-*\u2022]|\d+[.)])\s+", "", t)
+        t = re.sub(r"(?m)^#{1,6}\s*", "", t)
+        return re.sub(r"(?<!\*)\*(?!\*)", "", t)
+
     def _reply(self, sess: Session, text: str, speech: list[dict] | None = None) -> Reply:
         if sess.pending and not sess.pending.ask:
             sess.pending.ask = self._ask_for(sess, sess.pending) or text
         pend = {"kind": sess.pending.kind, "text": sess.pending.text, "paragraph_id": sess.pending.paragraph_id, "ask": sess.pending.ask} if sess.pending else None
         notices, sess.notices = sess.notices, []
+        text = self._plain_talk(text) if not (sess.pending and sess.pending.kind in ("append", "edit") and sess.pending.text in (text or "")) else text
         lead = sess.say_first
         if lead and lead.startswith("I put aside") and sess.pending and sess.last_dropped is not None and sess.pending.kind == sess.last_dropped.kind \
                 and sess.pending.kind in ("append", "edit"):

@@ -1045,3 +1045,59 @@ def test_rm1_undo_in_a_later_sentence_and_a_picture_question_is_not_the_screen()
     assert intent.ideas_request("give me a name for the farm dog") is None
     from agent import clean_draft
     assert clean_draft("My apologies. I had proposed the paragraph, but it seems there was a misunderstanding. Here is the paragraph I drafted: The rain came.") == "The rain came."
+
+
+@pytest.mark.asyncio
+async def test_rm2_native_tool_calls_are_used_when_the_model_supports_them(books):
+    ag, store, llm = make(books)
+    P = ("Snow lay on the fence posts that winter. The cows stood close by the barn door, waiting for the hay to come down from the loft. "
+         "Samuel broke the ice on the trough every morning with the back of an axe. His mother kept the kitchen stove going from dark to dark.")
+    seen = []
+
+    async def chat_tools(messages, tools, **kw):
+        seen.append([t["function"]["name"] for t in tools])
+        if not any(m.get("role") == "tool" for m in messages):
+            return {"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "propose_append", "arguments": json.dumps({"text": P})}}]}
+        return {"content": "Here is a paragraph about the winter."}
+    llm.chat_tools = chat_tools
+    r = await ag.handle("s", "Tell me about the winter on the farm and give me a paragraph about it")
+    assert seen and "propose_append" in seen[0] and ag.session("s").pending and ag.session("s").pending.text == P
+
+
+@pytest.mark.asyncio
+async def test_rm2_no_wait_keep_it_refuses_a_delete(books):
+    ag, store, llm = make(books)
+    before = store.read_chapter_raw("demo", 1)
+    await ag.handle("s", "delete paragraph 2")
+    await ag.handle("s", "No, wait. Keep it.")
+    assert store.read_chapter_raw("demo", 1) == before and ag.session("s").pending is None
+
+
+@pytest.mark.asyncio
+async def test_rm2_a_paragraph_written_into_the_chat_becomes_a_real_draft(books):
+    ag, store, llm = make(books)
+    P = ("Samuel walked the last mile home in the rain with his left arm still stiff from the wound, and the fields along the road lay flat and brown under the low sky. "
+         "At the gate he stopped and looked for a long time at the house, at the smoke from the kitchen chimney and the lamp already lit in the window. "
+         "His mother came out onto the porch with her apron still on, and she did not say a word until she had both her hands on his face.")
+    llm.replies = [f"Of course, Walter. Here is the paragraph:\n\n{P}\n\nHow does that sound?"]
+    r = await ag.handle("s", "Now a paragraph about him coming home to the farm in the rain")
+    s = ag.session("s")
+    assert s.pending and s.pending.kind == "append" and s.pending.text.startswith("Samuel walked") and "How does" not in s.pending.text
+
+
+def test_rm2_spoken_years_markdown_and_junk_around_drafts():
+    import intent
+    from agent import Agent, clean_draft
+    assert intent.norm("the tintype eighteen sixty-two") == "the tintype 1862" and intent.norm("paragraphs 12 13") == "paragraphs 12 13"
+    assert Agent._plain_talk("**Muster card:** he enlisted.\n- one\n* two") == "Muster card: he enlisted.\none\ntwo"
+    assert clean_draft("propose_append: The rain came down on the camp all night.") == "The rain came down on the camp all night."
+    assert clean_draft("The rain came down on the camp all night. How does this sound for your book?") == "The rain came down on the camp all night."
+
+
+@pytest.mark.asyncio
+async def test_rm2_start_the_next_chapter_while_an_earlier_one_is_on_screen(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2); store.create_chapter("demo", 3)
+    llm.replies = ["He came home in the spring, thinner, and walked the last mile from the station to the farm with his bag over his good shoulder."] * 3
+    r = await ag.handle("s", "Start chapter four. He comes home from the war in eighteen sixty-five.", viewing=1)
+    assert 4 in store.chapter_numbers("demo") and ag.session("s").pending and ag.session("s").pending.chapter == 4

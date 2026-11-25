@@ -58,6 +58,7 @@ def norm(text: str) -> str:
             out.append(t)
         i += 1
     s = re.sub(r"(?<=\w)\.(?=\s|$)", "", "".join(out))  # "mr." -> "mr"
+    s = re.sub(r"(?<!paragraph )(?<!paragraphs )(?<!chapter )(?<!chapters )(?<!scene )(?<!and )(?<!to )\b(1[1-9]) ([1-9]\d|0[1-9])\b", lambda m: m.group(1) + m.group(2), s)  # "eighteen sixty two" -> 18 62 -> 1862: a spoken year
     s = re.sub(r"^(?:\W*(?:um+|uh+|uhm|erm|er|hmm+|mm+|ah)\b[\s,.]*)+(?=\w)", "", s)  # "um, undo that": a spoken filler is not part of the command
     s = re.sub(r"\b(?!(?:let|it|he|she|that|there|here|what|who|how|where|when|why|one)'s\b)(\w+)'s\b", r"\1", s)  # "Jonas's voice" -> "jonas voice"
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]", " ", s)).strip()

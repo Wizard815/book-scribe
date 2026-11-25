@@ -40,6 +40,32 @@ class LLM(_Base):
 
         return await self.router.call("chat", go)
 
+    native_ok: bool | None = None  # None: not tried yet; False: the server refused function definitions once, so the text format is used
+
+    async def chat_tools(self, messages: list[dict], tools: list[dict], temperature: float = 0.7, max_tokens: int = 1200) -> dict:
+        """One turn with native function calling. -> the assistant message {"content", "tool_calls"}."""
+        import harness
+
+        async def go(p: Profile) -> dict:
+            r = await self.http.post(
+                f"{p.base_url}/v1/chat/completions", headers=headers(p), timeout=timeout_for("chat", p),
+                json={"model": p.model or "default", "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "tools": tools, "tool_choice": "auto"})
+            if r.status_code in (400, 404, 422, 501) and "tool" in r.text.lower():
+                self.native_ok = False
+                raise harness.NativeToolsUnsupported(r.text[:200])
+            r.raise_for_status()
+            self.native_ok = True
+            return r.json()["choices"][0]["message"]
+
+        try:
+            return await self.router.call("chat", go)
+        except harness.NativeToolsUnsupported:
+            raise
+        except Exception as e:
+            if isinstance(getattr(e, "__cause__", None), harness.NativeToolsUnsupported) or "NativeToolsUnsupported" in repr(e):
+                raise harness.NativeToolsUnsupported(str(e)[:200])
+            raise
+
     async def models(self) -> list[str]:
         return await self.router.call("chat", lambda p: list_models(self.http, p))
 
