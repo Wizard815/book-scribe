@@ -437,6 +437,18 @@ def _chapter_digits(raw: str) -> str:
     return re.sub(rf"(?i)(\bchapter (?:number )?)((?:{_NUMBER_WORDS})(?:[\s-]+(?:{_NUMBER_WORDS}))?)\b", sub, raw)
 
 
+def book_title(text: str) -> str | None:
+    """"Call the book Samuel's War", "the title of the book is …", "I want the book to be called …" -> the title, else None."""
+    raw = re.sub(r"(?i)^(?:\W*(?:um+|uh+|er|erm|so|okay|ok|now|and)\b[\s,.]*)+", "", text.strip())
+    m = re.match(r"(?i)^(?:(?:please|can you|could you|let's|lets|i want to|i'd like to)\s+)*(?:call|name|title)\s+(?:the|my|this|our)\s+(?:whole\s+)?(?:book|story)\s+(?:to\s+|as\s+)?[\"'\u201c]?(.{2,80}?)[\"'\u201d]?[.!]?$", raw) \
+        or re.match(r"(?i)^(?:i want |i'd like |let )?(?:the|my|this) (?:whole )?(?:book|story)(?:'s)? (?:title |name )?(?:is going to be called|to be called|is called|be called|should be called|should be|will be|to be|is)\s+[\"'\u201c]?(.{2,80}?)[\"'\u201d]?[.!]?$", raw) \
+        or re.match(r"(?i)^(?:i want |i'd like )?the (?:title|name) of (?:the|my|this) (?:book|story) (?:is|should be|will be|to be)\s+[\"'\u201c]?(.{2,80}?)[\"'\u201d]?[.!]?$", raw)
+    if not m:
+        return None
+    t = m.group(1).strip(" ,.")
+    return None if re.match(r"(?i)(?:a |an |about |for |what|something|longer|shorter)", t) else t
+
+
 def title_chapter(text: str) -> tuple[int | None, str] | None:
     """"call chapter 3 The Lake", "title this chapter 'Dozmary Pool'", "change the name of chapter four to Home Again",
     "I want the chapter title to be Home Again" -> (chapter number or None for the one on screen, the title)."""

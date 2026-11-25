@@ -113,7 +113,7 @@ async def test_drift_is_remembered_and_delivered_next_turn(books):
     assert r.changed == ["ch1_s2_p1"]
     await asyncio.gather(*agent._bg)
     nxt = await agent.handle("s", "go to chapter 1")
-    assert any("may contradict" in n and "blind" in n for n in nxt.notes)
+    assert not any("may contradict" in n for n in nxt.notes)  # remembered for the model, never read out to the writer (too often wrong)
     assert any("Drift from canon" in m for m in mem.search("Drift from canon contradict"))
     assert (await agent.handle("s", "go to chapter 1")).notes == []  # delivered once
 

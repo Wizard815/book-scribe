@@ -1101,3 +1101,17 @@ async def test_rm2_start_the_next_chapter_while_an_earlier_one_is_on_screen(book
     llm.replies = ["He came home in the spring, thinner, and walked the last mile from the station to the farm with his bag over his good shoulder."] * 3
     r = await ag.handle("s", "Start chapter four. He comes home from the war in eighteen sixty-five.", viewing=1)
     assert 4 in store.chapter_numbers("demo") and ag.session("s").pending and ag.session("s").pending.chapter == 4
+
+
+@pytest.mark.asyncio
+async def test_rm3_book_title_spoken_titles_and_junk_never_becomes_a_draft(books):
+    ag, store, llm = make(books)
+    await ag.handle("s", "Call the book Samuel's War.")
+    import export
+    assert export.book_title(store, "demo") == "Samuel's War"
+    from agent import clean_draft
+    assert clean_draft("I can put this in the book for you: The rain came down all night on the camp.") == "The rain came down all night on the camp."
+    assert clean_draft('How about this: "The rain came down all night on the camp."') == "The rain came down all night on the camp."
+    assert clean_draft("(Note for me: I called propose_append. The app now shows this draft.) The rain came down.") == "The rain came down."
+    out = await ag.toolbox.call("propose_append", {"text": "I apologize, you're right. Daniel was not at Vicksburg, so I have changed the paragraph to leave him out of it."}, harness.Ctx(sess=ag.session("s")))
+    assert out.startswith("Error") and ag.session("s").pending is None

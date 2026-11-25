@@ -74,7 +74,12 @@ def clean_draft(text: str) -> str:
     """Strip the model's own talk to the writer ("I gave Arthur a small wink. Want me to change it?") from a paragraph meant for the book. Only a trailing
     block that clearly addresses the writer is removed; the paragraph itself is never cut into."""
     t = text.strip().strip("`").strip()
-    t = _DRAFT_JUNK_HEAD.sub("", t).strip().strip('"').strip()  # "propose_append: …", "The writer asked for a new paragraph…"
+    t = re.sub(r"\[\[[^\[\]]{0,4000}\]\]|\((?:note for me|note)[^)]{0,600}\)", " ", t, flags=re.I).strip()  # tool lines and notes are never prose
+    for _ in range(2):  # a lead-in line ("I can put this in the book for you:", "How about this: \"", "Here's a draft for chapter 2:")
+        t = re.sub(r"^(?:[^.!?\n:]{0,90}\b(?:this|here|draft|version|paragraph|book|try|about)\b[^.!?\n:]{0,40}:)\s*", "", t, flags=re.I).strip()
+    t = _DRAFT_JUNK_HEAD.sub("", t).strip()
+    if len(t) > 2 and t[0] in "\"\u201c" and t[-1] in "\"\u201d" and len(re.findall(r"[\"\u201c\u201d]", t)) == 2:
+        t = t.strip("\"\u201c\u201d ").strip()  # a paragraph wrapped in quotes
     t = _DRAFT_JUNK_TAIL.sub("", t).strip()  # "… How does this sound for your book?"
     # an apology or explanation before the paragraph ("My apologies. I had proposed it, but... Here is the paragraph I drafted:")
     t = re.sub(r"^(?:(?:my apologies|i apologi[sz]e|sorry|i'?m sorry|okay|ok|sure|of course|certainly|alright|understood|you'?re right)\b[^\n]{0,300}?(?:here(?:'s| is)[^\n:]{0,80}:|\n\n))\s*", "", t, flags=re.I).strip()
@@ -583,6 +588,12 @@ class Agent:
                 self.prefs.update({"auto_save": mode})
             return self._reply(sess, "Okay. From now on I will save each paragraph I write straight away and read it to you. Say undo to take one back, or change paragraph and the number. Say ask me first to go back to asking."
                                if mode == "on" else "Okay. I will ask you before I save anything I write.")
+        if (bt := intent.book_title(text)) is not None:  # "call the book Samuel's War": the title on the exported book
+            b_ = self.store.bible(sess.book)
+            prem = b_.read("premise") or ""
+            prem = re.sub(r"(?im)^\s*title:.*\n?", "", prem).strip()
+            b_.write_doc("premise", f"Title: {bt}\n\n{prem}".strip() + "\n")
+            return self._reply(sess, f"Done. The book is called {bt}.")
         if (tc := intent.title_chapter(text)) is not None:
             return self._title_reply(sess, tc[0], tc[1])
         if (dm := intent.delete_many(text)) is not None:
@@ -680,6 +691,8 @@ class Agent:
         if kind != "yes" or rest or not sess.history or sess.history[-1]["role"] != "assistant":
             return ""
         last = sess.history[-1]["content"].strip()
+        if (para_ := self._paragraph_in(last)) and not last.startswith("Here's a draft for chapter") and not re.search(r"\bShould I (?:add|save) it\?$", last):
+            return para_  # a story paragraph was read out without a card, and the writer said yes to it
         if len(last) < 200 or not self._OFFER.search(last) or last.startswith("[") \
                 or re.match(r"^(?:i can'?t|i cannot|i couldn'?t|i could not|i'm sorry|i am sorry|sorry|i do not|i don'?t|unfortunately|i'm not|i am not|okay, i|i did not|i didn'?t)\b", last.lower()):
             return ""  # only a story paragraph that was shown is ever rescued, never my own apology or explanation
@@ -812,7 +825,7 @@ class Agent:
         new = " ".join(sentences).strip()
         sess.chapter, sess.focus = target.chapter, target.id
         sess.pending = Pending("edit", new, target.chapter, paragraph_id=target.id)
-        self._remember(sess, "take a sentence out", f"(Note for me: the app now asks the writer yes or no about taking a sentence out of {self._where(sess, target)}.)")
+        self._remember(sess, "take a sentence out", f"Shall I take that sentence out of {self._where(sess, target)}?")
         lead = f"I will take out this sentence from {self._where(sess, target)}: {removed}"
         r = self._reply(sess, f"{lead} It would read: {new} Should I save it?", [{"speaker": vx.ASSISTANT, "text": lead}, {"speaker": vx.ASSISTANT, "text": "Should I save the shorter paragraph?"}])
         r.highlights = self._hl(sess, [target.id])
@@ -996,6 +1009,7 @@ class Agent:
         """Is this a new job for me (so a waiting change is put aside), rather than a question, small talk or a look at the book?"""
         return bool(intent.is_edit(text) or intent.is_draft(text) or intent.delete_request(text) or intent.move_request(text) or intent.new_chapter(text) is not None
                     or intent.ideas_request(text) is not None or intent.file_request(text) or intent.undo_request(text) or intent.detect_mode(text)
+                    or intent.export_request(text) is not None
                     or (self.voices and intent.voice_command(text)) or intent.open_request(text))
 
     def _commit_change(self, sess: Session) -> Reply:
@@ -1230,12 +1244,19 @@ class Agent:
                 {"role": "system", "content": "You are a strict continuity editor for a novel. Answer in one line."},
                 {"role": "user", "content": "PARTS OF THE BOOK SO FAR:\n" + "\n".join(parts) + f"\n\n{outline}\n\nWIKI FACTS:\n{bible}{wanted}\n\nNEW PARAGRAPH:\n{text}\n\n"
                  "Does the new paragraph contradict a fact above (who knows or did what, descriptions, the order of events), retell an event that was already told (in any chapter), "
-                 "or fail to write what the writer asked for? Reply exactly OK, or CONFLICT: (a contradiction or a retelling) or MISSED: (not what was asked) followed by one short sentence."}],
+                 "or fail to write what the writer asked for? Reply exactly OK, or CONFLICT: \"the exact words from the book or wiki above that it contradicts or retells\" then one short sentence, "
+                 "or MISSED: (not what was asked) followed by one short sentence. Only say CONFLICT when you can quote those words exactly."}],
                 temperature=0, max_tokens=100), 60)
         except Exception:
             return ""
         out = (out or "").strip()
         up = out.upper()
+        if up.startswith("CONFLICT") and ":" in out:  # a contradiction must quote the book; a made-up one is ignored rather than argued over
+            q = re.search(r"[\"\u201c]([^\"\u201d]{12,300})[\"\u201d]", out)
+            hay = re.sub(r"\s+", " ", ("\n".join(parts) + " " + bible).lower())
+            if not q or re.sub(r"\s+", " ", q.group(1).lower().strip(" .,")) not in hay:
+                return ""
+            out = "CONFLICT: " + (out[q.end():].strip(" .,;:-\u2014") or f"it does not fit: {q.group(1)}")  # the explanation, without the quoted words
         if (up.startswith("CONFLICT") or up.startswith("MISSED")) and ":" in out:
             reason = out.split(":", 1)[1].strip()[:240]
             return f"it does not do what you asked: {reason}" if up.startswith("MISSED") else reason
@@ -1822,14 +1843,14 @@ class Agent:
             lead = (out.strip() + " ") if described and len(out.strip()) <= 360 else (f"I made a picture: {excerpt(gp, 30).rstrip('.… ')}. " if gp else f"I have a picture for you, called {cap}. ")
             if sess.pending.data is not None:  # what was said about the picture, kept so "describe it to me" can say it again
                 sess.pending.data["describe"] = out.strip() if described else (gp or sess.pending.data.get("describe", ""))
-            sess.history.append({"role": "assistant", "content": f"(Note for me: I called a picture tool. The app now shows the picture \u201c{cap}\u201d and asks the writer yes or no. Nothing is in the book until they say yes.)"})
+            sess.history.append({"role": "assistant", "content": f"{lead}Should I put it in chapter {sess.pending.chapter}? (The picture \u201c{cap}\u201d is waiting for a yes.)"})
             reply = self._reply(sess, f"{lead}Should I put it in chapter {sess.pending.chapter}?")
             reply.picture = self.images.info(sess.book, ctx.picture["candidate"], cap, candidate=True)
             return self._attach(sess, reply, ctx, "", text)
         if ctx.drafted and sess.pending and sess.pending.kind == "append":  # the model proposed a paragraph: show it, hear it, and ask
             tail = f"Should I add it to chapter {sess.pending.chapter}?" if sess.pending.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.pending.chapter} with it?"
             lead = (out.strip() + " ") if out.strip() and len(out.strip()) <= 220 and out.strip() != "I'm not sure what to say to that. Could you tell me a little more?" else ""
-            sess.history.append({"role": "assistant", "content": f"(Note for me: I called propose_append. The app now shows this draft for chapter {sess.pending.chapter} and asks the writer yes or no: \u201c{excerpt(ctx.drafted, 25)}\u201d Nothing is in the book until they say yes.)"})
+            sess.history.append({"role": "assistant", "content": f"Here's a draft for chapter {sess.pending.chapter}: {ctx.drafted} Should I add it?"})
             warn = f" A warning: {ctx.warning}" if ctx.warning else ""
             if ctx.warning:
                 tail = "It may not be what you asked for. Say yes to keep it anyway, or tell me what to change."
@@ -1848,7 +1869,7 @@ class Agent:
             await self.toolbox.call("propose_append", {"text": para_}, ctx)  # the model wrote the paragraph into the chat: offer it properly, with a card and a yes
             if ctx.drafted and sess.pending and sess.pending.kind == "append":
                 tail = f"Should I add it to chapter {sess.pending.chapter}?"
-                sess.history.append({"role": "assistant", "content": f"(Note for me: the app now shows this draft and asks yes or no: \u201c{excerpt(ctx.drafted, 25)}\u201d)"})
+                sess.history.append({"role": "assistant", "content": f"Here's a draft: {ctx.drafted} {tail}"})
                 return self._attach(sess, self._reply(sess, f"Here's a draft: {ctx.drafted} {tail}", await self._draft_speech(sess, ctx.drafted, "Here's a draft:", tail)), ctx, "", text)
         if not sess.pending and self._book_sig(sess.book) == sig0 and self._CLAIM.search(out) and not set(ctx.calls) & {"start_chapter", "set_chapter_title", "set_ui", "export_book"}:
             again, _ = await harness.run(self.llm, msgs + [{"role": "assistant", "content": out}, {"role": "user", "content":
@@ -1934,7 +1955,7 @@ class Agent:
                     break
         if new.strip().upper().startswith("NOT_FOUND"):
             sess.last_edit = (text, target.id)
-            self._remember(sess, text, "(Note for me: nothing was changed; that is not in " + where + ".)")
+            self._remember(sess, text, "I did not change anything; that is not in " + where + ".")
             return self._reply(sess, "I did not change anything. " + (new.split(":", 1)[1].strip() if ":" in new else "That is not in this paragraph.") + " Tell me what you want instead.")
         new = clean_draft(new)
         if re.sub(r"\s+", " ", new).strip() == re.sub(r"\s+", " ", target.text).strip():  # an "edit" that changes nothing: try once more, then say so
@@ -1945,7 +1966,7 @@ class Agent:
                 return self._reply(sess, "I tried, but I could not find a way to change it. Tell me exactly what you want different, for example a word to replace or a feeling to add.")
         sess.chapter, sess.focus = target.chapter, target.id
         sess.pending = Pending("edit", new, target.chapter, paragraph_id=target.id, data={"instruction": text})
-        self._remember(sess, text, f"(Note for me: the app now shows a new version of {where} and asks the writer yes or no. Nothing changes until they say yes.)")
+        self._remember(sess, text, f"Here is the new version of {where}: {new} Should I save it?")
         lead = f"Changing {where}, which starts: {excerpt(target.text, 6)} Here is the new version:"
         reply = self._reply(sess, f"{lead} {new} Should I save it?", await self._draft_speech(sess, new, lead, "Should I save it?", target))
         reply.notes += [f"Style note: {i}" for i in issues]
@@ -1975,7 +1996,7 @@ class Agent:
             if re.fullmatch(r"\s*[\[(][^\]\)]{0,200}[\])]\s*", new or "") or len((new or "").split()) < 4:
                 return self._reply(sess, "I could not write that paragraph just now. Please ask me again in a moment.")
         sess.pending = Pending("append", new, sess.chapter)
-        self._remember(sess, text, f"(Note for me: the app now shows this draft for chapter {sess.pending.chapter} and asks the writer yes or no: \u201c{excerpt(new, 25)}\u201d Nothing is in the book until they say yes.)")
+        self._remember(sess, text, f"Here's a draft for chapter {sess.pending.chapter}: {new} Should I add it?")
         tail = f"Should I add it to chapter {sess.chapter}?" if sess.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.chapter} with it?"
         issue = ctx.warning if ctx.drafted else await self.check_continuity(sess, new, text)  # a paragraph proposed through the tool was already checked there
         warn = f" A warning: {issue}" if issue else ""
@@ -2033,7 +2054,7 @@ class Agent:
                 f"YOUR PREVIOUS DRAFT (not saved):\n{p.text}\n\nThe writer now says: {instruction}\nRevise the draft accordingly. Output only the paragraph."}]
         new, issues = await self._gated(msgs)
         p.text = new
-        self._remember(sess, instruction, "(Note for me: I revised the draft; the app shows it again and asks yes or no.)")
+        self._remember(sess, instruction, "I revised the draft and showed it again. Should I save it?")
         reply = self._reply(sess, f"Revised: {new} Should I save it?", await self._draft_speech(sess, new, "Revised:", "Should I save it?"))
         reply.notes += [f"Style note: {i}" for i in issues]
         return reply
@@ -2357,7 +2378,7 @@ class Agent:
             return  # a failed background check must never disturb the writing session
         for i in issues:
             self.memory.add(f"Drift from canon: {i}", "drift")
-            sess.notices.append(f"Heads up, this may contradict the story bible. {i}")
+            # (not shown to the writer: a background guess with internal ids, and too often wrong to read out to someone listening)
 
     # --- memory ----------------------------------------------------------
     def _learn(self, text: str) -> None:

@@ -180,9 +180,19 @@ def build(agent) -> Toolbox:
         return [{"title": m["title"], "kind": m["kind"].replace("_", " "), "status": m["status"]} for m in items[:40]] or "The library is empty."
 
     def _find_item(ctx: Ctx, title: str):
+        import intent
         want = title.strip().lower()
         items = agent.library.items(book(ctx)) if agent.library else []
-        return next((m for m in items if m["title"].lower() == want), None) or next((m for m in items if want and want in m["title"].lower()), None)
+        hit = next((m for m in items if m["title"].lower() == want), None) or next((m for m in items if want and want in m["title"].lower()), None)
+        if hit or not want:
+            return hit
+        # spoken titles: "the tintype eighteen sixty-two", "the Whitfield farm picture": the best overlap of words, numbers as digits
+        stop = {"the", "a", "an", "of", "my", "picture", "photo", "photograph", "file", "document", "old", "paper", "and", "in", "at", "jpg", "pdf"}
+        def toks(t):
+            return {w for w in intent.norm(t.replace("_", " ").replace("-", " ")).split() if w not in stop}
+        w = toks(want)
+        best = max(items, key=lambda m: len(w & toks(m["title"] + " " + m.get("filename", ""))), default=None)
+        return best if best and len(w & toks(best["title"] + " " + best.get("filename", ""))) >= max(1, min(2, len(w))) else None
 
     async def read_library(ctx: Ctx, title="", part=1):
         m = _find_item(ctx, title)
@@ -402,6 +412,9 @@ def build(agent) -> Toolbox:
         from agent import clean_draft
 
         text = clean_draft(text)
+        if re.match(r"(?i)^(?:i apologi[sz]e|my apologies|i'?m sorry|sorry|you'?re (?:absolutely )?right|i see|i understand|thank you|thanks|of course|certainly)\b", text) \
+                or re.search(r"(?i)\b(?:the writer|propose_\w+|book state|the app (?:shows|asks)|note for me)\b", text):
+            return "Error: that is not story prose. Give ONLY the paragraph that goes into the book, with no apology and no talk to the writer."
         if len(text) < 30:
             return "Give the whole paragraph in text (at least a sentence or two)."
         if len(re.findall(r"[.!?][\"”’)]*(?:\s|$)", text)) < 2 and len(text) < 170:

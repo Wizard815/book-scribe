@@ -138,6 +138,9 @@ def _book_zoom(n: str, cur: int, raw: str = "") -> tuple[int, str] | None:
     return z, f"the book is at {z} percent"
 
 
+_BARE_SIZE = re.compile(r"(?:(?:oh|ok|okay|no|now|a|just a|a bit|a little|little|bit|tiny|tad|touch|please|again|some|make it|make them)\s+)*(?:bigger|smaller|larger)(?:\s+(?:please|again|now|still|than that))*")
+
+
 def _has_ui_target(n: str, words: int) -> bool:
     return bool(re.search(rf"\b{_UI_NOUN}\b", n)) or words <= 2 or bool(re.fullmatch(r"(?:(?:a|just a|a bit|a little|little|bit|tiny|tad|touch|please|now|again|some)\s+)*(?:bigger|smaller|larger)(?:\s+(?:please|again|now|still))*", n))
 
@@ -147,7 +150,12 @@ def parse(text: str, look: dict | None) -> tuple[dict, str] | None:
     n = norm(text)
     if not n:
         return None
+    sents = [norm(x) for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x.strip()]
+    if len(sents) > 1 and (last := next((x for x in reversed(sents) if _BARE_SIZE.fullmatch(x)), None)) and not re.search(r"\b(?:picture|photo|image|paragraph|draft)\b", n):
+        n = last  # "Oh, that's too big. A little smaller."
     cur, new, said = clean(look), clean(look), []
+    if _BARE_SIZE.fullmatch(n) and (cur["zoom"] != ZOOMS[0] or re.search(r"bigger|larger", n)) and cur["size"] <= DEFAULT["size"]:
+        n = n.replace("bigger", "bigger words").replace("larger", "larger words").replace("smaller", "smaller words")  # a bare "bigger" / "smaller" moves the book's words both ways
     words = len(n.split())
     screen_words = re.search(r"\b(?:words|letters|text|font|print|writing|type)\b", n) and re.search(r"\b(?:bigger|larger|smaller|tinier|cant see|can't see|cannot see|hard to (?:see|read))\b", n) \
         and re.match(r"^(?:(?:please|can you|could you|would you|so|and|now|oh)\s+)*(?:make|turn|put|set|i cant|i can't|i cannot|i can not)\b", n)  # a request, not "the letters were bigger than his hands"
@@ -161,8 +169,8 @@ def parse(text: str, look: dict | None) -> tuple[dict, str] | None:
 
     bz = _book_zoom(n, cur["zoom"], text)
     if bz is not None:
-        if bz[0] == cur["zoom"] and bz[0] == ZOOMS[0] and cur["size"] > DEFAULT["size"] and _SMALLER.search(n):
-            new["size"] = max(DEFAULT["size"], cur["size"] - 1)  # the book is at 100 already, but the words on the screen were made bigger: bring those down
+        if bz[0] == cur["zoom"] and bz[0] == ZOOMS[0] and cur["size"] > 0 and _SMALLER.search(n):
+            new["size"] = cur["size"] - 1  # the book is at 100 already, but the words on the screen were made bigger: bring those down
             return new, "Done: everything on the screen is a bit smaller."
         if bz[0] == cur["zoom"]:
             return cur, f"The book is already at {cur['zoom']} percent, as far as it goes." if bz[0] in (ZOOMS[0], ZOOMS[-1]) and not _ZOOM_PCT.search(text.lower()) else f"The book is already at {cur['zoom']} percent."

@@ -367,17 +367,18 @@ async def test_a_paragraph_that_contradicts_the_book_is_caught_once_and_then_war
     for t in ("Bedivere did not ask why, then or ever.", "He carried the sword and said nothing at all."):
         store.append_paragraph("demo", 1, t)
     bad = "Bedivere asked him why, for the first time, and the old man did not answer. Then he carried the sword on down to the water in silence."
-    llm.replies = [f'[[tool: propose_append {{"text": "{bad}"}}]]', "CONFLICT: Bedivere never asked why in chapter 1.", f'[[tool: propose_append {{"text": "{bad}"}}]]',
-                   "CONFLICT: still asks why.", "A draft for you."]
+    llm.replies = [f'[[tool: propose_append {{"text": "{bad}"}}]]', 'CONFLICT: "Bedivere did not ask why, then or ever." Bedivere never asked why in chapter 1.', f'[[tool: propose_append {{"text": "{bad}"}}]]',
+                   'CONFLICT: "Bedivere did not ask why, then or ever" still asks why.', "A draft for you."]
     r = await ag.handle("s", "next paragraph, he asks why")
-    assert "Problem: Bedivere never asked why" in " ".join(str(m) for c in llm.calls for m in c) and r.pending["kind"] == "append" and "A warning: still asks why" in r.text  # warned, never silently saved
+    assert "Bedivere never asked why in chapter 1" in " ".join(str(m) for c in llm.calls for m in c) and r.pending["kind"] == "append" and "A warning: still asks why" in r.text  # warned, never silently saved
     ag2, store2, llm2 = make(books)
     assert await ag2.check_continuity(ag2.session("s"), "x") == ""  # a book this short is not checked
     for t in ("a", "b"):
         store2.append_paragraph("demo", 1, t + " paragraph text here for the book.")
     llm2.replies = ["OK"]; assert await ag2.check_continuity(ag2.session("s"), "A new paragraph.") == ""
     llm2.replies = ["I think it is fine."]; assert await ag2.check_continuity(ag2.session("s"), "A new paragraph.") == ""
-    llm2.replies = ["CONFLICT: the sword was lost in chapter 1."]; assert "sword was lost" in await ag2.check_continuity(ag2.session("s"), "A new paragraph.")
+    llm2.replies = ['CONFLICT: "a paragraph text here for the book" the sword was lost in chapter 1.']; assert "sword was lost" in await ag2.check_continuity(ag2.session("s"), "A new paragraph.")
+    llm2.replies = ['CONFLICT: "the sword was thrown into the sea at dawn" it says the sea.']; assert await ag2.check_continuity(ag2.session("s"), "A new paragraph.") == ""  # a quote that is not in the book: a false alarm, ignored
     ag2.prefs = __import__("prefs").Prefs(ag2.s.state_dir); ag2.prefs.update({"continuity": "off"})
     llm2.replies = ["CONFLICT: x"]; assert await ag2.check_continuity(ag2.session("s"), "A new paragraph.") == ""
 
@@ -589,7 +590,7 @@ async def test_the_model_can_always_save_the_book_and_a_draft_is_checked_against
     issue = await ag.check_continuity(s, para, s.last_user)
     assert "it does not do what you asked: it is not the oath scene" in issue and "THE WRITER ASKED FOR: next paragraph, the oath" in str(llm.calls[-1][-1]["content"])
     assert "chapter 1 paragraph 1:" in str(llm.calls[-1][-1]["content"])  # the whole book's outline is in front of the checker, so a retelling in another chapter is visible
-    llm.replies = ["CONFLICT: the pull was told in chapter 2."]; assert "pull was told" in await ag.check_continuity(s, para, "")
+    llm.replies = ['CONFLICT: "a second long paragraph about the king" the pull was told in chapter 2.']; assert "pull was told" in await ag.check_continuity(s, para, "")
 
 
 # ------------------------------------------------------------------------------------------------------ round six: the last small traps
