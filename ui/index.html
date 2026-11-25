@@ -929,7 +929,8 @@ figure.para figcaption { font-size: calc(var(--fs) * .72 * min(var(--zoom), 1.8)
       const saved = store.get("bs_book_name", "");
       state.bookName = info.books.includes(saved) ? saved : info.default;
       state.chapters = (await api(`/books/${encodeURIComponent(state.bookName)}/chapters`)).chapters;
-      if (state.chapters.length) await showChapter(state.chapters[0]);
+      const lastCh = parseInt(store.get("bs_chapter_" + state.bookName, ""), 10);  // after a reload, the chapter the writer was reading
+      if (state.chapters.length) await showChapter(state.chapters.includes(lastCh) ? lastCh : state.chapters[0]);
       else siteMessage("This book has no chapters yet. Ask me to write the first paragraph, or import a draft in Settings.");
     } catch (e) { siteMessage(e && e.code === "auth" ? "Please log in to see your book." : "I cannot reach your book. Is the Book Scribe server running?"); }
   }
@@ -995,6 +996,7 @@ figure.para figcaption { font-size: calc(var(--fs) * .72 * min(var(--zoom), 1.8)
       const { paragraphs, title } = await api(`/books/${encodeURIComponent(state.bookName)}/chapters/${n}`);
       if (!state.chapters.includes(n)) state.chapters = (await api(`/books/${encodeURIComponent(state.bookName)}/chapters`)).chapters;  // a chapter that was just started
       state.chapter = n;
+      store.set("bs_chapter_" + state.bookName, String(n));
       const i = state.chapters.indexOf(n);
       $("chapterLabel").textContent = `Chapter ${n} of ${state.chapters.length || n}` + (title ? ` · ${title}` : "");
       $("prevCh").disabled = i <= 0; $("nextCh").disabled = i < 0 || i >= state.chapters.length - 1;

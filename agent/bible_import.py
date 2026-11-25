@@ -174,6 +174,13 @@ def plan(tree: Tree, title: str, slug: str, root: str | None = None, ancestors: 
         for k, label in (("parents", "Parents"), ("spouse", "Married to"), ("children", "Children"), ("siblings", "Brothers and sisters")):
             if k in state:
                 bits.append(f"{label}: {', '.join(state[k])}.")
+        for fam in tree.families.values():  # the wedding day and place belong to the family record
+            if pid in (fam.husb, fam.wife) and (fam.marriage[0] or fam.marriage[1]) and not live:
+                other = fam.wife if pid == fam.husb else fam.husb
+                bits.append("Married" + (f" {name_of(other)}" if other in tree.people and other in chosen else "") + (f" on {fam.marriage[0]}" if fam.marriage[0] else "")
+                            + (f" in {_place_name(fam.marriage[1])}" if fam.marriage[1] else "") + ".")
+                if fam.marriage[0]:
+                    state.setdefault("married", fam.marriage[0])
         for f in p.facts[:10]:
             if not f.startswith("Also known as") or not live:
                 bits.append(f if f.endswith(".") else f + ".")

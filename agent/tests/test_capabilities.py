@@ -767,3 +767,106 @@ async def test_audit2_read_me_a_chapter_reads_it_and_keeps_the_writing_chapter(b
     await ag.handle("s", "go to chapter 2")
     r = await ag.handle("s", "read me chapter one")
     assert store.paragraphs("demo", 1)[0].text[:20] in r.text and ag.session("s").work == 2
+
+
+# ---------------------------------------------------------------------------------------------- grandpa round 9 (regressions)
+@pytest.mark.asyncio
+async def test_r9_yes_then_a_second_sentence_saves_and_then_does_the_rest(books):
+    ag, store, llm = make(books)
+    n = len(store.paragraphs("demo", 1))
+    _wait(ag)
+    llm.replies = ["Good, 1918 it is."]
+    r = await ag.handle("s", "Yes, add it. We'll just say nineteen eighteen.")
+    assert len(store.paragraphs("demo", 1)) == n + 1 and DRAFT in store.read_chapter_raw("demo", 1) and "nineteen eighteen" in llm.calls[-1][-1]["content"]
+    _wait(ag, text=DRAFT.replace("Everett", "Nils"))
+    llm.replies = ["A shorter version of the paragraph about Nils walking to the station with his bag in the cold wind."]
+    await ag.handle("s", "Yes. But make it shorter.")  # one thing: a change to the waiting draft
+    assert len(store.paragraphs("demo", 1)) == n + 1 and ag.session("s").pending is not None
+    ag.session("s").pending = None
+    await ag.handle("s", "delete paragraph 2")
+    llm.replies = ["Changed."]
+    r = await ag.handle("s", "No! Don't take it out. Name chapter one The Station.")
+    assert len(store.paragraphs("demo", 1)) == n + 1 and store.chapter_title("demo", 1) == "The Station" and "Nothing was deleted" not in r.text or "left it" in r.text
+
+
+@pytest.mark.asyncio
+async def test_r9_no_i_meant_after_a_change_that_found_nothing_retargets_the_change_not_an_old_delete(books):
+    ag, store, llm = make(books)
+    await ag.handle("s", "delete paragraph 2")
+    await ag.handle("s", "no, wait, keep it")
+    llm.replies = ["NOT_FOUND: the coat is not in this paragraph."]
+    r = await ag.handle("s", "Change paragraph two so that his father wears his Sunday coat.")
+    assert "did not change" in r.text
+    llm.replies = ["At the café across the street his father sat in his Sunday coat, and Jonas ordered tea he did not drink."]
+    r = await ag.handle("s", "Oh. No, I meant paragraph three.")
+    s = ag.session("s")
+    assert s.pending and s.pending.kind == "edit" and s.pending.paragraph_id == store.paragraphs("demo", 1)[2].id and "Sunday coat" in llm.calls[-1][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_r9_navigation_never_moves_a_waiting_draft_and_never_mind_changes_nothing(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    _wait(ag, chapter=2)
+    await ag.handle("s", "Um, go to chapter one.")
+    assert ag.session("s").pending.chapter == 2
+    ag.session("s").pending = None
+    before = store.read_chapter_raw("demo", 1)
+    n = len(llm.calls)
+    r = await ag.handle("s", "Never mind, cancel that.")
+    assert len(llm.calls) == n and ag.session("s").pending is None and store.read_chapter_raw("demo", 1) == before and "undo" in r.text
+
+
+@pytest.mark.asyncio
+async def test_r9_titles_and_screen_size_are_not_paragraph_edits(books):
+    ag, store, llm = make(books)
+    n = len(llm.calls)
+    for t, want in (("Change the name of chapter one to Home Again.", "Home Again"), ("I want the chapter title to be The Platform.", "The Platform"),
+                    ("Call chapter one The Late Train.", "The Late Train")):
+        await ag.handle("s", t)
+        assert store.chapter_title("demo", 1) == want, t
+    r = await ag.handle("s", "Make the words bigger, I can't see them so good.")
+    assert r.ui and ag.session("s").pending is None and len(llm.calls) == n
+    ag.session("s").pending = __import__("agent").Pending("confirm_target", "make it sadder", 1, paragraph_id=store.paragraphs("demo", 1)[0].id)
+    await ag.handle("s", "No. Call chapter one Mira Arrives.")
+    assert store.chapter_title("demo", 1) == "Mira Arrives" and ag.session("s").pending is None
+
+
+@pytest.mark.asyncio
+async def test_r9_put_it_in_anyway_at_the_end_places_the_picture_at_the_end(books):
+    ag, store, llm = make(books)
+    llm.replies = ['[[tool: make_picture {"prompt": "a station at night", "caption": "The station", "after": 1}]]', "Here it is, a station at night with lamps."]
+    await ag.handle("s", "make a picture of the station at night")
+    assert ag.session("s").pending and ag.session("s").pending.kind == "picture"
+    await ag.handle("s", "Well, put it in anyway, at the end of the chapter. It's real at least.")
+    paras = store.paragraphs("demo", 1)
+    assert paras[-1].image and ag.session("s").pending is None
+
+
+@pytest.mark.asyncio
+async def test_r9_read_me_chapter_one_reads_the_whole_chapter(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    await ag.handle("s", "go to chapter 2")
+    r = await ag.handle("s", "read me chapter one")
+    assert all(p.text[:20] in r.text for p in store.paragraphs("demo", 1) if not p.image) and ag.session("s").work == 2
+
+
+def test_r9_the_family_tree_gives_wedding_days():
+    import genealogy
+    t = genealogy.parse_gedcom(genealogy.decode_text((FILES / "lund_family.ged").read_bytes()))
+    everett = next(p for p in t.people.values() if p.name.startswith("Everett"))
+    assert "14 JUN 1919" in t.describe(everett.id)
+
+
+@pytest.mark.asyncio
+async def test_r9_a_page_the_writer_already_said_yes_to_is_kept_without_asking_again(books):
+    ag, store, llm = make(books)
+    import web as webmod
+    ag.web = webmod.Web(wikipedia_url="https://wiki.test")
+    s = ag.session("s")
+    s.web_hits["last"] = s.research["Lindsborg"] = {"title": "Lindsborg", "url": "http://x/wiki/Lindsborg", "text": "Lindsborg was founded in 1869 by Swedish immigrants."}
+    s.research["Swedish emigration"] = {"title": "Swedish emigration", "url": "http://x/wiki/Swe", "text": "About 1.3 million Swedes emigrated between 1850 and 1930."}
+    s.last_user = "Yes, keep the Swedish emigration page."
+    out = await ag.toolbox.call("propose_save_page", {"title": "Swedish emigration"}, harness.Ctx(sess=s))
+    assert "Do NOT ask" in out and s.pending is None and any("emigration" in m["title"].lower() for m in ag.library.items("demo"))

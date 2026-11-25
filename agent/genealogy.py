@@ -118,6 +118,11 @@ class Tree:
             lines.append("Died " + " in ".join(x for x in (p.death[0], p.death[1]) if x))
         rel = [("Parents", self.parents(pid)), ("Spouse", self.spouses(pid)), ("Children", self.children(pid)), ("Siblings", self.siblings(pid))]
         lines += [f"{k}: " + "; ".join(self.label(x) for x in v) for k, v in rel if v]
+        for fam in self.families.values():  # the wedding is a family event, not a personal one: "Married Elsa Berglund on 14 JUN 1919 in Lindsborg"
+            if pid in (fam.husb, fam.wife) and (fam.marriage[0] or fam.marriage[1]):
+                other = fam.wife if pid == fam.husb else fam.husb
+                lines.append("Married" + (f" {self.label(other)}" if other and other in self.people else "")
+                             + (f" on {fam.marriage[0]}" if fam.marriage[0] else "") + (f" in {fam.marriage[1]}" if fam.marriage[1] else ""))
         for f in p.facts[:12]:
             lines.append(f)
         for n in p.notes[:3]:

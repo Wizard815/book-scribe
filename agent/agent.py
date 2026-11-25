@@ -110,6 +110,8 @@ class Session:
     recent_speakers: list[str] = field(default_factory=list)
     last_ideas: dict | None = None  # the last random-idea request, so "more" can repeat it
     web_hits: dict = field(default_factory=dict)  # last web search results by id
+    research: dict = field(default_factory=dict)  # every page looked up this session, by title: what the writer heard counts as a source
+    last_edit: tuple | None = None  # (instruction, paragraph id) of a change that found nothing to change, for one turn: "no, I meant paragraph three"
     work: int = 0  # the chapter new writing goes into (set by "start / go to chapter", by naming a chapter, by saving): looking at other paragraphs never moves it
     viewing_now: int | None = None  # the chapter the page showed when this request was sent
     last_viewing: int | None = None  # the chapter the page last said it was showing
@@ -258,6 +260,15 @@ class Agent:
         if not text:
             return self._reply(sess, "I didn't catch that. Try again.")
         sess.last_user = text
+        last_edit, sess.last_edit = sess.last_edit, None
+        if last_edit and not sess.pending and re.match(r"^(?:(?:oh|sorry|no|wait|um|uh)\s+)*(?:i (?:meant|mean)|it'?s|its|i said)\b", intent.norm(text)) \
+                and ((rf_ := intent.parse_ref(text)).para is not None or re.search(r"\b(?:before|after|next|previous)\b", intent.norm(text))):
+            try:
+                old = self.store.find(sess.book, last_edit[1])
+            except BookError:
+                old = None
+            sess.pending = Pending("confirm_target", last_edit[0], old.chapter if old else sess.chapter, paragraph_id=last_edit[1])
+            return await self._retarget(sess, text)  # the change the writer asked for a moment ago, on the paragraph they meant
         items, sess.last_items = sess.last_items, []  # only the very next thing the writer says can pick one of the numbered ideas
         if items and not sess.pending and (k := intent.pick_number(text)) and 1 <= k <= len(items):
             text = f"Let's use this {sess.last_items_kind}: {items[k - 1]}"
@@ -324,6 +335,23 @@ class Agent:
                 kind, rest = "no", ""  # "keep it", "fine, leave it", "keep it where it is": the writer is refusing the delete or move
             if kind == "yes" and rest and (intent.is_question(rest) or text.strip().endswith("?")) and first_ not in ("yes", "yeah", "yep", "yup", "save"):
                 kind, rest = None, text  # "okay, who was waiting at the station?", "good, what happens next?": conversation, not a yes
+            if (two := self._answer_then_more(sess, text)) is not None:
+                first_kind, after = two  # "Yes, add it. We'll just say 1918." / "No! Don't take it out. I want to change it…": answer first, then the rest is its own request
+                if first_kind == "yes":
+                    done = await self._accept(sess)
+                else:
+                    was = sess.pending.kind
+                    if was == "picture":
+                        self.images.discard(sess.book, (sess.pending.data or {}).get("candidate", ""))
+                    sess.pending = None
+                    done = self._reply(sess, "Okay, I left it as it is." if was in ("delete", "move") else "Okay, I let that go.")
+                if sess.pending is None:
+                    more = await self._handle(sid, after, sess.book)
+                    more.text = f"{done.text} {more.text}".strip()
+                    more.speech = (done.speech or []) + (more.speech or [])
+                    more.changed = list(dict.fromkeys((done.changed or []) + (more.changed or [])))
+                    return more
+                return done
             if kind == "yes" and sess.pending.kind in ("append", "edit") and (cont := self._continue_after(text, rest)):
                 done = await self._accept(sess)  # "yes, save it and write the next one", "keep going": save this one, then write on
                 if sess.pending is None and done.text.startswith(("Saved", "Added", "Done", "Changed")):
@@ -332,7 +360,7 @@ class Agent:
                     nxt.speech = (done.speech or []) + (nxt.speech or [])
                     return nxt
                 return done
-            if sess.pending.kind == "append" and not intent.is_question(text) and (mch := re.search(r"\b(?:in|to|into|for|on) chapter (\d+)\b", intent.norm(rest if kind else text))) \
+            if sess.pending.kind == "append" and not intent.is_question(text) and intent.goto_chapter(text) is None and (mch := re.search(r"\b(?:in|to|into|for|on) chapter (\d+)\b", intent.norm(rest if kind else text))) \
                     and len((rest if kind else text).split()) <= 12 and not re.search(r"\b(?:make|different|another|instead|shorter|longer|rewrite|sadder|change|like|as in|same)\b", intent.norm(rest if kind else text)):
                 ch_ = int(mch.group(1))  # "yes, add it to chapter 2" / "no, put it in chapter 2": the paragraph is fine, it belongs in another chapter
                 nums_ = self.store.chapter_numbers(sess.book)
@@ -347,6 +375,9 @@ class Agent:
                 r = self._reply(sess, f"Okay, it will go in chapter {ch_}. Say yes to add it.")
                 r.pending = {"kind": "append", "text": sess.pending.text, "paragraph_id": None, "ask": sess.pending.ask}
                 return r
+            if kind == "no" and rest and sess.pending.kind in ("edit", "confirm_target", "delete", "move") and self._standalone_command(rest):
+                sess.pending = None  # "No. Call chapter four Home Again": the guess was wrong and the writer said what they want instead
+                return await self._handle(sid, rest, sess.book)
             if sess.pending.kind in ("edit", "confirm_target") and kind == "no" and rest and self._names_other_target(rest):
                 return await self._retarget(sess, rest)  # "no, I meant paragraph three": keep what the writer asked, change where
             if sess.pending.kind == "confirm_target" and kind == "yes" and rest and not intent.is_question(rest):
@@ -374,7 +405,11 @@ class Agent:
                     ch_new = None
                 pos = intent.picture_position(said) if intent.placement_command(said) or ch_new is not None else None
                 other = re.search(r"\b(?:make|different|another|instead|bigger|smaller|new|find|draw)\b", intent.norm(said))
-                if (ch_new is not None or pos is not None) and not other and len(said.split()) <= 14:
+                if kind is None and pos is None and re.search(r"\b(?:at|to) the (?:very )?end\b", intent.norm(said)) and re.search(r"\b(?:put|add|use|place)\b", intent.norm(said)):
+                    pos = -1  # "well, put it in anyway, at the end of the chapter. It's real at least."
+                if kind is None and re.match(r"^(?:(?:well|oh|okay|ok|alright|then|just|so)\s+)*(?:put|add|use|place) (?:it|that|this|that one|this one) in\b", intent.norm(said)) and not other:
+                    kind = "yes"  # "put it in anyway": that is a yes
+                if (ch_new is not None or pos is not None) and not other and len(said.split()) <= 16:
                     # "no, put it in chapter 4 after paragraph 1" / "yes, at the end": where it goes is part of the answer (a "no" about the place keeps the picture)
                     if ch_new is not None:
                         sess.pending.chapter = ch_new  # only the picture moves; where the writer is writing does not change
@@ -411,6 +446,8 @@ class Agent:
                 if was in ("edit", "confirm_target") and self._work(sess) != sess.chapter:  # the look at an older chapter ends with the "no": back to where the writing is
                     sess.chapter = self._work(sess)
                     return self._reply(sess, f"Okay, I left it as it was. I'm back in chapter {sess.chapter}, where you are writing. What next?")
+                if was in ("delete", "move"):
+                    return self._reply(sess, "Okay, I left it as it is. Nothing was " + ("deleted." if was == "delete" else "moved."))
                 return self._reply(sess, "Okay, dropped it. What would you like instead?")
             if kind and rest and sess.pending.kind != "confirm_target":
                 return await self._revise(sess, rest, said_yes=(kind == "yes"))  # "yes but make it shorter" / "no, make it longer": never save or drop blindly
@@ -459,6 +496,9 @@ class Agent:
             r.text += " (That was the paragraph I just showed you.)"
             return r
 
+        if not sess.pending and re.match(r"^(?:(?:oh|ok|okay|no|well|just)\s+)*(?:never ?mind|cancel(?: that| it| this)?|forget (?:it|that|about it)|scratch that|stop that)(?:\s+(?:never ?mind|cancel that|please|then|for now|it doesnt matter|it does not matter))*$", intent.norm(text)):
+            sess.last_edit = None
+            return self._reply(sess, "Okay, I stopped. Nothing is waiting and nothing was changed. If you want to take back the last thing I saved, say undo.")
         if intent.norm(text) in ("goodbye", "good bye", "bye bye", "goodnight", "good night"):  # a real farewell gets a farewell, never an empty answer
             return self._reply(sess, "Goodbye for now. Everything you saved is in your book.")
         if intent.is_noise(text):  # silence that the speech model turned into "Thank you."
@@ -522,12 +562,23 @@ class Agent:
         if (n := intent.goto_chapter(text)) is not None:
             if n in self.store.chapter_numbers(sess.book):
                 if re.match(r"^(?:(?:please|ok|okay|now|and)\s+)*read\b", intent.norm(text)):
-                    first = self.store.nth_paragraph(sess.book, n, 1)  # "read me chapter one": read it; the chapter being written stays where it is
-                    sess.chapter, sess.focus = n, first.id if first else None
-                    if not first:
+                    paras = self.store.paragraphs(sess.book, n)  # "read me chapter one": read all of it; the chapter being written stays where it is
+                    words = [p for p in paras if not p.image]
+                    sess.chapter, sess.focus = n, words[0].id if words else None
+                    if not words:
                         return self._reply(sess, f"Chapter {n} has no writing yet.")
-                    r = self._reply(sess, imgs.plain(first.text), await self._speech_for(sess, first))
-                    r.highlights = self._hl(sess, [first.id])
+                    title = self.store.chapter_title(sess.book, n)
+                    head = f"Chapter {n}" + (f", {title}." if title else ".")
+                    speech: list[dict] = [{"speaker": vx.ASSISTANT, "text": head}]
+                    texts = [head]
+                    for p in paras:
+                        if p.image:
+                            cap = f"There is a picture here: {p.image[0]}."
+                            texts.append(cap); speech.append({"speaker": vx.ASSISTANT, "text": cap})
+                        else:
+                            texts.append(imgs.plain(p.text)); speech += await self._speech_for(sess, p)
+                    r = self._reply(sess, "\n\n".join(texts), speech)
+                    r.highlights = self._hl(sess, [p.id for p in words])
                     return r
                 sess.chapter, sess.focus, sess.work = n, None, n
                 return self._reply(sess, f"Chapter {n}.")
@@ -656,7 +707,9 @@ class Agent:
                     return f"Delete these {len(p.data['ids'])} paragraphs of chapter {p.chapter}?"
                 return f"Delete {self._where(sess, self.store.find(sess.book, p.paragraph_id))}?"
             if p.kind == "move":
-                return f"Move {self._where(sess, self.store.find(sess.book, p.paragraph_id))} to chapter {(p.data or {}).get('to')}?"
+                w, to = (p.data or {}).get("where", "end"), (p.data or {}).get("to")
+                place = {"end": f"the end of chapter {to}", "start": f"the start of chapter {to}"}.get(w) if isinstance(w, str) else f"{w[0]} paragraph {w[1]} of chapter {to}"
+                return f"Move {self._where(sess, self.store.find(sess.book, p.paragraph_id))} to {place}?"
             if p.kind == "confirm_target":
                 return "Is that the paragraph you mean?"
             if p.kind == "voice":
@@ -793,6 +846,35 @@ class Agent:
             out = "Write the " + out  # "yes, and then the part where he buys a ticket"
         return out or "Write the next paragraph."
 
+    _NOT_AFTER = re.compile(r"^(?:but|except|only|though|however|make|change|can you make|could you make|shorter|longer|cut|take|remove|drop|leave|instead|not|no|without|less|more|add (?:a|that|some|more)|try)\b")
+
+    def _answer_then_more(self, sess: Session, text: str) -> tuple[str, str] | None:
+        """A clean yes or no as its own sentence, then a separate request: -> ("yes"|"no", the rest). None when it is one thing
+        ("Yes. But make it shorter." is a change to the waiting draft, not two requests)."""
+        parts = re.split(r"(?<=[.!?])\s+", text.strip(), maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            return None
+        first, after = parts[0], parts[1].strip()
+        k, r = intent.confirmation(first)
+        if sess.pending.kind in ("delete", "move") and re.search(r"\b(?:keep|leave|don'?t|do not)\b", intent.norm(first)):
+            k, r = "no", ""
+        if k not in ("yes", "no") or r:
+            return None
+        if k == "yes" and not re.search(r"\b(?:yes|yeah|yep|yup|save|add|keep|put|go ahead|do it|please do|sure)\b", intent.norm(first)):
+            return None  # "Right. The ten chapters are...": a lone "right" or "okay" before a long remark is not a yes
+        if self._NOT_AFTER.match(intent.norm(after)) and sess.pending.kind in ("append", "edit", "picture"):
+            return None  # "No. Make it shorter." / "Yes. But at the end.": about the thing waiting
+        if k == "no" and sess.pending.kind in ("append", "edit"):
+            return None  # "No. He never said that." is a revision of the draft
+        if k == "yes" and (intent.is_question(after) or after.endswith("?")) and sess.pending.kind in ("append", "edit"):
+            return None  # handled as save-then-answer
+        return k, after
+
+    def _standalone_command(self, rest: str) -> bool:
+        """Something that is clearly a request of its own (not a description of which paragraph)."""
+        return bool(intent.title_chapter(rest) or intent.goto_chapter(rest) is not None or intent.new_chapter(rest) is not None or intent.undo_request(rest)
+                    or intent.export_request(rest) is not None or uisettings.parse(rest, None) is not None)
+
     def _names_other_target(self, rest: str) -> bool:
         n = intent.norm(rest)
         rf = intent.parse_ref(rest)
@@ -927,6 +1009,7 @@ class Agent:
             corpus += [b.read("premise")] + [f"{n} {e.body} {' '.join(map(str, e.state.values()))}" for k in ("characters", "world", "threads") for n, e in b.entries(k).items()]
         except Exception:
             pass
+        corpus += [str(h.get("text", "")) for h in list(sess.research.values())[-12:]]  # history looked up this session (Wikipedia, web pages)
         if self.library:
             for m in self.library.items(sess.book)[:40]:
                 try:
@@ -961,7 +1044,7 @@ class Agent:
                 if len(sen.split()) >= 8 and len(ws) >= 4 and sum(w in hayw for w in ws) / len(ws) < 0.3:
                     weak.append(sen.strip())
             if weak:
-                return "These details are not in your documents or notes: " + " ".join(f"\u201c{w[:90]}\u201d" for w in weak[:2])
+                return "These details are not in your documents or notes: " + " ".join(f"\u201c{excerpt(w, 14)}\u201d" for w in weak[:2])
         return ""
 
     def _supersede(self, sess: Session) -> bool:
@@ -1672,6 +1755,8 @@ class Agent:
                     where = self._where(sess, target)
                     break
         if new.strip().upper().startswith("NOT_FOUND"):
+            sess.last_edit = (text, target.id)
+            self._remember(sess, text, "[changed nothing: that is not in " + where + "]")
             return self._reply(sess, "I did not change anything. " + (new.split(":", 1)[1].strip() if ":" in new else "That is not in this paragraph.") + " Tell me what you want instead.")
         new = clean_draft(new)
         if re.sub(r"\s+", " ", new).strip() == re.sub(r"\s+", " ", target.text).strip():  # an "edit" that changes nothing: try once more, then say so

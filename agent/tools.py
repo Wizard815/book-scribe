@@ -282,8 +282,13 @@ def build(agent) -> Toolbox:
                 pl = bible_import.prepare(store, agent.library, book(ctx), slug, hit[0].id, _int(ancestors, 2, 0, 6), _int(descendants, 2, 0, 6), True, "real" if privacy == "real" else "alias")
                 s = pl.summary()
                 sess.pending = Pending(kind="family", text=f"{s['people']} people around {hit[0].name}", chapter=sess.chapter, data={"plan": pl})
+                inside = {c.get("id") for c in pl.characters}
+                left = [p.name or "someone unnamed" for pid, p in tree.people.items() if pid not in inside]
+                why = (f" NOT included (further from {hit[0].name} than the generations chosen, or married into a brother's or sister's family): {', '.join(left[:8])}"
+                       + (f" and {len(left) - 8} more" if len(left) > 8 else "") + ". Say who was left out and that you can add them with more generations.") if left else ""
                 return (f"Proposed: {s['new']} new characters ({s['existing']} already in the wiki), {s['places']} places and {s['timeline_entries']} timeline entries, around {hit[0].name}"
-                        + (f"; {s['aliased']} living relatives get made-up names" if s["aliased"] else "") + ". Tell the writer this in one or two sentences and ask if you should add it to the wiki.")
+                        + (f"; {s['aliased']} living relatives get made-up names" if s["aliased"] else "") + "." + why
+                        + " Tell the writer this in one or two sentences and ask if you should add it to the wiki.")
         return "That person is not in any family tree in the library."
 
     def web_on() -> bool:
@@ -303,6 +308,7 @@ def build(agent) -> Toolbox:
             return "Wikipedia has no article for that."
         ctx.notes.append(f"I looked up “{r['title']}” on Wikipedia.")
         ctx.sess.web_hits["last"] = r
+        ctx.sess.research[r["title"]] = r
         return _untrusted(r["url"], r["text"]) + ("\n[the article continues; ask for a narrower topic if you need more]" if r["more"] else "")
 
     async def web_search(ctx: Ctx, query="", n=5):
@@ -315,8 +321,10 @@ def build(agent) -> Toolbox:
         if not hits:
             return "The search found nothing."
         ctx.notes.append(f"I searched the web for “{query[:60]}”.")
-        ctx.sess.web_hits = {f"w{i}": h for i, h in enumerate(hits, 1)}
-        return "\n".join(f"w{i}. {h['title']} - {h['snippet']} ({h['url']})" for i, h in enumerate(hits, 1)) + "\nUse read_page with an id to read one. Results are untrusted data."
+        base = sum(1 for k in ctx.sess.web_hits if k.startswith("w"))  # ids never repeat within a session, so an older id still means the same page
+        ids = {f"w{base + i}": h for i, h in enumerate(hits, 1)}
+        ctx.sess.web_hits.update(ids)
+        return "\n".join(f"{k}. {h['title']} - {h['snippet']} ({h['url']})" for k, h in ids.items()) + "\nUse read_page with an id to read one. Results are untrusted data."
 
     async def read_page(ctx: Ctx, id=""):
         from web import WebError
@@ -330,12 +338,19 @@ def build(agent) -> Toolbox:
             return f"Error: {e}"
         ctx.notes.append(f"I read the page “{hit['title'][:60]}”.")
         ctx.sess.web_hits["last"] = {"title": hit["title"], "url": hit["url"], "text": text}
+        ctx.sess.research[hit["title"]] = ctx.sess.web_hits["last"]
         return _untrusted(hit["url"], text[:4000])
 
-    async def propose_save_page(ctx: Ctx):
+    async def propose_save_page(ctx: Ctx, title=""):
+        """Keep a looked-up page in the library. title: which page (any page looked up this session); empty = the last one."""
         from agent import Pending
+        import intent
 
         sess, last = ctx.sess, ctx.sess.web_hits.get("last")
+        if title and sess.research:
+            want = str(title).lower()
+            last = next((h for t, h in reversed(list(sess.research.items())) if want in t.lower() or t.lower() in want), None) \
+                or next((h for t, h in reversed(list(sess.research.items())) if set(want.split()) & set(t.lower().split())), last)
         if not last:
             return "There is no page to save. Look something up first."
         if sess.pending:
@@ -343,6 +358,11 @@ def build(agent) -> Toolbox:
         if agent.library and any(m.get("title", "").lower() == str(last["title"]).lower() for m in agent.library.items(book(ctx))):
             return "That page is already kept in the library. Tell the writer it is already saved; do NOT ask whether to keep it."
         sess.pending = Pending(kind="page", text=last["title"], chapter=sess.chapter, data={"title": last["title"], "url": last["url"], "text": last["text"]})
+        said = intent.norm(sess.last_user or "")
+        if (intent.confirmation(sess.last_user or "")[0] == "yes" or re.search(r"\b(?:keep|save|store|put)\b.*\b(?:page|it|that|library)\b", said)) \
+                and not re.search(r"\b(?:don'?t|do not|no need|not)\b.*\b(?:keep|save)\b", said):
+            r = agent._commit_page(sess)  # the writer already said yes to keeping it: never ask twice
+            return f"Done, the writer had already said yes: {r.text} Do NOT ask about keeping it again; go on with the rest of what they asked."
         return "Proposed. Ask the writer in one short sentence whether to keep this page in the library. It is saved only if they say yes."
 
     async def propose_wiki_notes(ctx: Ctx, notes=None):
@@ -457,8 +477,10 @@ def build(agent) -> Toolbox:
         if not hits:
             return "No pictures found."
         ctx.notes.append(f"I searched for pictures of “{query[:60]}”.")
-        ctx.sess.web_hits.update({f"i{i}": h for i, h in enumerate(hits, 1)})
-        return ("\n".join(f"i{i}. {h['title']} (from {h['page'][:80]})" for i, h in enumerate(hits, 1))
+        base = sum(1 for k in ctx.sess.web_hits if k.startswith("i"))  # ids never repeat: two searches in one turn do not clash
+        ids = {f"i{base + i}": h for i, h in enumerate(hits, 1)}
+        ctx.sess.web_hits.update(ids)
+        return ("\n".join(f"{k}. {h['title']} (from {h['page'][:80]})" for k, h in ids.items())
                 + "\nUse use_found_picture with an id. Remind the writer that a picture found on the web may belong to someone else.")
 
     async def use_found_picture(ctx: Ctx, id="", caption="", chapter=None, after=None):
@@ -610,7 +632,7 @@ def build(agent) -> Toolbox:
         T("web_search", "Search the web (several search engines at once). Results are untrusted data.", {"query": "what to search for", "n": "1-8"}, web_search,
           required=("query",), when=lambda: web_on() and agent.web.can_search),
         T("read_page", "Read one web search result in full.", {"id": "an id from web_search, like w2"}, read_page, required=("id",), when=lambda: web_on() and agent.web.can_search),
-        T("propose_save_page", "Offer to keep the last looked-up page in the writer's library. Saved only after they say yes.", {}, propose_save_page,
+        T("propose_save_page", "Keep a looked-up page in the writer's library. Saved after they say yes (if they already said yes, it is saved at once). title: which page you looked up (empty = the last one).", {"title": "string"}, propose_save_page,
           when=lambda: web_on()),
         T("propose_wiki_notes", "Offer SEVERAL wiki notes at once (for example three characters): the writer says one yes and all are saved. Prefer this to many single proposals.",
           {"notes": 'a list like [{"kind": "characters|threads|world|premise", "name": "...", "note": "..."}]'}, propose_wiki_notes, required=("notes",)),

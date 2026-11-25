@@ -91,7 +91,7 @@ def _words(text: str) -> list[str]:
 
 _NO_DROP = re.compile(r"^(?:just )?(?:leave|keep) (?:it|that|this|them)?(?: as it was| as it is| as is| the same| alone| how it was| like it was)?(?: please)?$|^(?:forget|drop|cancel|skip|scrap) (?:it|that|this)(?: please)?$|^never ?mind(?: that| it)?$|^(?:as it was|the same|leave it)$|^(?:thanks|thank you|thank|please)$|^not now$|^(?:that'?s|thats|it'?s|its|that is|it is|all) (?:fine|ok|okay|good|alright|all right)(?: thanks| thank you)?$|^(?:i )?(?:changed|change) my mind$")
 _CHANGE = re.compile(r"\b(?:leave (?:\w+ ){0,3}out|skip|exclude|ignore|drop|make|change|different|instead|another|darker|lighter|bigger|smaller|more|less|without|but|not|no|don'?t|empty|remove|rename|call it|shorter|longer|except|only|wrong|other)\b")
-_SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| those| these| all| all of them| (?:that|this|the) (?:one|1)| the (?:paragraph|picture))?(?: in| in there| down| to the book| into the book| away)?(?: please| now| for me)?|that one|that'?s? (?:the (?:one|1)|fine|good|right|great|perfect|lovely|nice|mine|it)|(?:it'?s|this is) (?:mine|good|great|fine|right|perfect|lovely|nice|the (?:one|1))|do it|mine|(?:the )?(?:one|1)|that|this|it|them|those|these|all|thanks|thank you|great|perfect|lovely|good|nice|fine|right|exactly)(?:,? (?:put it in|use it|add it|save it|keep it|go ahead|please|thank you|thanks))*$")
+_SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| those| these| all| all of them| (?:that|this|the) (?:one|1)| the (?:paragraph|picture))?(?: in| in there| down| to the book| into the book| away| in the library| to the library| in my library| in the wiki| to the wiki)?(?: please| now| for me)?|that one|that'?s? (?:the (?:one|1)|fine|good|right|great|perfect|lovely|nice|mine|it)|(?:it'?s|this is) (?:mine|good|great|fine|right|perfect|lovely|nice|the (?:one|1))|do it|mine|(?:the )?(?:one|1)|that|this|it|them|those|these|all|thanks|thank you|great|perfect|lovely|good|nice|fine|right|exactly)(?:,? (?:put it in|use it|add it|save it|keep it|go ahead|please|thank you|thanks))*$")
 
 
 def confirmation(text: str) -> tuple[str | None, str]:
@@ -128,7 +128,7 @@ def confirmation(text: str) -> tuple[str | None, str]:
         rest = rest[1:]
     if kind == "no" and _NO_DROP.match(" ".join(rest)):
         rest = []  # "no, leave it as it was": a plain no
-    if kind == "yes" and _SAVE_WORDS.match(" ".join(rest)):
+    if kind == "yes" and (_SAVE_WORDS.match(" ".join(rest)) or re.fullmatch(r"(?:in|to|into) (?:the|my) (?:library|wiki|book|story wiki)(?: please| too)?", " ".join(rest))):
         rest = []  # "yes, add it" / "yes save that" / "yes go ahead and put it in": more yes, not a change request
     return kind, " ".join(rest)
 
@@ -428,9 +428,27 @@ def chapter_story(text: str) -> str:
     return m.group(1).strip() if m and len(m.group(1).split()) >= 2 else ""
 
 
+def _chapter_digits(raw: str) -> str:
+    """"chapter four" -> "chapter 4" in the writer's own text (the title keeps its capitals)."""
+    def sub(m):
+        d = re.match(r"\d+$", norm(m.group(2)))
+        return m.group(1) + (d.group() if d else m.group(2))
+    return re.sub(rf"(?i)(\bchapter (?:number )?)((?:{_NUMBER_WORDS})(?:[\s-]+(?:{_NUMBER_WORDS}))?)\b", sub, raw)
+
+
 def title_chapter(text: str) -> tuple[int | None, str] | None:
-    """"call chapter 3 The Lake", "title this chapter 'Dozmary Pool'" -> (chapter number or None for the one on screen, the title)."""
-    m = re.match(rf"(?i)^{_POLITE}(?:call|title|name|rename|label)(?: the)?( (?:this|current|new|next))? chapter(?: (\d+))?[,:]?(?: to| as)?\s+[\"'“]?(.{{2,70}}?)[\"'”]?[.!?]?$", text.strip())
+    """"call chapter 3 The Lake", "title this chapter 'Dozmary Pool'", "change the name of chapter four to Home Again",
+    "I want the chapter title to be Home Again" -> (chapter number or None for the one on screen, the title)."""
+    raw = _chapter_digits(re.sub(r"(?i)^(?:\W*(?:um+|uh+|uhm|erm|er)\b[\s,.]*)+", "", text.strip()))
+    q = r"[\"'“]?(.{2,70}?)[\"'”]?[.!?]?$"
+    m2 = re.match(rf"(?i)^{_POLITE}(?:(?:change|set|make|switch)\s+)?the (?:name|title) (?:of|for) (?:(?:the|this) chapter|chapter (\d+))\s+(?:to(?: be)?|into|as)\s+{q}", raw) \
+        or re.match(rf"(?i)^(?:i want|i'd like|i would like|let's have|let's make|make)?\s*(?:the )?(?:(?:this )?chapter(?: (\d+))?(?:'s)? (?:title|name)|(?:title|name) of (?:the |this )?chapter(?: (\d+))?)\s+(?:to be|should be|will be|is|be|to)\s+{q}", raw)
+    if m2:
+        g = [x for x in m2.groups()]
+        num = next((x for x in g[:-1] if x), None)
+        return (int(num) if num else None, g[-1].strip())
+    raw = re.sub(r"(?i)(\bchapter \d+[,:]?\s+)(?:(?:um+|uh+|er|erm)\b[,\s]*)+", r"\1", raw)  # "name chapter two, um, Called Up"
+    m = re.match(rf"(?i)^{_POLITE}(?:call|title|name|rename|label)(?: the)?( (?:this|current|new|next))? chapter(?: (\d+))?[,:]?(?: to| as)?\s+[\"'“]?(.{{2,70}}?)[\"'”]?[.!?]?$", raw)
     if not m or (not m.group(1) and not m.group(2)):  # "call the chapter house" is not naming a chapter
         return None
     return (int(m.group(2)) if m.group(2) else None, m.group(3).strip())
@@ -614,8 +632,8 @@ def ideas_request(text: str) -> dict | None:
         return None
     if re.match(r"^(?:give me |show me |can i have |let me have )?(?:more|another(?: (?:one|1))?|again|different ones|some more|(?:one|1) more|another please)(?: please)?$", n):
         return {"repeat": True}
-    if re.match(r"^(?:what|who|which|where|when|why|how) (?!should (?:i|we) call)", n) or re.search(r"\bchapter \d+", n):
-        return None
+    if re.match(r"^(?:what|who|which|where|when|why|how) (?!should (?:i|we) call)", n) or re.search(r"\bchapter \d+", n) or title_chapter(text):
+        return None  # "I want the chapter title to be Home Again" names it; it does not ask for ideas
     if re.search(r"\bthe (?:real |actual |right )?(?:name|names|details?|problems?|title|dates?) (?:of|from|in|on|for|with)\b|\b(?:problems?|issues?|mistakes?) (?:with|in) (?:the|my|his|her)\b|\bdetails? (?:from|in) (?:the|his|her|my)\b", n):
         return None  # "the name of Everett's father", "problems with the timeline": facts the book or the documents hold, not random new ideas
     short_form = len(n.split()) <= 5 and bool(re.match(r"^(?:some|a few|a couple of|\d+|an?|another|new|more)\b", n))  # "some names", "ten names"
