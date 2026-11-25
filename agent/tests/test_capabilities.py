@@ -1115,3 +1115,44 @@ async def test_rm3_book_title_spoken_titles_and_junk_never_becomes_a_draft(books
     assert clean_draft("(Note for me: I called propose_append. The app now shows this draft.) The rain came down.") == "The rain came down."
     out = await ag.toolbox.call("propose_append", {"text": "I apologize, you're right. Daniel was not at Vicksburg, so I have changed the paragraph to leave him out of it."}, harness.Ctx(sess=ag.session("s")))
     assert out.startswith("Error") and ag.session("s").pending is None
+
+
+@pytest.mark.asyncio
+async def test_rm4_a_plain_word_swap_needs_no_model_and_a_cut_off_rewrite_is_refused(books):
+    ag, store, llm = make(books)
+    p2 = store.paragraphs("demo", 1)[1]
+    n = len(llm.calls)
+    await ag.handle("s", "In paragraph two, just change Jonas to Nils. Nothing else.")
+    s = ag.session("s")
+    assert len(llm.calls) == n and s.pending and s.pending.kind == "edit" and s.pending.text == p2.text.replace("Jonas", "Nils", 1)
+    s.pending = None
+    llm.replies = ['propose_change( paragraph_id="ch1_s1_p2", text="The express was late." )', "The express was late, and Jonas waited by the"]
+    r = await ag.handle("s", "rewrite paragraph two so it is snowing")
+    assert s.pending is None and "left the paragraph as it is" in r.text
+
+
+@pytest.mark.asyncio
+async def test_rm4_the_writers_own_picture_is_found_by_spoken_words_and_placed(books):
+    ag, store, llm = make(books)
+    m = await ingest.add_file("demo", "samuel_whitfield_tintype_1862.jpg", png(400, 300), ag.library, None, None, ag.journal)
+    r = await ag.handle("s", "Put the old tintype from eighteen sixty-two after the first paragraph of chapter one.")
+    s = ag.session("s")
+    assert s.pending and s.pending.kind == "picture" and s.pending.data.get("where") == 1 and r.picture
+
+
+@pytest.mark.asyncio
+async def test_rm4_yes_inside_a_long_sentence_and_book_title_while_a_card_waits(books):
+    ag, store, llm = make(books)
+    _wait(ag)
+    await ag.handle("s", "It reads a bit like a school book, but yes, save it.")
+    assert DRAFT in store.read_chapter_raw("demo", 1)
+    _wait(ag, text=DRAFT.replace("Everett", "Samuel"))
+    await ag.handle("s", "Call the book Samuel's War.")
+    import export
+    assert export.book_title(store, "demo") == "Samuel's War"
+
+
+def test_rm4_writing_and_print_requests():
+    import intent
+    assert intent.is_draft("Tell the part where he rides into Newark and signs up at Camp Sherman.")
+    assert intent.export_request("Save it so I can print it") == "html"

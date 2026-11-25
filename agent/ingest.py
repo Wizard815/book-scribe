@@ -16,7 +16,7 @@ from extract import Extracted, Unreadable
 VISION_PROMPT = (
     "This picture was added to a writer's book project. First, write out every word of text you can see, exactly as written "
     "(handwriting too; put [?] after any word you cannot make out). Then describe what the picture shows in plain sentences: people, "
-    "places, objects, clothes, the era, the mood. If it is a document, chart or family tree, list the names, dates and relationships. "
+    "places, objects, clothes, the era, the mood. Say how many people (and animals) are in it and where they stand; say what they wear (a uniform, a cap). If it is a document, chart or family tree, list the names, dates and relationships. "
     "No introduction and no commentary."
 )
 CANT_SEE = re.compile(r"\b(can(?:'|no)?t|cannot|unable to|not able to|don't have the ability to)\b[^.]{0,40}\b(see|view|process|access|analy[sz]e|look at)\b[^.]{0,30}\b(image|picture|photo|attachment)s?\b", re.I)

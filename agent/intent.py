@@ -208,7 +208,7 @@ _POLITE = r"(?:(?:please|kindly|hey|ok|okay|so|now|and|then)\s+)*(?:(?:can|could
 _EDIT_VERBS = r"(?:take (?:that|this|it|the)(?: [a-z0-9]+){0,9}? out|cut (?:that|this|it|the)(?: [a-z0-9]+){0,9}? out|cut out|take out|leave out|change|make|rewrite|rephrase|reword|fix|edit|tweak|soften|tighten|revise|replace|shorten|lengthen|expand|trim|polish|improve|punch up|sharpen|simplify|modernize|modernise)"
 _EDIT_LEAD = re.compile(rf"^{_POLITE}{_EDIT_VERBS}\b")
 _EDIT_CLAUSE = re.compile(rf"[,;]\s*(?:and |then |please )*{_EDIT_VERBS}\b|\b(?:and|then) {_EDIT_VERBS} (?:him|her|them|it|that|this|the)\b")
-_DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|next paragraph|(?:1|one) more (?:paragraph|bit|part)|(?:1|one) more(?= (?:the|a|of|about|with|where|when|\w+ing)\b)|(?:and )?(?:then |now )?the (?:part|scene|bit|moment) (?:where|when|in which|with)|another (?:paragraph|bit)|more of the story|the next (?:bit|part)|(?:the )?(?:last|final|closing|opening|first|next) paragraph (?:for|of|in) chapter \d+(?= \w)|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
+_DRAFT_LEAD = re.compile(rf"^{_POLITE}(?:write|draft|continue|carry on|keep going|go on|next scene|next paragraph|(?:1|one) more (?:paragraph|bit|part)|(?:1|one) more(?= (?:the|a|of|about|with|where|when|\w+ing)\b)|(?:and )?(?:then |now )?the (?:part|scene|bit|moment) (?:where|when|in which|with)|tell (?:me )?(?:the |about the )?(?:part|bit|scene|story|moment) (?:where|when|of|about|in which)|now a paragraph (?:about|on|where|for)|a paragraph (?:about|where) |another (?:paragraph|bit)|more of the story|the next (?:bit|part)|(?:the )?(?:last|final|closing|opening|first|next) paragraph (?:for|of|in) chapter \d+(?= \w)|add (?:a|another|one more) (?:scene|paragraph)|compose|describe)\b")
 _QUESTION = re.compile(r"^(?:so |and |but )?(how|what|why|who|whom|whose|where|should|do you|does|is|are|which|would|am i|did|will it|shall)\b")
 _OPINION = re.compile(r"^(?:i |i'm |im |i've |my )?(?:hate|like|love|dislike|prefer|think|feel|want|wish|need|always|never|don't like|dont like|can't|cant)\b|^i (?:hate|like|love|dislike|prefer|think|feel|wish|really|just|always|never|don't|dont|can't|cant)\b")
 
@@ -574,6 +574,9 @@ _EXPORT_NOUN = re.compile(r"\b(?:book|story|novel|manuscript)\b")
 def export_request(text: str) -> str | None:
     """"save my book as a file", "export the book as an e-book", "give me the whole story to print" -> "html" | "epub" | "md", else None."""
     n = norm(text)
+    if len(n.split()) <= 16 and re.search(r"\bso (?:i|we) can print\b|\bto print (?:it|out)\b|\bprint (?:it|the book|my book) (?:out|on paper)\b", n) \
+            and re.search(r"^(?:\w+ ){0,4}(?:save|make|give|export|send)\b", n) and not re.search(r"\b(?:chapter|paragraph|picture)\b", n):
+        return "html"  # "Save it so I can print it": a page that prints, not an e-book
     fmt_word = re.search(r"\b(?:epub|e book|ebook|kindle|e reader|web page|webpage|html|pdf)\b", n)  # "save it as an e-book" needs no "book" noun
     if len(n.split()) > 16 or not (_EXPORT_NOUN.search(n) or fmt_word) or re.search(r"\b(?:chapter|paragraph|wiki|picture|file i|downloaded)\b", n):
         return None
@@ -719,6 +722,7 @@ def picture_position(text: str, strict: bool = False) -> int | None:
     """Where in the chapter a picture should go, as the number of paragraphs that come BEFORE it: 0 = the very start, -1 = the end, 3 = after paragraph 3.
     None when the writer said nothing about it (the end of the chapter is the default). "put it at the start of chapter 1", "after paragraph 2", "before paragraph 3"."""
     n = norm(text)
+    n = re.sub(rf"\b({'|'.join(sorted((w for w in ORDINALS if w != 'zeroth'), key=len, reverse=True))}) (paragraph|para|part)\b", lambda m: f"{ORDINALS[m.group(1)]} {m.group(2)}", n)  # "after the first paragraph"
     if strict:  # a request for a NEW picture: "of the church at the top of the hill" is the subject, not the place
         if (m := _POS_BETWEEN.search(n)):
             return min(int(m.group(1)), int(m.group(2)))

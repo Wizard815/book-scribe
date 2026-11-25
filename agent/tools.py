@@ -191,8 +191,9 @@ def build(agent) -> Toolbox:
         def toks(t):
             return {w for w in intent.norm(t.replace("_", " ").replace("-", " ")).split() if w not in stop}
         w = toks(want)
-        best = max(items, key=lambda m: len(w & toks(m["title"] + " " + m.get("filename", ""))), default=None)
-        return best if best and len(w & toks(best["title"] + " " + best.get("filename", ""))) >= max(1, min(2, len(w))) else None
+        about = lambda m: toks(m["title"] + " " + m.get("filename", "") + " " + str(m.get("kind", "")).replace("_", " "))  # "the family tree" finds the GEDCOM
+        best = max(items, key=lambda m: len(w & about(m)), default=None)
+        return best if best and len(w & about(best)) >= max(1, min(2, len(w))) else None
 
     async def read_library(ctx: Ctx, title="", part=1):
         m = _find_item(ctx, title)

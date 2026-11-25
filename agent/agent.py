@@ -426,6 +426,12 @@ class Agent:
                     return self._reply(sess, f"Okay, it will go {place} of chapter {sess.pending.chapter}. Say yes to add it.")
             if sess.pending.kind == "picture" and not intent.is_question(text):
                 said = rest if kind else text
+                if not kind:  # "That sounds right. Yes, put it after paragraph two.": the yes and the place are in a later sentence
+                    for x in re.split(r"(?<=[.!?])\s+", text.strip())[1:]:
+                        k2, r2 = intent.confirmation(x)
+                        if k2 == "yes" and intent.picture_position(r2 or x) is not None:
+                            kind, said = "yes", (r2 or x)
+                            break
                 if len(said.split()) > 16:  # "Hm. I don't like it, you can't see anything. Well, put it in anyway, at the end of the chapter."
                     said = next((x for x in reversed(re.split(r"(?<=[.!?])\s+", said.strip())) if re.search(r"\b(?:put|add|place|use)\b", intent.norm(x))), said)
                 nums_ = self.store.chapter_numbers(sess.book)
@@ -562,6 +568,12 @@ class Agent:
 
         if r := self._ui_reply(sess, text):  # "I can't see it": instant, no model call
             return r
+        if (bt := intent.book_title(text)) is not None:  # "call the book Samuel's War": the title on the exported book
+            b_ = self.store.bible(sess.book)
+            prem = b_.read("premise") or ""
+            prem = re.sub(r"(?im)^\s*title:.*\n?", "", prem).strip()
+            b_.write_doc("premise", f"Title: {bt}\n\n{prem}".strip() + "\n")
+            return self._reply(sess, f"Done. The book is called {bt}.")
         if (req := intent.ideas_request(text)) is not None:
             return self._ideas_reply(sess, req)
         if intent.undo_request(text):
@@ -588,12 +600,6 @@ class Agent:
                 self.prefs.update({"auto_save": mode})
             return self._reply(sess, "Okay. From now on I will save each paragraph I write straight away and read it to you. Say undo to take one back, or change paragraph and the number. Say ask me first to go back to asking."
                                if mode == "on" else "Okay. I will ask you before I save anything I write.")
-        if (bt := intent.book_title(text)) is not None:  # "call the book Samuel's War": the title on the exported book
-            b_ = self.store.bible(sess.book)
-            prem = b_.read("premise") or ""
-            prem = re.sub(r"(?im)^\s*title:.*\n?", "", prem).strip()
-            b_.write_doc("premise", f"Title: {bt}\n\n{prem}".strip() + "\n")
-            return self._reply(sess, f"Done. The book is called {bt}.")
         if (tc := intent.title_chapter(text)) is not None:
             return self._title_reply(sess, tc[0], tc[1])
         if (dm := intent.delete_many(text)) is not None:
@@ -606,6 +612,8 @@ class Agent:
             return self._move_reply(sess, mv, text)
         if (what := intent.open_request(text)) and (r := self._open_reply(sess, what)):  # "open the harbour notes"
             return r
+        if (lib_pic := await self._library_picture_reply(sess, text)) is not None:  # "put the old tintype from 1862 after the first paragraph"
+            return lib_pic
         if intent.picture_request(text):  # "make a picture of the lake", "find a map of Camelot": a picture for the book, not an edit or a file on the computer
             return await self._converse(sess, text)
         if intent.file_request(text):  # "I just downloaded a new PDF, can you open it"
@@ -936,7 +944,7 @@ class Agent:
     def _answer_then_more(self, sess: Session, text: str) -> tuple[str, str] | None:
         """The answer among several sentences: "That's good. Yes, put the draft one in. Then write about the camp." -> ("yes", "Then write about the camp.");
         "Yes. Put the picture in." -> ("yes", ""). None when there is no clear answer, or the rest is about the thing waiting ("Yes. But make it shorter.")."""
-        sents = [x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x.strip()]
+        sents = [x for x in re.split(r"(?<=[.!?])\s+|,\s+but\s+(?=(?:yes|yeah|no|okay|ok|save|put|add|keep)\b)|;\s+", text.strip(), flags=re.I) if x.strip()]
         if len(sents) < 2:
             return None
         kinds = [self._sentence_kind(sess, x) for x in sents]
@@ -961,7 +969,7 @@ class Agent:
     def _standalone_command(self, rest: str) -> bool:
         """Something that is clearly a request of its own (not a description of which paragraph)."""
         return bool(intent.title_chapter(rest) or intent.goto_chapter(rest) is not None or intent.new_chapter(rest) is not None or intent.undo_request(rest)
-                    or intent.new_chapter_titled(rest) is not None
+                    or intent.new_chapter_titled(rest) is not None or intent.book_title(rest) is not None
                     or intent.export_request(rest) is not None or uisettings.parse(rest, None) is not None)
 
     def _names_other_target(self, rest: str) -> bool:
@@ -1009,7 +1017,7 @@ class Agent:
         """Is this a new job for me (so a waiting change is put aside), rather than a question, small talk or a look at the book?"""
         return bool(intent.is_edit(text) or intent.is_draft(text) or intent.delete_request(text) or intent.move_request(text) or intent.new_chapter(text) is not None
                     or intent.ideas_request(text) is not None or intent.file_request(text) or intent.undo_request(text) or intent.detect_mode(text)
-                    or intent.export_request(text) is not None
+                    or intent.export_request(text) is not None or intent.book_title(text) is not None
                     or (self.voices and intent.voice_command(text)) or intent.open_request(text))
 
     def _commit_change(self, sess: Session) -> Reply:
@@ -1840,6 +1848,8 @@ class Agent:
             cap = ctx.picture["caption"]
             gp = (sess.pending.data or {}).get("gen_prompt", "")
             described = len(out.strip()) >= 40 and out.strip().lower().rstrip('.') != cap.lower().rstrip('.')  # a real description, not just "Here you go" or the caption
+            out = " ".join(x for x in re.split(r"(?<=[.!?])\s+", out.strip()) if not re.search(r"(?i)\bI(?:'ve| have)? (?:placed|put|added|inserted|saved)\b|\bshould i put\b|\byes or no\b", x))
+            described = len(out.strip()) >= 40 and out.strip().lower().rstrip('.') != cap.lower().rstrip('.')
             lead = (out.strip() + " ") if described and len(out.strip()) <= 360 else (f"I made a picture: {excerpt(gp, 30).rstrip('.… ')}. " if gp else f"I have a picture for you, called {cap}. ")
             if sess.pending.data is not None:  # what was said about the picture, kept so "describe it to me" can say it again
                 sess.pending.data["describe"] = out.strip() if described else (gp or sess.pending.data.get("describe", ""))
@@ -1871,6 +1881,9 @@ class Agent:
                 tail = f"Should I add it to chapter {sess.pending.chapter}?"
                 sess.history.append({"role": "assistant", "content": f"Here's a draft: {ctx.drafted} {tail}"})
                 return self._attach(sess, self._reply(sess, f"Here's a draft: {ctx.drafted} {tail}", await self._draft_speech(sess, ctx.drafted, "Here's a draft:", tail)), ctx, "", text)
+        if not sess.pending and self._book_sig(sess.book) == sig0 and self._CLAIM.search(out) and not set(ctx.calls) & {"start_chapter", "set_chapter_title", "set_ui", "export_book"} \
+                and sess.mode == "narrator" and re.search(r"\b(?:write|tell|paragraph|part where|the part|scene|story|draft)\b", intent.norm(text)) and not intent.is_question(text):
+            return await self._propose_draft(sess, text)  # a request for writing that the model only claimed to do: write it through the draft path
         if not sess.pending and self._book_sig(sess.book) == sig0 and self._CLAIM.search(out) and not set(ctx.calls) & {"start_chapter", "set_chapter_title", "set_ui", "export_book"}:
             again, _ = await harness.run(self.llm, msgs + [{"role": "assistant", "content": out}, {"role": "user", "content":
                     "You said it is done, but nothing in the book changed and nothing is waiting for a yes. Do it now by calling the right tool "
@@ -1907,6 +1920,34 @@ class Agent:
             msg = sess.pending.ask or self._ask_for(sess, sess.pending)
         return self._attach(sess, self._reply(sess, msg or "Done."), ctx, msg, text)
 
+    async def _library_picture_reply(self, sess: Session, text: str) -> Reply | None:
+        """The writer asks to put one of THEIR pictures in the book: find it in the library by the words they use, and show it with a yes/no."""
+        n = intent.norm(text)
+        if not self.library or not re.search(r"\b(?:put|add|use|insert|place)\b", n) or re.search(r"\b(?:make|draw|paint|find|search|new)\b", n):
+            return None
+        stop = {"the", "a", "an", "of", "my", "picture", "photo", "photograph", "file", "old", "and", "in", "at", "jpg", "png", "put", "add", "use", "insert", "place",
+                "it", "after", "before", "first", "paragraph", "chapter", "this", "that", "please", "from", "into", "book", "end", "start", "there", "one", "you", "can", "i"}
+        def toks(t: str) -> set:
+            return {w for w in intent.norm(t.replace("_", " ").replace("-", " ")).split() if w not in stop and not w.isdigit() or (w.isdigit() and len(w) == 4)}
+        want = toks(text)
+        imgs_ = [m for m in self.library.items(sess.book) if m.get("kind") in ("image", "scan")]
+        best = max(imgs_, key=lambda m: len(want & toks(m["title"] + " " + m.get("filename", ""))), default=None)
+        if not best or not want & toks(best["title"] + " " + best.get("filename", "")) or sess.pending:
+            return None
+        ctx = harness.Ctx(sess=sess)
+        pos = intent.picture_position(text, strict=True)
+        ch = intent.parse_ref(text).chapter if re.search(r"\bchapter \d+", n) else None
+        out = await self.toolbox.call("use_library_picture", {"title": best["title"], "caption": best["title"], "after": pos if pos is not None and pos >= 0 else "", "chapter": ch or ""}, ctx)
+        if not (sess.pending and sess.pending.kind == "picture" and ctx.picture):
+            return self._reply(sess, out if not out.startswith("Error") else "I could not put that picture in just now.")
+        seen = (sess.pending.data or {}).get("describe", "")
+        where = self._where_words((sess.pending.data or {}).get("where")) or ", at the end"
+        r = self._reply(sess, f"Here is your picture, {best['title']}. {excerpt(seen, 45) if seen else ''} Should I put it in chapter {sess.pending.chapter}{where}?".replace("  ", " "))
+        r.picture = self.images.info(sess.book, ctx.picture["candidate"], ctx.picture["caption"], candidate=True)
+        sess.history.append({"role": "user", "content": text})
+        sess.history.append({"role": "assistant", "content": r.text})
+        return self._attach(sess, r, ctx, "", text)
+
     def _paragraph_in(self, out: str) -> str:
         """A story paragraph written into a chat reply, without the talk around it; "" when there is none."""
         blocks = [b.strip() for b in re.split(r"\n\s*\n", out or "") if b.strip()]
@@ -1938,6 +1979,18 @@ class Agent:
             r = self._reply(sess, f"Do you mean {where}, starting: {excerpt(target.text)} Say yes to go ahead, or tell me which part.")
             r.highlights = self._hl(sess, [target.id])
             return r
+        swap = re.search(r"(?i)\b(?:change|replace|swap|make)\s+[\"\u201c']?(.{2,60}?)[\"\u201d']?\s+(?:to|with|into|for)\s+[\"\u201c']?(.{2,60}?)[\"\u201d']?\s*(?:[.,;!]|$|\s+(?:nothing|and nothing|only|just|please))", text)
+        if swap and target.text.lower().count(swap.group(1).lower().strip()) == 1 and len(swap.group(1).split()) <= 6:
+            old_w, new_w = swap.group(1).strip(), swap.group(2).strip()  # "just change Licking River to Raccoon Creek": a plain word swap, no model, nothing else touched
+            k = target.text.lower().index(old_w.lower())
+            new = target.text[:k] + new_w + target.text[k + len(old_w):]
+            sess.chapter, sess.focus = target.chapter, target.id
+            sess.pending = Pending("edit", new, target.chapter, paragraph_id=target.id, data={"instruction": text})
+            self._remember(sess, text, f"Here is the new version of {where}: {new} Should I save it?")
+            lead = f"Changing {where}: {old_w} becomes {new_w}. Here is the new version:"
+            r = self._reply(sess, f"{lead} {new} Should I save it?", await self._draft_speech(sess, new, lead, "Should I save it?", target))
+            r.highlights = self._hl(sess, [target.id])
+            return r
         msgs = self._context(sess, text, target.text, target) + [
             {"role": "user", "content": f"Rewrite ONLY this paragraph.\nInstruction: {text}\n\nORIGINAL:\n{target.text}\n\nOutput only the new paragraph. "
                                         "If the instruction refers to something that is NOT in this paragraph (a word, a detail), do not invent it: reply with exactly NOT_FOUND: followed by a short, plain reason."}
@@ -1958,6 +2011,14 @@ class Agent:
             self._remember(sess, text, "I did not change anything; that is not in " + where + ".")
             return self._reply(sess, "I did not change anything. " + (new.split(":", 1)[1].strip() if ":" in new else "That is not in this paragraph.") + " Tell me what you want instead.")
         new = clean_draft(new)
+        shorten = re.search(r"\b(?:shorter|shorten|cut|trim|remove|take out|leave out|delete|drop|tighten|less)\b", intent.norm(text))
+        if re.search(r"\b(?:propose_\w+|paragraph_id|text\s*=|\w+\(\s*\w+\s*=)", new) or (not re.search(r"[.!?][\"\u201d\u2019')\]]*\s*$", new) and re.search(r"[.!?][\"\u201d\u2019')\]]*\s*$", target.text)):
+            # machine text, or a rewrite that lost much of the paragraph without being asked to: ask once more, plainly
+            new2, _ = await self._gated(msgs + [{"role": "assistant", "content": new}, {"role": "user", "content":
+                    "That is not right: give the WHOLE paragraph as plain prose, with only the asked-for change made. No code, no tool names."}])
+            new = clean_draft(new2)
+            if re.search(r"\b(?:propose_\w+|paragraph_id|text\s*=)", new) or (not re.search(r"[.!?][\"\u201d\u2019')\]]*\s*$", new) and re.search(r"[.!?][\"\u201d\u2019')\]]*\s*$", target.text)):
+                return self._reply(sess, "I could not make that change cleanly, so I left the paragraph as it is. Tell me the exact words to change, for example: change Licking River to Raccoon Creek.")
         if re.sub(r"\s+", " ", new).strip() == re.sub(r"\s+", " ", target.text).strip():  # an "edit" that changes nothing: try once more, then say so
             msgs2 = msgs + [{"role": "assistant", "content": new}, {"role": "user", "content": "That is identical to the original. Make a real change that does what the writer asked. Output only the new paragraph."}]
             new, _ = await self._gated(msgs2)
@@ -1990,6 +2051,8 @@ class Agent:
         new = clean_draft(new)
         if ctx.drafted:  # the model already proposed its paragraph through propose_append: that is the draft
             new = ctx.drafted
+        if not ctx.drafted and re.match(r"(?i)^(?:my apologies|i apologi[sz]e|i'?m sorry|sorry|you'?re (?:absolutely )?right|i made a mistake|i see)\b", new or ""):
+            new = ""  # an apology is not a paragraph: ask for the prose below
         if not ctx.drafted and (re.fullmatch(r"\s*[\[(][^\]\)]{0,200}[\])]\s*", new or "") or len((new or "").split()) < 4):
             again, _ = await self._gated(msgs + [{"role": "assistant", "content": new or ""}, {"role": "user", "content": "That is not a paragraph. Write the paragraph itself now: only the prose, nothing else."}])
             new = clean_draft(again)
