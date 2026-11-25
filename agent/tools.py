@@ -595,6 +595,9 @@ def build(agent) -> Toolbox:
         return "Proposed. The app now asks the writer yes or no by itself. Say at most one short sentence."
 
     async def start_chapter(ctx: Ctx, number=None, title=""):
+        import intent
+        if not re.search(r"\bchapter\b", intent.norm(ctx.sess.last_user or "")):
+            return "The writer did not ask for a new chapter. Do not start one; ask them first."
         r = agent._new_chapter_reply(ctx.sess, _int(number, 0, 0, 9999))
         if title and ctx.sess.work in store.chapter_numbers(book(ctx)) and not store.chapter_title(book(ctx), ctx.sess.work):
             store.set_chapter_title(book(ctx), ctx.sess.work, title)
@@ -659,7 +662,7 @@ def build(agent) -> Toolbox:
         T("propose_wiki_notes", "Offer SEVERAL wiki notes at once (for example three characters): the writer says one yes and all are saved. Prefer this to many single proposals.",
           {"notes": 'a list like [{"kind": "characters|threads|world|premise", "name": "...", "note": "..."}]'}, propose_wiki_notes, required=("notes",)),
         T("propose_append", "Put NEW prose into the book: give the paragraph and the app shows it and asks the writer yes or no. Use this whenever the writer asks you to write, draft or continue "
-          "(including 'next paragraph'). Never paste a draft into the chat instead.", {"text": "ONLY the paragraph's prose, nothing else: no comment to the writer, no question", "chapter": "chapter number (a new chapter must be the next number)"},
+          "(including 'next paragraph'). Never paste a draft into the chat instead.", {"text": "ONLY the prose, nothing else: no comment to the writer, no question. When the writer asks for several paragraphs, give them all here, separated by a blank line", "chapter": "chapter number (a new chapter must be the next number)"},
           propose_append, required=("text",)),
         T("make_picture", "Make a NEW picture for the book from a description (an illustration). The app shows it and asks the writer yes or no. Describe it back to the writer in words.",
           {"prompt": "what the picture shows: scene, people, light, mood, style", "caption": "a short caption (also what is read aloud)", "chapter": "chapter number (default: the one on screen)", "after": "optional: put it after this many paragraphs of the chapter (0 = at the very start; leave out for the end). Choose the paragraph the picture illustrates."},

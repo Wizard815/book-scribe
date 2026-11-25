@@ -50,6 +50,7 @@ def clean_paragraph(text: str) -> str:
     if parse_image(text.strip()):
         return text.strip()  # a picture paragraph is kept exactly as written
     s = re.sub(r"<!--.*?-->", " ", text, flags=re.S)
+    s = s.replace("\\'", "'").replace('\\"', '"')  # escaped quotes from a tool call ("he\\'d") are plain quotes in a book
     s = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x1c-\x1e\u2028\u2029]", " ", s)  # pasted or PDF control characters break the chapter file and the EPUB
     s = re.sub(r"\s*\n\s*", " ", s.strip())
     s = re.sub(r"^#+\s*", "", s)

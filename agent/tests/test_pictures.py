@@ -458,7 +458,10 @@ async def test_the_model_never_has_to_refuse_a_move_or_a_delete_or_a_new_chapter
     out = await ag.toolbox.call("propose_move", {"paragraph": 9, "to_chapter": 2}, ctx); assert out.startswith("Error")  # no such paragraph: a plain reason, not a crash
     out = await ag.toolbox.call("propose_delete", {"paragraph": 2}, ctx); assert "Proposed" in out and ag.session("s").pending.kind == "delete"
     await ag.handle("s", "no")
+    ag.session("s").last_user = "start the next chapter, the one about the stone"
     assert "Chapter 2 is ready" in await ag.toolbox.call("start_chapter", {"title": "The Stone"}, ctx) and store.chapter_title("demo", 2) == "The Stone"
+    ag.session("s").last_user = "now a paragraph about the stone"
+    assert "did not ask" in await ag.toolbox.call("start_chapter", {"title": "x"}, ctx)  # no chapter the writer did not ask for
     assert "Chapter 2 is now called The Boy" in await ag.toolbox.call("set_chapter_title", {"chapter": 2, "title": "The Boy"}, ctx)
     info = json.loads(await ag.toolbox.call("book_info", {}, ctx))
     assert [c["chapter"] for c in info["per_chapter"]] == [1, 2] and info["per_chapter"][1]["title"] == "The Boy" and info["per_chapter"][0]["pictures"] == 0

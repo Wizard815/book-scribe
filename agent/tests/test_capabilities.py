@@ -1243,3 +1243,18 @@ async def test_rm7_authors_note_goes_to_the_front_and_wait_with_a_question_is_no
     assert intent.confirmation("Wait a minute, what's the book called on the front? It should be Samuel's War.")[0] != "hold"
     assert intent.book_title("Wait a minute, what's the book called on the front? It should be Samuel's War.") == "Samuel's War"
     assert intent.voice_command("Try another one for the march") is None
+
+
+@pytest.mark.asyncio
+async def test_rm8_im_talk_is_never_saved_and_forget_the_picture_adds_nothing(books):
+    ag, store, llm = make(books)
+    n = len(store.paragraphs("demo", 1))
+    _wait(ag, text="I'm having a bit of trouble adding that paragraph, but here is the idea of it, about Joseph at the table with the papers.")
+    r = await ag.handle("s", "yes")
+    assert len(store.paragraphs("demo", 1)) == n and "did not save" in r.text
+    await _picture_waiting(ag, llm)
+    k = len(llm.calls)
+    r = await ag.handle("s", "No, forget the picture.")
+    assert ag.session("s").pending is None and len(llm.calls) == k and not any(p.image for p in store.paragraphs("demo", 1))
+    from book_store import clean_paragraph
+    assert clean_paragraph(r"He\'d never seen \"the sea\" before.") == 'He\'d never seen "the sea" before.'.replace("\\'", "'")

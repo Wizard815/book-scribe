@@ -358,7 +358,7 @@ class Agent:
         if sess.pending and sess.pending.kind not in ("voice", "file"):
             nt = intent.norm(text)
             if (re.match(r"^(?:ok(?:ay)?|yes|yeah|sure|alright|right|well)?,? ?(?:hold on|wait|wait a (?:moment|minute|sec(?:ond)?)|hang on|one (?:moment|second|sec|minute)|let me think(?: about it)?|give me a (?:moment|minute|sec(?:ond)?)|not yet|not now|later)\b", nt)
-                    and (len(nt.split()) <= 7 or not re.search(r"\b(?:write|change|make|call|put|start|go|read|delete|move|add|save|what|where|who|how|should)\b", nt))) \
+                    and len(re.sub(r"^(?:ok(?:ay)?|yes|yeah|sure|alright|right|well)?,? ?(?:hold on|wait(?: a (?:moment|minute|sec(?:ond)?))?|hang on|one (?:moment|second|sec|minute)|let me think(?: about it)?|give me a (?:moment|minute|sec(?:ond)?)|not yet|not now|later)\b", "", nt).split()) <= 3) \
                     or re.match(r"^good (?:night|morning|evening|afternoon)\b", nt):
                 return self._reply(sess, f"Okay, I'll wait. I am still holding this for you: {sess.pending.ask or self._ask_for(sess, sess.pending)} Say yes or no.")
             if sess.pending.kind in ("append", "edit") and re.match(r"^(?:ok(?:ay)?|yes|yeah|sure|please)?,? ?(?:please )?(?:read|say|play) (?:it|that|this|them)(?: (?:to me|out|aloud|again|all|out loud|please))*$", nt):
@@ -1882,7 +1882,10 @@ class Agent:
             described = len(out.strip()) >= 40 and out.strip().lower().rstrip('.') != cap.lower().rstrip('.')  # a real description, not just "Here you go" or the caption
             out = " ".join(x for x in re.split(r"(?<=[.!?])\s+", out.strip()) if not re.search(r"(?i)\bI(?:'ve| have)? (?:placed|put|added|inserted|saved)\b|\bshould i put\b|\byes or no\b", x))
             described = len(out.strip()) >= 40 and out.strip().lower().rstrip('.') != cap.lower().rstrip('.')
-            lead = (out.strip() + " ") if described and len(out.strip()) <= 360 else (f"I made a picture: {excerpt(gp, 30).rstrip('.… ')}. " if gp else f"I have a picture for you, called {cap}. ")
+            seen_ = ((sess.pending.data or {}).get("describe") or "").strip()
+            if seen_ and len(seen_) >= 40:  # what a vision model saw in THIS picture beats the chat model's words (it once described the wrong picture)
+                out, described = excerpt(seen_, 50), True
+            lead = (out.strip() + " ") if described and len(out.strip()) <= 420 else (f"I made a picture: {excerpt(gp, 30).rstrip('.… ')}. " if gp else f"I have a picture for you, called {cap}. ")
             if sess.pending.data is not None:  # what was said about the picture, kept so "describe it to me" can say it again
                 sess.pending.data["describe"] = out.strip() if described else (gp or sess.pending.data.get("describe", ""))
             sess.history.append({"role": "assistant", "content": f"{lead}Should I put it in chapter {sess.pending.chapter}? (The picture \u201c{cap}\u201d is waiting for a yes.)"})
@@ -1999,7 +2002,7 @@ class Agent:
         text = "\n\n".join(prose)
         return text if len(text.split()) >= 45 and (len(prose) > 1 or self._looks_like_paragraph(text)) else ""
 
-    _TALK = re.compile(r"(?i)^(?:i (?:can|am|'m|have|'ve|will|'ll|noticed|understand|could|couldn'?t|apologi[sz]e|see|think|made)|you(?: are|'re)|my apologies|sorry|okay|ok|sure|here'?s|here is|let me|of course|great|wonderful)\b"
+    _TALK = re.compile(r"(?i)^(?:i(?:'m|'ve|'ll|'d| am| have| will| can| noticed| understand| could| couldn'?t| apologi[sz]e| see| think| made| was (?:not|unable))|you(?: are|'re)|my apologies|sorry|okay|ok|sure|here'?s|here is|let me|of course|great|wonderful|revised)\b"
                        r"|\b(?:story bible|your notes or documents|not in your documents|the writer asked|should i (?:save|add) it|shall i (?:save|add))\b")
 
     def _is_talk(self, text: str) -> bool:
@@ -2130,6 +2133,8 @@ class Agent:
         if p.kind == "picture":  # "no, make it an empty lake": drop that picture for good and ask the model for a different one
             self.images.discard(sess.book, (p.data or {}).get("candidate", ""))
             sess.pending = None
+            if re.search(r"\b(?:forget|never ?mind|no picture|drop|leave it|skip|not now|no more pictures|without (?:a|the) picture)\b", intent.norm(instruction)):
+                return self._reply(sess, "Okay, no picture. Nothing was added.")
             return await self._converse(sess, f"I do not want that picture. {instruction}")
         if p.kind in ("family", "page"):
             sess.pending = None

@@ -108,7 +108,7 @@ def confirmation(text: str) -> tuple[str | None, str]:
         w = w[1:]  # "well yes", "so no"
     if not w:
         return None, ""
-    if HOLD.match(norm(text)) and (len(w) <= 6 or not re.search(r"\b(?:write|change|make|call|put|start|go|read|delete|move|add|save|what|where|who|how|it should)\b", norm(text))):
+    if HOLD.match(norm(text)) and (len(w) <= 4 or not re.search(r"\b(?:write|change|make|call|put|start|go|read|delete|move|add|save|what|where|who|how|it should)\b", norm(text))):
         return "hold", ""  # "Wait a minute, what's the book called?" is a question, not "hold on"
     # a yes/no word must lead the utterance; everything after the leading run of filler is the remainder
     if w[0] in _YES_CORE or w[0] in ("do", "go", "sounds", "looks", "that's", "thats") and any(x in _YES_CORE for x in w[:3]):

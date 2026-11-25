@@ -12,6 +12,8 @@ AI_ISMS = [
     "delve", "unbeknownst", "in that moment", "the weight of", "orbs",
     "searing pain", "crushing weight", "cut a wide swath", "in their wake", "hues of", "a new beginning", "man of the earth", "a lifeline",
     "distant roar", "fading dream", "harsh reality", "would never be the same", "forever changed", "a stark reminder", "bittersweet",
+    "etched with", "dust motes", "voice thick with", "a constant companion", "a constant reminder", "practiced ease", "a wave of", "truly home",
+    "knot in his stomach", "settled in his gut", "eyes closed for the last time",
 ]
 SUMMING_UP = re.compile(r"\b(?:no more, but|a reminder of|a symbol of|forever (?:changed|marked)|would never be the same|shaped by both|a new chapter|the end of an era|nothing would ever)\b", re.I)
 TELLING = re.compile(r"\b(she|he|they|i)\s+(felt|was feeling|realized|knew that|couldn't believe)\b", re.I)
