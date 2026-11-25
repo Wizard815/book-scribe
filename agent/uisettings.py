@@ -159,7 +159,7 @@ def parse(text: str, look: dict | None) -> tuple[dict, str] | None:
     words = len(n.split())
     screen_words = re.search(r"\b(?:words|letters|text|font|print|writing|type)\b", n) and re.search(r"\b(?:bigger|larger|smaller|tinier|cant see|can't see|cannot see|hard to (?:see|read))\b", n) \
         and re.match(r"^(?:(?:please|can you|could you|would you|so|and|now|oh)\s+)*(?:make|turn|put|set|i cant|i can't|i cannot|i can not)\b", n)  # a request, not "the letters were bigger than his hands"
-    if not screen_words and re.search(r"\b(?:picture|photo|photograph|tintype|image|portrait|drawing|what (?:it|he|she|they) looks? like|describe)\b", n):
+    if not screen_words and re.search(r"\b(?:picture|photo|photograph|tintype|image|portrait|drawing|what (?:it|he|she|they) looks? like|describe|in it|are there|is there|who is|whos)\b", n):
         return None  # "Can you tell me what the picture looks like? I can't make it out.": about the picture, not the screen
     if not screen_words and re.search(r"\bparagraphs? \d+\b|\b(?:he|she|they|him|them|his|her|their)\b|\bchapter \d+\b|\b(?:the|a|an) \w+ (?:is|was|looked|seemed|felt|were)\b", n) and not re.search(r"\b(?:screen|buttons?|display|everything)\b", n):
         return None  # about a paragraph or a person in the story, not the screen: "simplify paragraph 2", "make him speak slower", "he was bold"

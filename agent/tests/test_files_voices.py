@@ -626,7 +626,7 @@ async def test_small_talk_while_a_note_is_waiting_keeps_it_and_reminds_out_loud(
     assert "Sir Cadan" in r.text and "Dozmary Pool" in r.text and "Sir Cadan" in store.bible("demo").characters() and "Dozmary Pool" in store.bible("demo").entries("world")
     # a real new job does put it aside, and says so
     await ag.toolbox.call("propose_wiki_notes", {"notes": [{"kind": "characters", "name": "Gwen", "note": "A cook."}]}, harness.Ctx(sess=s))
-    r = await ag.handle("s", "delete paragraph 1"); assert s.pending.kind == "delete" and "dropped the unsaved proposal" in " ".join(r.notes).lower()
+    r = await ag.handle("s", "delete paragraph 1"); assert s.pending.kind == "delete" and "let go of the draft" in " ".join(r.notes).lower()
 
 
 @pytest.mark.asyncio

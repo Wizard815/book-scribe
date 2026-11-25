@@ -74,7 +74,10 @@ def clean_draft(text: str) -> str:
     """Strip the model's own talk to the writer ("I gave Arthur a small wink. Want me to change it?") from a paragraph meant for the book. Only a trailing
     block that clearly addresses the writer is removed; the paragraph itself is never cut into."""
     t = text.strip().strip("`").strip()
-    t = re.sub(r"\[\[[^\[\]]{0,4000}\]\]|\((?:note for me|note)[^)]{0,600}\)", " ", t, flags=re.I).strip()  # tool lines and notes are never prose
+    m_ = re.search(r"\b(?:propose_\w+|start_chapter|make_picture)\s*\(\s*(?:text|paragraph)\s*=\s*(['\"\u201c])(.+?)\1\s*(?:,[^()]*)?\)", t, flags=re.S)
+    if m_:
+        t = m_.group(2).replace("\\'", "'").replace('\\"', '"')  # propose_append(text='…', chapter=1): only the paragraph inside is prose
+    t = re.sub(r"\[\[[^\[\]]{0,4000}\]\]|\((?:note for me|note)[^)]{0,600}\)|^\s*\[[^\]\n]{0,120}\]\s*", " ", t, flags=re.I).strip()  # tool lines and notes are never prose
     for _ in range(3):  # talk before the paragraph: "Let me try again, using only what we know." / "Here's another version."
         t2 = re.sub(r"^(?:(?:okay|ok|alright|sure|of course)[,.!]?\s+)?(?:let me (?:try|write|redo|fix|give|have)|here'?s (?:a|the|my|another|that)\b[^.!?:]{0,40}[.!]|how about (?:this|that)[.!]|i'?ll (?:try|write|redo|give|have another)|using only what|this (?:version|time)|try(?:ing)? again)[^.!?:]{0,120}[.!]\s+", "", t, flags=re.I).strip()
         if t2 == t:
@@ -528,13 +531,13 @@ class Agent:
                 text = rest
             else:
                 dropped, sess.pending = sess.pending, None  # anything else is a new command; the unsaved proposal is abandoned, and we say so
-                sess.notices.append("I dropped the unsaved proposal.")
+                sess.notices.append("I let go of the draft you had not saved.")
                 sess.last_dropped = dropped
                 sess.say_first = f"I dropped the {'paragraph' if dropped.kind == 'append' else 'change'} I showed you before, because you moved on. Say bring it back if you wanted it."
 
         if not sess.pending and (draft := self._draft_to_rescue(sess, text)):  # "yes, add it" to a draft that was shown without a proposal
             sess.pending = Pending("append", draft, self._work(sess))
-            sess.history[-1]["content"] = "[the draft paragraph was saved]"  # so a later "yes" can never save it a second time
+            sess.history[-1]["content"] = "That paragraph is in the book now."  # so a later "yes" can never save it a second time (plain words: a model copies brackets)
             r = await self._accept(sess)
             r.text += " (That was the paragraph I just showed you.)"
             return r
@@ -712,7 +715,11 @@ class Agent:
         if kind != "yes" or rest or not sess.history or sess.history[-1]["role"] != "assistant":
             return ""
         last = sess.history[-1]["content"].strip()
-        if (para_ := self._paragraph_in(last)) and not last.startswith("Here's a draft for chapter") and not re.search(r"\bShould I (?:add|save) it\?$", last):
+        if not re.match(r"^(?:yes|yeah|yep|save|add|put|keep)\b", intent.norm(text)) or last.startswith("Here is your picture") \
+                or re.search(r"(?i)\b(?:picture|photo|photograph|portrait|tintype|image|illustration)\b", last[:200]):
+            return ""  # only a plain yes saves a paragraph that was shown without a card, and never a picture's description
+        if (para_ := self._paragraph_in(last)) and not last.startswith(("Here's a draft for chapter", "Here is your picture")) and not re.search(r"\bShould I (?:add|save) it\?$", last) \
+                and not re.search(r"(?i)\b(?:picture|photo|photograph|portrait|tintype|image)\b", last[:200]) and re.match(r"^(?:yes|yeah|yep|save|add|put)\b", intent.norm(text)):
             return para_  # a story paragraph was read out without a card, and the writer said yes to it
         if len(last) < 200 or not self._OFFER.search(last) or last.startswith("[") \
                 or re.match(r"^(?:i can'?t|i cannot|i couldn'?t|i could not|i'm sorry|i am sorry|sorry|i do not|i don'?t|unfortunately|i'm not|i am not|okay, i|i did not|i didn'?t)\b", last.lower()):

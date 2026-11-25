@@ -192,7 +192,7 @@ figure.para figcaption { font-size: calc(var(--fs) * .72 * min(var(--zoom), 1.8)
 :root[data-big="1"] #form.open { display: flex; }
 :root[data-big="1"] #msg { min-height: 64px; font-size: 28px; }
 :root[data-big="1"] #send { min-width: 100px; font-size: 28px; }
-:root[data-big="1"] .tools { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+:root[data-big="1"] .tools { flex-wrap: wrap; }  /* never hide buttons off the edge: a half-sighted writer will not find them */
 :root[data-big="1"] .tools button { min-height: 48px; font-size: 20px; flex: none; }
 :root[data-big="1"] #pending { padding: 12px; gap: 10px; }
 :root[data-big="1"] #pending .ask { font-size: 30px; }

@@ -414,7 +414,8 @@ def build(agent) -> Toolbox:
 
         text = clean_draft(text)
         if re.match(r"(?i)^(?:i apologi[sz]e|my apologies|i'?m sorry|sorry|you'?re (?:absolutely )?right|i see|i understand|thank you|thanks|of course|certainly|i couldn'?t|i could not|i can'?t|i cannot|let me|a warning)\b", text) \
-                or re.search(r"(?i)\b(?:the writer|propose_\w+|book state|the app (?:shows|asks)|note for me|not in your documents|it does not do what you asked|not what was asked)\b", text):
+                or re.search(r"(?i)\b(?:the writer|propose_\w+|book state|the app (?:shows|asks)|note for me|not in your documents|it does not do what you asked|not what was asked)\b", text) \
+                or re.match(r"(?i)^i (?:understand|will just|'ll just|will now|have (?:deleted|added|changed|saved|removed)|'ve (?:deleted|added|changed|saved|removed)|can(?:not|'t)?)\b", text):
             return "Error: that is not story prose. Give ONLY the paragraph that goes into the book, with no apology and no talk to the writer."
         if len(text) < 30:
             return "Give the whole paragraph in text (at least a sentence or two)."
@@ -479,6 +480,8 @@ def build(agent) -> Toolbox:
         if data is None:
             return f"Error: the picture could not be made ({err.__class__.__name__}). Say so plainly and offer to try a different description or to find one on the web instead."
         ctx.notes.append("I made a picture for you.")
+        if caption and not re.search(r"(?i)\b(?:illustration|drawing|painting|imagined|artist)\b", caption):
+            caption = f"{caption.rstrip('. ')} (an illustration)"  # a made picture must never pass for a real family photograph
         return await agent.propose_picture(ctx.sess, ctx, data, caption or prompt[:120], _int(chapter, 0, 0, 9999) or None, prompt, after=_after(after), made=True)  # say what came out, not what was asked for
 
     async def find_pictures(ctx: Ctx, query="", n=6):
@@ -605,7 +608,7 @@ def build(agent) -> Toolbox:
         f = {"web page": "html", "webpage": "html", "html": "html", "pdf": "html", "epub": "epub", "ebook": "epub", "e-book": "epub", "md": "md", "markdown": "md", "zip": "md"}.get(str(format).strip().lower(), "html")
         label = {"html": "web page file (open it and print it to make a PDF)", "epub": "e-book file", "md": "plain text folder (a zip file)"}[f]
         ctx.download = {"url": f"/api/books/{book(ctx)}/export?format={f}", "label": label}
-        return f"The app is saving the whole book, with its pictures, as a {label}. Tell the writer it will appear in their downloads."
+        return f"Saving the whole book, with its pictures, as a {label}. Tell them in one sentence that it will appear in their downloads (say only {label})."
 
     async def use_skill(ctx: Ctx, name=""):
         s = _skills(agent).get(name.strip().lower())

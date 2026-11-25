@@ -1,0 +1,121 @@
+0 HEAD
+1 SOUR BookScribeTest
+1 GEDC
+2 VERS 5.5.1
+1 CHAR UTF-8
+0 @I1@ INDI
+1 NAME John /Whitfield/
+1 SEX M
+1 BIRT
+2 DATE 1812
+2 PLAC Pennsylvania, USA
+1 DEAT
+2 DATE 1879
+2 PLAC Licking, Ohio, USA
+1 FAMS @F1@
+0 @I2@ INDI
+1 NAME Hannah /Moore/
+1 SEX F
+1 BIRT
+2 DATE 1816
+1 DEAT
+2 DATE 1884
+2 PLAC Licking, Ohio, USA
+1 FAMS @F1@
+0 @I3@ INDI
+1 NAME Samuel Thomas /Whitfield/
+1 SEX M
+1 BIRT
+2 DATE 14 APR 1841
+2 PLAC Granville Township, Licking, Ohio, USA
+1 DEAT
+2 DATE 3 JAN 1911
+2 PLAC Newark, Licking, Ohio, USA
+1 BURI
+2 PLAC Cedar Hill Cemetery, Newark, Ohio
+1 OCCU Farmer
+1 NOTE Private, Company B, 76th Ohio Volunteer Infantry, 1862-1865. Wounded at Ringgold Gap.
+1 FAMC @F1@
+1 FAMS @F2@
+0 @I4@ INDI
+1 NAME Daniel /Whitfield/
+1 SEX M
+1 BIRT
+2 DATE 1844
+2 PLAC Licking, Ohio, USA
+1 DEAT
+2 DATE 9 MAR 1864
+2 PLAC Chattanooga, Tennessee, USA
+2 CAUS Typhoid fever
+1 FAMC @F1@
+0 @I5@ INDI
+1 NAME Martha Ellen /Price/
+1 SEX F
+1 BIRT
+2 DATE 2 SEP 1845
+2 PLAC Newark, Licking, Ohio, USA
+1 DEAT
+2 DATE 1920
+2 PLAC Newark, Licking, Ohio, USA
+1 FAMS @F2@
+0 @I6@ INDI
+1 NAME Thomas Henry /Whitfield/
+1 SEX M
+1 BIRT
+2 DATE 1867
+1 DEAT
+2 DATE 1938
+1 FAMC @F2@
+1 FAMS @F3@
+0 @I7@ INDI
+1 NAME Clara Belle /Whitfield/
+1 SEX F
+1 BIRT
+2 DATE 1870
+1 DEAT
+2 DATE 1951
+1 FAMC @F2@
+0 @I8@ INDI
+1 NAME Joseph /Whitfield/
+1 SEX M
+1 BIRT
+2 DATE 1874
+1 DEAT
+2 DATE 1955
+1 FAMC @F2@
+0 @I9@ INDI
+1 NAME Ruth /Whitfield/
+1 SEX F
+1 BIRT
+2 DATE 1902
+1 DEAT
+2 DATE 1990
+1 FAMC @F3@
+0 @I10@ INDI
+1 NAME Walter /Mercer/
+1 SEX M
+1 BIRT
+2 DATE 1946
+2 PLAC Columbus, Ohio, USA
+1 FAMC @F4@
+0 @F1@ FAM
+1 HUSB @I1@
+1 WIFE @I2@
+1 CHIL @I3@
+1 CHIL @I4@
+0 @F2@ FAM
+1 HUSB @I3@
+1 WIFE @I5@
+1 MARR
+2 DATE 11 OCT 1866
+2 PLAC Newark, Licking, Ohio, USA
+1 CHIL @I6@
+1 CHIL @I7@
+1 CHIL @I8@
+0 @F3@ FAM
+1 HUSB @I6@
+1 CHIL @I9@
+0 @F4@ FAM
+1 WIFE @I9@
+1 CHIL @I10@
+0 TRLR

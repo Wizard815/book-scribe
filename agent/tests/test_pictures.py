@@ -118,9 +118,9 @@ async def test_making_a_picture_shows_it_asks_and_only_a_yes_puts_it_in_the_book
     assert "dusk" not in ag.imagegen.prompts[0] and "no text" in ag.imagegen.prompts[0]
     assert not any(p.image for p in store.paragraphs("demo", 1))
     r = await ag.handle("s", "yes")
-    assert "The picture is in chapter 1" in r.text and store.paragraphs("demo", 1)[-1].image[0] == "The hand of the lake" and r.changed
+    assert "The picture is in chapter 1" in r.text and store.paragraphs("demo", 1)[-1].image[0] == "The hand of the lake (an illustration)" and r.changed
     name = store.paragraphs("demo", 1)[-1].image[1]; assert ag.images.path("demo", name).is_file()
-    r = await ag.handle("s", "read the picture in chapter 1"); assert r.text == "Picture: The hand of the lake"
+    r = await ag.handle("s", "read the picture in chapter 1"); assert r.text == "Picture: The hand of the lake (an illustration)"
     r = await ag.handle("s", "rewrite the picture in chapter 1 to be sadder"); assert "is a picture" in r.text and r.pending is None
     r = await ag.handle("s", "undo that"); assert not any(p.image for p in store.paragraphs("demo", 1))
 
@@ -315,7 +315,7 @@ async def test_a_rejected_picture_is_never_saved_and_a_changed_request_makes_a_n
     assert second != first and r.picture["url"].endswith(second) and "empty frozen lake" in r.text
     with pytest.raises(FileNotFoundError):
         ag.images.path("demo", first, candidate=True)  # the rejected one is gone
-    await ag.handle("s", "yes"); assert store.paragraphs("demo", 1)[-1].image[0] == "The empty lake"
+    await ag.handle("s", "yes"); assert store.paragraphs("demo", 1)[-1].image[0] == "The empty lake (an illustration)"
     llm.replies = ['[[tool: make_picture {"prompt": "a castle", "caption": "A castle"}]]', "A castle."]
     await ag.handle("s", "make a picture of a castle"); third = ag.session("s").pending.data["candidate"]
     await ag.handle("s", "no")
@@ -569,7 +569,7 @@ async def test_natural_yes_answers_are_yes_and_a_waiting_picture_is_never_lost_t
     ag, store, llm = make(books)
     llm.replies = ['[[tool: make_picture {"prompt": "a stone", "caption": "The stone"}]]', "A grey stone."]
     await ag.handle("s", "make a picture of the stone")
-    r = await ag.handle("s", "Yes, put that one in"); assert "in chapter 1" in r.text and store.paragraphs("demo", 1)[-1].image[0] == "The stone"
+    r = await ag.handle("s", "Yes, put that one in"); assert "in chapter 1" in r.text and store.paragraphs("demo", 1)[-1].image[0] == "The stone (an illustration)"
     ctx = harness.Ctx(sess=ag.session("s"))
     await ag.toolbox.call("propose_wiki_notes", {"notes": [{"kind": "characters", "name": "A", "note": "x"}, {"kind": "characters", "name": "B", "note": "y"}]}, ctx)
     r = await ag.handle("s", "Yes, save them."); assert "Saved to the wiki: A, B" in r.text

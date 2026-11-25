@@ -1177,3 +1177,24 @@ def test_rm5_more_answers_and_refusals():
     import intent
     assert intent.confirmation("Yes, that's more like it.") == ("yes", "")
     assert intent.book_title("Please make sure the title of the book itself is Samuel's War, so it's on the front page when I print it.") == "Samuel's War"
+
+
+def test_rm6_python_style_tool_calls_and_bracket_markers_never_reach_the_book():
+    from agent import clean_draft
+    assert clean_draft("Revised: propose_append(text='The rain fell on the camp all night.', chapter=1) Should I save it?") == "The rain fell on the camp all night."
+    assert clean_draft("[the draft paragraph was saved] Here's the next paragraph for chapter 3: propose_append(text='Daniel died in March.', chapter=3)") == "Daniel died in March."
+    import uisettings
+    assert uisettings.parse("I can't see it well anymore. Are there people in it?", None) is None
+
+
+@pytest.mark.asyncio
+async def test_rm6_a_picture_description_is_never_saved_as_a_paragraph_and_chatter_is_refused(books):
+    ag, store, llm = make(books)
+    s = ag.session("s")
+    s.history.append({"role": "assistant", "content": "Here is your picture, Samuel Whitfield Tintype 1862. It is a sepia-toned portrait of a young soldier seated on a stool, wearing a dark wool frock coat with brass buttons and a forage cap, his hands resting on his knees, against a plain studio backdrop with an oval frame around him and scratches on the old plate. Should I put it in chapter 1?"})
+    n = len(store.paragraphs("demo", 1))
+    llm.replies = ["Okay."]
+    await ag.handle("s", "Good.")
+    assert len(store.paragraphs("demo", 1)) == n
+    out = await ag.toolbox.call("propose_append", {"text": "I understand. I will just provide the story prose from now on, without any extra words around it at all."}, harness.Ctx(sess=s))
+    assert out.startswith("Error")
