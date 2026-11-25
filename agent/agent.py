@@ -132,6 +132,7 @@ class Session:
     last_ideas: dict | None = None  # the last random-idea request, so "more" can repeat it
     web_hits: dict = field(default_factory=dict)  # last web search results by id
     research: dict = field(default_factory=dict)  # every page looked up this session, by title: what the writer heard counts as a source
+    just_deleted: bool = False  # the last turn deleted something: "no, wait, keep it" now means undo
     last_edit: tuple | None = None  # (instruction, paragraph id) of a change that found nothing to change, for one turn: "no, I meant paragraph three"
     work: int = 0  # the chapter new writing goes into (set by "start / go to chapter", by naming a chapter, by saving): looking at other paragraphs never moves it
     viewing_now: int | None = None  # the chapter the page showed when this request was sent
@@ -282,6 +283,9 @@ class Agent:
             return self._reply(sess, "I didn't catch that. Try again.")
         sess.last_user = text
         self._learn_genre(text)
+        jd, sess.just_deleted = sess.just_deleted, False
+        if jd and not sess.pending and re.match(r"^(?:(?:no|oh|wait|oh no|hold on|stop)[,.!]?\s*)+(?:keep it|keep that|don'?t delete|do not delete|i want (?:it|that) back|put it back|bring it back)\b", intent.norm(text)):
+            return self._undo_reply(sess)  # "No, wait. Keep it." just after the delete: put it back
         last_edit, sess.last_edit = sess.last_edit, None
         if last_edit and not sess.pending and re.match(r"^(?:(?:oh|sorry|no|wait|um|uh)\s+)*(?:i (?:meant|mean)|it'?s|its|i said)\b", intent.norm(text)) \
                 and ((rf_ := intent.parse_ref(text)).para is not None or re.search(r"\b(?:before|after|next|previous)\b", intent.norm(text))):
@@ -333,7 +337,7 @@ class Agent:
             return self._describe_picture(sess, text) or self._reply(sess, "I do not know which picture you mean. Say which chapter it is in, or what it shows, and I will describe it.")
         if sess.pending and intent.undo_request(text) and sess.pending.kind not in ("voice",):  # "undo that" while a proposal waits: drop the proposal
             sess.pending = None
-            return self._reply(sess, "Okay, I dropped that. Nothing in your book was changed.")
+            return self._reply(sess, "Okay, I dropped the draft that was waiting; nothing in your book was changed. If you meant the paragraph I saved before, say undo again.")
         if sess.pending and (mode := intent.autosave_mode(text)) is not None:  # "ask me first from now on" with a draft waiting: the setting changes, the draft keeps waiting
             if self.prefs:
                 self.prefs.update({"auto_save": mode})
@@ -517,6 +521,12 @@ class Agent:
                     r = await self._converse(sess, text)
                     if sess.pending is not None and sess.pending is not keep and sess.pending.kind in ("append", "edit", "picture"):
                         return r  # the model made a NEWER proposal (a revised draft): that is what a "yes" now answers, never the older one that was waiting
+                    if keep.kind in ("append", "edit") and not intent.is_question(text) and (para_ := self._paragraph_in(r.text)):
+                        keep.text, keep.ask = para_, ""  # the model wrote the new version into the chat: THAT is what a yes saves now, never the old one
+                        keep.ask = self._ask_for(sess, keep)
+                        sess.pending = keep
+                        r = self._reply(sess, f"Here is the new version: {para_} {keep.ask}", await self._draft_speech(sess, para_, "Here is the new version:", keep.ask))
+                        return r
                 sess.pending = keep
                 r.pending = {"kind": keep.kind, "text": keep.text, "paragraph_id": keep.paragraph_id, "ask": keep.ask}
                 if keep.ask and keep.kind != "page" and not re.search(r"\b(?:still waiting|waiting for your (?:yes|answer)|say yes or no)\b", r.text, re.I):
@@ -541,7 +551,8 @@ class Agent:
             sess.pending = Pending("append", draft, self._work(sess))
             sess.history[-1]["content"] = "That paragraph is in the book now."  # so a later "yes" can never save it a second time (plain words: a model copies brackets)
             r = await self._accept(sess)
-            r.text += " (That was the paragraph I just showed you.)"
+            if r.changed:
+                r.text += " (That was the paragraph I just showed you.)"
             return r
 
         sents_ = [x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x.strip()]
@@ -590,6 +601,8 @@ class Agent:
 
         if r := self._ui_reply(sess, text):  # "I can't see it": instant, no model call
             return r
+        if re.search(r"\bauthor'?s note\b|\bnote (?:at|for) the (?:very )?(?:front|start|beginning)\b|\bforeword\b", intent.norm(text)) and not intent.is_question(text) and sess.mode == "narrator":
+            return await self._author_note_reply(sess, text)
         if (bt := intent.book_title(text)) is not None:  # "call the book Samuel's War": the title on the exported book
             b_ = self.store.bible(sess.book)
             prem = b_.read("premise") or ""
@@ -788,6 +801,8 @@ class Agent:
         try:
             if p.kind == "edit":
                 return f"Save this change to {self._where(sess, self.store.find(sess.book, p.paragraph_id))}?"
+            if p.kind == "note":
+                return "Put this author's note at the front of the book, before chapter 1?"
             if p.kind == "append":
                 return f"Add this paragraph to chapter {p.chapter}?" if p.chapter in self.store.chapter_numbers(sess.book) else f"Start chapter {p.chapter} with this paragraph?"
             if p.kind == "wiki":
@@ -1058,6 +1073,7 @@ class Agent:
                 else:
                     self.store.delete_paragraph(sess.book, p.paragraph_id)
                     text, changed = "Deleted. Say undo if you want it back.", []
+                sess.just_deleted = True
             else:
                 new = self.store.move_paragraph(sess.book, p.paragraph_id, (p.data or {})["to"], (p.data or {}).get("where", "end"))
                 sess.chapter, sess.focus = new.chapter, new.id
@@ -1401,7 +1417,8 @@ class Agent:
         if self.index:
             self.index.schedule(sess.book)
         said = {"edit": "I took back the change I just saved", "append": "I took back the paragraph I just added", "delete": "I put back the paragraph I deleted",
-                "move": "I moved the paragraph back where it was", "delete_many": "I put back the paragraphs I deleted"}.get(done["what"], "I took back the last change")
+                "move": "I moved the paragraph back where it was", "delete_many": "I put back the paragraphs I deleted",
+                "append_many": "I took back the paragraphs I just added"}.get(done["what"], "I took back the last change")
         after = f"Chapter {gone} was new, so it is gone again." if gone and done["chapter"] == gone else f"Chapter {done['chapter']} is as it was before."
         if gone and done["chapter"] != gone:
             after += f" Chapter {gone} was new, so it is gone again."
@@ -1862,7 +1879,7 @@ class Agent:
             recall = (recall + "\n\n" if recall else "") + docs
         msgs = self._context(sess, text, canon=canon, sparks=self._sparks(sess, text), tools=True, recall=recall)
         had_pending, sig0 = sess.pending is not None, self._book_sig(sess.book)
-        out, _ = await harness.run(self.llm, msgs, self.toolbox, ctx, max_steps=3, temperature=self._temperature())
+        out, extra_ = await harness.run(self.llm, msgs, self.toolbox, ctx, max_steps=3, temperature=self._temperature())
         if re.fullmatch(r"\s*[\[(][^\]\)]{0,160}[\])]\s*", out or "") and not ctx.drafted and not ctx.picture:
             # the model wrote a note ("[proposed a new paragraph]") instead of doing it: ask once more, plainly
             out, _ = await harness.run(self.llm, msgs + [{"role": "assistant", "content": out}, {"role": "user", "content":
@@ -1872,7 +1889,9 @@ class Agent:
                 out = ""
         if not (out or "").strip() and not ctx.drafted and not ctx.picture and not sess.pending:
             try:  # the model gave nothing: ask once more without tools rather than say "I'm not sure what to say"
-                out = harness.parse_calls(await self.llm.chat(msgs + [{"role": "user", "content": "Answer the writer now in plain spoken words (1-3 sentences), or write the paragraph they asked for."}], temperature=self._temperature()))[1]
+                seen_ = "\n".join(m["content"] for m in (extra_ or []) if m.get("role") in ("tool", "user") and isinstance(m.get("content"), str))[-3000:]
+                out = harness.parse_calls(await self.llm.chat(msgs + [{"role": "user", "content": (f"What you found:\n{seen_}\n\n" if seen_ else "")
+                                                                                       + "Answer the writer now in plain spoken words (1-3 sentences), using what you found, or write the paragraph they asked for."}], temperature=self._temperature()))[1]
             except Exception:
                 out = ""
         out = (out or "").strip() or ("Goodbye for now. Everything you saved is in your book." if re.search(r"\b(?:good ?bye|bye|see you|talk (?:to you )?later)\b", text.lower()) else "I'm not sure what to say to that. Could you tell me a little more?")
@@ -1958,6 +1977,23 @@ class Agent:
 
     _ANIMAL = re.compile(r"\b(?:dog|dogs|horse|horses|cat|cats|cow|cows|mule|mules|ox|oxen|pony|pet|puppy|calf|goat|pig|hen|rooster)\b")
 
+    async def _author_note_reply(self, sess: Session, text: str) -> Reply:
+        """"Write an author's note for the very front": a short note on what comes from the papers and what is imagined, kept apart from the chapters."""
+        docs = ", ".join(m["title"] for m in (self.library.items(sess.book) if self.library else []) if m.get("kind") != "image")[:600]
+        genre = self._pref("genre", "")
+        msgs = self._context(sess, text) + [{"role": "user", "content":
+            f"The writer asks: {text}\n\nWrite a short author's note (60-140 words, in the writer's own voice, first person) for the front of the book. Say whose story it is, "
+            f"which papers it rests on ({docs or 'the family papers'}), and plainly that {'the scenes and talk are imagined from them' if genre != 'history' else 'it keeps to what the papers say'}. "
+            "Output only the note."}]
+        note = clean_draft(await self.llm.chat(msgs, temperature=0.5, max_tokens=400))
+        if len(note.split()) < 20 or self._is_talk(note):
+            return self._reply(sess, "I could not write the note just now. Ask me again in a moment.")
+        sess.pending = Pending("note", note, 0)
+        sess.pending.ask = self._ask_for(sess, sess.pending)
+        self._remember(sess, text, f"Here is an author's note for the front of the book: {note} {sess.pending.ask}")
+        return self._reply(sess, f"Here is an author's note for the front of the book: {note} {sess.pending.ask}",
+                           await self._draft_speech(sess, note, "Here is an author's note for the front of the book:", sess.pending.ask))
+
     async def _library_picture_reply(self, sess: Session, text: str) -> Reply | None:
         """The writer asks to put one of THEIR pictures in the book: find it in the library by the words they use, and show it with a yes/no."""
         n = intent.norm(text)
@@ -1987,6 +2023,11 @@ class Agent:
         sess.history.append({"role": "assistant", "content": r.text})
         return self._attach(sess, r, ctx, "", text)
 
+    @staticmethod
+    def _para_count(text: str) -> int:
+        m = re.search(r"\b(2|3|4|two|three|four|a couple of) (?:more )?(?:paragraphs|parts|bits)\b", intent.norm(text))
+        return {"two": 2, "three": 3, "four": 4, "a couple of": 2}.get(m.group(1), int(m.group(1)) if m and m.group(1).isdigit() else 1) if m else 1
+
     def _paragraph_in(self, out: str) -> str:
         """A story paragraph written into a chat reply, without the talk around it; "" when there is none."""
         blocks = [b.strip() for b in re.split(r"\n\s*\n", out or "") if b.strip()]
@@ -2002,7 +2043,7 @@ class Agent:
         text = "\n\n".join(prose)
         return text if len(text.split()) >= 45 and (len(prose) > 1 or self._looks_like_paragraph(text)) else ""
 
-    _TALK = re.compile(r"(?i)^(?:i(?:'m|'ve|'ll|'d| am| have| will| can| noticed| understand| could| couldn'?t| apologi[sz]e| see| think| made| was (?:not|unable))|you(?: are|'re)|my apologies|sorry|okay|ok|sure|here'?s|here is|let me|of course|great|wonderful|revised)\b"
+    _TALK = re.compile(r"(?i)^(?:i(?:'m|'ve|'ll|'d| am| have| will| can| noticed| understand| could| couldn'?t| apologi[sz]e| see| think| made| was (?:not|unable))|you(?: are|'re)|my apologies|sorry|(?:okay|ok|sure|of course|great|wonderful|alright)[,.!]|here'?s|here is|let me|revised:)"
                        r"|\b(?:story bible|your notes or documents|not in your documents|the writer asked|should i (?:save|add) it|shall i (?:save|add))\b")
 
     def _is_talk(self, text: str) -> bool:
@@ -2098,7 +2139,7 @@ class Agent:
         ctx = harness.Ctx(sess=sess)
         canon = await self._canon_by_meaning(sess, text)
         msgs = self._context(sess, text, recent, canon=canon, sparks=self._sparks(sess, text, drafting=True), tools=True) + [
-            {"role": "user", "content": f"{text}\n\nStory so far in this chapter (most recent):\n{recent or '(nothing yet)'}\n\nWrite ONE new paragraph of prose. Output only the paragraph."}
+            {"role": "user", "content": f"{text}\n\nStory so far in this chapter (most recent):\n{recent or '(nothing yet)'}\n\n" + (f"Write {k_} new paragraphs of prose, separated by a blank line. Output only the paragraphs." if (k_ := self._para_count(text)) > 1 else "Write ONE new paragraph of prose. Output only the paragraph.")}
         ]
         new, issues = await self._gated(msgs, ctx, tools=True)
         new = clean_draft(new)
@@ -2191,6 +2232,10 @@ class Agent:
             return self._commit_change(sess)
         if sess.pending.kind == "wiki":
             return self._commit_wiki(sess)
+        if sess.pending.kind == "note":
+            p, sess.pending = sess.pending, None
+            self.store.bible(sess.book).write_doc("authors_note", clean_draft(p.text) + "\n")
+            return self._reply(sess, "Saved. The author's note is at the front of the book, before chapter 1.")
         if sess.pending.kind == "family":
             p, sess.pending = sess.pending, None
             res = bible_import.commit(self.store, self.library, sess.book, p.data["plan"])
@@ -2257,7 +2302,7 @@ class Agent:
             p.text = clean_draft(p.text) or p.text  # the last guard: no lead-in, no "Should I save it?", no wrapping quotes ever reach the book
             if self._is_talk(p.text):
                 return self._reply(sess, "That was my own talk, not a paragraph for the book, so I did not save it. Ask me again and I will write the paragraph itself.")
-            if p.kind == "append" and (re.match(r"(?i)^author'?s note\b", p.text) or re.search(r"\bauthor'?s note\b", intent.norm(sess.last_user or "") + " " + " ".join(m["content"] for m in sess.history[-4:] if m.get("role") == "user").lower())):
+            if p.kind == "append" and re.match(r"(?i)^author'?s note\b", p.text):
                 note = re.sub(r"(?i)^author'?s note[:.\s-]*", "", p.text).strip()
                 self.store.bible(sess.book).write_doc("authors_note", note + "\n")
                 return self._reply(sess, "Saved as the author's note. It is printed at the front of the book, before chapter 1.")
@@ -2271,12 +2316,16 @@ class Agent:
                 paras_ = self.store.paragraphs(sess.book, p.chapter)
                 texts_ = [i for i, q in enumerate(paras_) if not q.image]
                 pieces = [x.strip() for x in re.split(r"\n\s*\n", p.text) if x.strip()] or [p.text]  # a draft of several paragraphs is saved as several paragraphs
+                if len(pieces) > 1:
+                    import uuid as _uuid
+                    self.store._group, self.store._gkind = _uuid.uuid4().hex, "append_many"  # ...and one undo takes them all back
                 if where is not None and where >= 0 and paras_ and (at := 0 if where == 0 else (texts_[where - 1] + 1 if 0 < where <= len(texts_) else len(paras_))) < len(paras_):
                     for piece in pieces:
                         para = self.store.insert_paragraph(sess.book, p.chapter, piece, before_id=paras_[at].id)
                 else:
                     for piece in pieces:
                         para = self.store.append_paragraph(sess.book, p.chapter, piece, p.scene)
+                self.store._group = self.store._gkind = None
                 sess.work = p.chapter
         except BookError as e:
             return self._reply(sess, f"I couldn't save that: {e}")

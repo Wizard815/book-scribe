@@ -419,6 +419,14 @@ def build(agent) -> Toolbox:
             return "Error: that is not story prose. Give ONLY the paragraph that goes into the book, with no apology and no talk to the writer."
         if len(text) < 30:
             return "Give the whole paragraph in text (at least a sentence or two)."
+        for h in list(getattr(ctx.sess, "research", {}).values())[-12:]:  # looked-up history copied into the book is not story
+            src = re.findall(r"[a-z']+", str(h.get("text", "")).lower())
+            grams = {" ".join(src[i:i + 8]) for i in range(max(0, len(src) - 7))}
+            mine = re.findall(r"[a-z']+", text.lower())
+            hits = sum(1 for i in range(max(0, len(mine) - 7)) if " ".join(mine[i:i + 8]) in grams)
+            if grams and hits >= 3:
+                return ("Error: that is the looked-up history, copied, not a story paragraph. To keep the history, use propose_save_page; "
+                        "to use it in the book, write a scene in your own words.")
         if len(re.findall(r"[.!?][\"”’)]*(?:\s|$)", text)) < 2 and len(text) < 170:
             return "That is only one short sentence. Write a full paragraph of four to seven sentences (unless the writer asked for something short), then propose it again."
         if sess.pending and not agent._supersede(sess):

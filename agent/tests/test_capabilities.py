@@ -1258,3 +1258,43 @@ async def test_rm8_im_talk_is_never_saved_and_forget_the_picture_adds_nothing(bo
     assert ag.session("s").pending is None and len(llm.calls) == k and not any(p.image for p in store.paragraphs("demo", 1))
     from book_store import clean_paragraph
     assert clean_paragraph(r"He\'d never seen \"the sea\" before.") == 'He\'d never seen "the sea" before.'.replace("\\'", "'")
+
+
+@pytest.mark.asyncio
+async def test_rm9_authors_note_is_its_own_thing_and_multi_paragraph_undo_and_keep_it_after_delete(books):
+    ag, store, llm = make(books)
+    before = store.read_chapter_raw("demo", 1)
+    llm.replies = ["This is the story of my great-grandfather, Samuel Whitfield. It rests on his muster card, a letter and his pension papers; the scenes and the talk are imagined from them."]
+    r = await ag.handle("s", "Write an author's note for the very front, before chapter one.")
+    assert ag.session("s").pending.kind == "note" and "front of the book" in r.text
+    await ag.handle("s", "yes")
+    import export, images
+    out = export.to_html(store, images.ImageStore(store), "demo")
+    assert store.read_chapter_raw("demo", 1) == before and out.index("Author’s note") < out.index("Chapter 1")
+    two = ("Daniel stood at the door of the tent with his cap in his hands and the rain running off the canvas behind him.\n\n"
+           "\"You came,\" he said, and Samuel crossed the muddy floor in three steps and took his brother by both shoulders.")
+    _wait(ag, text=two)
+    await ag.handle("s", "yes")
+    r = await ag.handle("s", "undo")
+    assert store.read_chapter_raw("demo", 1) == before and "paragraphs" in r.text
+    await ag.handle("s", "delete paragraph 2")
+    await ag.handle("s", "yes")
+    assert store.read_chapter_raw("demo", 1) != before
+    await ag.handle("s", "No, wait. Keep it.")
+    assert store.read_chapter_raw("demo", 1) == before
+
+
+@pytest.mark.asyncio
+async def test_rm9_copied_history_is_not_story_and_a_chat_revision_replaces_the_waiting_draft(books):
+    ag, store, llm = make(books)
+    s = ag.session("s")
+    s.research["Dependent and Disability Pension Act"] = {"title": "x", "url": "u", "text": "The Dependent and Disability Pension Act of 27 June 1890 gave pensions to Union veterans of the Civil War who had served at least 90 days, had been honorably discharged, and were unable to do manual labor."}
+    out = await ag.toolbox.call("propose_append", {"text": "The Dependent and Disability Pension Act of 27 June 1890 gave pensions to Union veterans of the Civil War who had served at least 90 days, had been honorably discharged, and were unable to do manual labor, whether or not the disability came from service."}, harness.Ctx(sess=s))
+    assert out.startswith("Error")
+    _wait(ag)
+    NEW = ("The wind came hard off the prairie that morning, and Everett walked the last mile with his collar up and his bag on his good shoulder, "
+           "counting the fence posts the way his father had taught him, until the station roof showed grey above the cottonwoods.")
+    llm.replies = [f"Of course. Here it is:\n\n{NEW}\n\nIs that better?"]
+    await ag.handle("s", "Make him count the fence posts the way his father taught him.")
+    await ag.handle("s", "yes")
+    assert "counting the fence posts" in store.read_chapter_raw("demo", 1)
