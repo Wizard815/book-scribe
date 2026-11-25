@@ -937,3 +937,69 @@ def test_r10_the_tree_finds_a_child_whose_father_lacks_the_family_link():
 def test_r10_undo_with_a_reason_and_plurals_of_known_words():
     import intent
     assert intent.undo_request("Undo that, I liked cold better.")
+
+
+# ---------------------------------------------------------------------------------------------- grandpa round 11 (regressions)
+async def _picture_waiting(ag, llm):
+    llm.replies = ['[[tool: make_picture {"prompt": "a young soldier in uniform", "caption": "Everett, 1918", "after": 1}]]', "Here he is: a young soldier in uniform."]
+    await ag.handle("s", "make a picture of Everett in his uniform")
+    assert ag.session("s").pending and ag.session("s").pending.kind == "picture"
+
+
+@pytest.mark.asyncio
+async def test_r11_remarks_before_a_yes_on_a_picture_are_not_screen_requests(books):
+    for t in ("I can't see his face so good, it's very faded. Yes, that's him all the same. Put it in.", "I can't really see it, but alright. Yes, put it in there."):
+        ag, store, llm = make(books)
+        await _picture_waiting(ag, llm)
+        n = len(llm.calls)
+        r = await ag.handle("s", t)
+        assert not r.ui and ag.session("s").pending is None and any(p.image for p in store.paragraphs("demo", 1)) and len(llm.calls) == n, t
+
+
+@pytest.mark.asyncio
+async def test_r11_yes_with_praise_or_them_and_a_request_after(books):
+    ag, store, llm = make(books)
+    _wait(ag)
+    await ag.handle("s", "Yes, that's beautiful.")
+    assert DRAFT in store.read_chapter_raw("demo", 1)
+    s = ag.session("s")
+    await ag.toolbox.call("propose_wiki_notes", {"notes": [{"kind": "characters", "name": "Tova Berg", "note": "A neighbour."}]}, harness.Ctx(sess=s))
+    llm.replies = ["The Wieland came into New York harbour on the twenty-first of May, and Nils held the boy up to see the city across the water."] * 3
+    await ag.handle("s", "Yes, save them, and write the next one, um, start the first chapter.")
+    assert "Tova Berg" in store.bible("demo").characters() and s.pending and s.pending.kind == "append"
+    s.pending = None
+    d2 = "Snow lay on the fence posts and the cows stood close by the barn door waiting for the hay to come down."
+    _wait(ag, text=d2)
+    llm.replies = ["I can put the farm photo at the end of chapter one."]
+    await ag.handle("s", "Yes, that's nice. Put it in. Now, I gave you an old picture of the farm. Can you put that one at the end of chapter one?")
+    assert d2 in store.read_chapter_raw("demo", 1) and "farm" in llm.calls[-1][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_r11_a_request_before_the_yes_is_done_after_saving(books):
+    ag, store, llm = make(books)
+    s = ag.session("s")
+    await ag.toolbox.call("propose_wiki_notes", {"notes": [{"kind": "characters", "name": "Nils Lund", "note": "Everett's father."}]}, harness.Ctx(sess=s))
+    llm.replies = ["I will add Dorothy and Karin as well."]
+    await ag.handle("s", "Dorothy is my little sister, she's still living. Put her in too, and Karin. Yes, save them all.")
+    assert "Nils Lund" in store.bible("demo").characters() and "Put her in too" in llm.calls[-1][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_r11_bring_it_back_and_put_it_in_saves_even_after_another_save(books):
+    ag, store, llm = make(books)
+    A = "The draft card came in June. Everett filled it in at the courthouse in a careful hand and folded the copy into his coat."
+    s = ag.session("s")
+    s.pending = __import__("agent").Pending("append", A, 1)
+    assert ag._supersede(s)
+    s.dropped_stale = True  # something else was saved since
+    await ag.handle("s", "No, no. I said yes to that one. Bring it back and put it in chapter one.")
+    assert A in store.read_chapter_raw("demo", 1)
+
+
+def test_r11_undo_after_a_hmm_and_smaller_screen_words_at_100_percent():
+    import intent, uisettings
+    assert intent.undo_request("Hmm. Undo that, I liked it better before.")
+    look = dict(uisettings.DEFAULT); look["size"] = 5
+    new, said = uisettings.parse("Make the words a bit smaller again, that's too big.", look)
+    assert new["size"] == 4

@@ -79,7 +79,7 @@ def is_noise(text: str) -> bool:
 
 # --- confirmations ---------------------------------------------------------------------------------
 _YES_CORE = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "save", "confirm", "ahead", "good", "perfect", "great", "fine", "alright", "correct", "right", "approve", "accept", "keep"}
-_YES_FILL = {"please", "do", "it", "that", "go", "sounds", "looks", "better", "nice", "nicer", "lovely", "wonderful", "excellent", "much", "thanks", "thank", "you", "now", "then", "and", "the", "is", "its", "it's", "one", "this", "all", "i", "like", "love", "that's", "thats", "lets", "let's", "sure", "just"}
+_YES_FILL = {"them", "those", "these", "beautiful", "fantastic", "marvelous", "marvellous", "grand", "splendid", "terrific", "super", "fine", "good", "great", "right", "very", "really", "so", "oh", "well", "please", "do", "it", "that", "go", "sounds", "looks", "better", "nice", "nicer", "lovely", "wonderful", "excellent", "much", "thanks", "thank", "you", "now", "then", "and", "the", "is", "its", "it's", "one", "this", "all", "i", "like", "love", "that's", "thats", "lets", "let's", "sure", "just"}
 _NO_CORE = {"no", "nope", "nah", "cancel", "discard", "scrap", "never", "dont", "don't", "stop", "reject", "undo"}
 _NO_FILL = {"please", "mind", "that", "it", "save", "use", "thanks", "thank", "you", "this", "one", "do", "not", "now", "i", "dont", "don't", "want"}
 HOLD = re.compile(r"^(not yet|wait|hold on|hang on|one (moment|second|sec)|give me a (moment|second|sec)|let me think)\b")
@@ -545,8 +545,9 @@ _UNDO = re.compile(r"^(?:please |ok |okay |no |oh |hey )*(?:can you |could you )
 def undo_request(text: str) -> bool:
     """"undo that", "put it back", "take that back": the writer wants the last saved change reversed."""
     n = norm(text)
-    if not _UNDO.match(n) and (first := re.split(r"[,.;!]\s+|\s+(?:because|i liked|i like|i prefer)\b", text.strip(), maxsplit=1)[0]) != text.strip():
-        n = norm(first)  # "Undo that, I liked cold better."
+    if not _UNDO.match(n):  # "Hmm. Undo that, I liked cold better.": the first real clause
+        clauses = [norm(c) for c in re.split(r"[,.;!?]\s*|\s+(?:because|i liked|i like|i prefer)\b", text.strip())]
+        n = next((c for c in clauses if c and c not in ("oh", "well", "ok", "okay", "no", "so", "hmm", "ah", "oh no", "oh dear", "wait")), n)
     return len(n.split()) <= 9 and bool(_UNDO.match(n))
 
 

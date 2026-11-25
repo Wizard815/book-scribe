@@ -275,7 +275,7 @@ class Agent:
 
         nb_ = intent.norm(text)
         save_back = bool(re.search(r"\b(?:bring|get) (?:that|it|that 1|the \w+(?: 1)?) back\b", nb_) and re.search(r"\b(?:said yes|save it|put it in|add it|keep it)\b", nb_))
-        if sess.last_dropped is not None and not sess.dropped_stale and (save_back or re.match(r"^(?:please )?(?:bring|put|get) (?:that|it|the (?:last|other|first|dropped|old) (?:one|paragraph|draft|change)) back$|^i (?:want|wanted) (?:that|it|the (?:other|first|last) one) back$|^(?:restore|undrop) (?:that|it)$", nb_)):
+        if sess.last_dropped is not None and (save_back and sess.last_dropped.kind in ("append", "picture") or not sess.dropped_stale and ( re.match(r"^(?:please )?(?:bring|put|get) (?:that|it|the (?:last|other|first|dropped|old) (?:one|paragraph|draft|change)) back$|^i (?:want|wanted) (?:that|it|the (?:other|first|last) one) back$|^(?:restore|undrop) (?:that|it)$", nb_))):
             if save_back and sess.last_dropped.kind in ("append", "picture"):  # "No, I said yes to that one. Bring it back and put it in chapter two."
                 keep_ = sess.pending if sess.pending and sess.pending.kind in ("append", "edit", "picture") else None
                 sess.pending, sess.last_dropped = sess.last_dropped, None
@@ -523,6 +523,9 @@ class Agent:
             if started and sess.mode == "narrator" and not self._standalone_command(more_text) and not intent.is_question(more_text) and not intent.is_draft(more_text):
                 more_text = f"Write the first paragraph of this chapter: {more_text}"
             r2 = await self._handle(sid, more_text, sess.book)
+            if started and sess.pending and sess.pending.kind == "append":
+                r1.text = r1.text.split(". Tell me what happens")[0].rstrip(".") + "."
+                r1.speech = [{"speaker": vx.ASSISTANT, "text": r1.text}]
             r2.text = f"{r1.text} {r2.text}".strip()
             r2.speech = (r1.speech or []) + (r2.speech or [])
             r2.ui = r2.ui or r1.ui
@@ -914,18 +917,20 @@ class Agent:
             return None
         kinds = [self._sentence_kind(sess, x) for x in sents]
         at = next((i for i, k in enumerate(kinds) if k in ("yes", "no")), None)
-        if at is None or any(k == "other" for k in kinds[:at]) or {"yes", "no"} <= set(kinds):
+        if at is None or {"yes", "no"} <= set(kinds):
             return None
+        if at > 0 and not re.match(r"^(?:yes|yeah|yep|yup|no|nope)\b", intent.norm(sents[at])) and not self._SAVE_PHRASE.match(intent.norm(sents[at])):
+            return None  # after other talk, only a plain "Yes, …" / "Put it in." counts as the answer
         k = kinds[at]
-        after = " ".join(x for x, kk in zip(sents[at + 1:], kinds[at + 1:]) if kk != "yes" and not (kk == "neutral" and len(x.split()) <= 3)).strip()
+        # what comes before the answer: a remark ("I can't see his face so good") is dropped; a request ("Put her in too, and Karin") is done afterwards
+        before = [x for x, kk in zip(sents[:at], kinds[:at]) if kk == "other" and self._REQ_VERB.search(intent.norm(x)) and not intent.is_question(x)]
+        after = " ".join(before + [x for x, kk in zip(sents[at + 1:], kinds[at + 1:]) if kk != "yes" and not (kk == "neutral" and len(x.split()) <= 3)]).strip()
         if not after:
             return k, ""
         if self._NOT_AFTER.match(intent.norm(after)) and sess.pending.kind in ("append", "edit", "picture"):
             return None  # "No. Make it shorter." / "Yes. But at the end.": about the thing waiting
         if k == "no" and sess.pending.kind in ("append", "edit"):
             return None  # "No. He never said that." is a revision of the draft
-        if k == "yes" and (intent.is_question(after) or after.endswith("?")) and sess.pending.kind in ("append", "edit") and at == 0:
-            return None  # handled as save-then-answer
         return k, after
 
     def _standalone_command(self, rest: str) -> bool:
@@ -1101,7 +1106,8 @@ class Agent:
             tok = m.group(1)
             low = tok.lower()
             stem = re.sub(r"(?:'s|s|es)$", "", low)
-            if low not in hay and low not in common and stem not in hay_stems and low.rstrip("s") not in common and tok not in found:
+            if low not in hay and low not in common and stem not in hay_stems and low.rstrip("s") not in common and tok not in found \
+                    and not any(len(w) >= 5 and low.startswith(w) for w in hay_stems):
                 found.append(tok)
         if found:
             return "I could not find " + ", ".join(found[:4]) + " in your documents, your notes or what you told me."
@@ -1761,7 +1767,7 @@ class Agent:
             cap = ctx.picture["caption"]
             gp = (sess.pending.data or {}).get("gen_prompt", "")
             described = len(out.strip()) >= 40 and out.strip().lower().rstrip('.') != cap.lower().rstrip('.')  # a real description, not just "Here you go" or the caption
-            lead = (out.strip() + " ") if described and len(out.strip()) <= 360 else (f"I made a picture: {gp[:200].rstrip('. ')}. " if gp else f"I have a picture for you, called {cap}. ")
+            lead = (out.strip() + " ") if described and len(out.strip()) <= 360 else (f"I made a picture: {excerpt(gp, 30).rstrip('.… ')}. " if gp else f"I have a picture for you, called {cap}. ")
             if sess.pending.data is not None:  # what was said about the picture, kept so "describe it to me" can say it again
                 sess.pending.data["describe"] = out.strip() if described else (gp or sess.pending.data.get("describe", ""))
             sess.history.append({"role": "assistant", "content": "[proposed a picture]"})
@@ -1861,7 +1867,7 @@ class Agent:
         if ctx.drafted:  # the model already proposed its paragraph through propose_append: that is the draft
             new = ctx.drafted
         sess.pending = Pending("append", new, sess.chapter)
-        self._remember(sess, text, "[proposed a new paragraph]")
+        self._remember(sess, text, f"[proposed a new paragraph, waiting for the writer's yes: {excerpt(new, 25)}]")
         tail = f"Should I add it to chapter {sess.chapter}?" if sess.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.chapter} with it?"
         issue = ctx.warning if ctx.drafted else await self.check_continuity(sess, new, text)  # a paragraph proposed through the tool was already checked there
         warn = f" A warning: {issue}" if issue else ""

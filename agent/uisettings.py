@@ -159,6 +159,9 @@ def parse(text: str, look: dict | None) -> tuple[dict, str] | None:
 
     bz = _book_zoom(n, cur["zoom"], text)
     if bz is not None:
+        if bz[0] == cur["zoom"] and bz[0] == ZOOMS[0] and cur["size"] > DEFAULT["size"] and _SMALLER.search(n):
+            new["size"] = max(DEFAULT["size"], cur["size"] - 1)  # the book is at 100 already, but the words on the screen were made bigger: bring those down
+            return new, "Done: everything on the screen is a bit smaller."
         if bz[0] == cur["zoom"]:
             return cur, f"The book is already at {cur['zoom']} percent, as far as it goes." if bz[0] in (ZOOMS[0], ZOOMS[-1]) and not _ZOOM_PCT.search(text.lower()) else f"The book is already at {cur['zoom']} percent."
         new["zoom"] = bz[0]
