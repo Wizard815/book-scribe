@@ -281,6 +281,7 @@ class Agent:
         if not text:
             return self._reply(sess, "I didn't catch that. Try again.")
         sess.last_user = text
+        self._learn_genre(text)
         last_edit, sess.last_edit = sess.last_edit, None
         if last_edit and not sess.pending and re.match(r"^(?:(?:oh|sorry|no|wait|um|uh)\s+)*(?:i (?:meant|mean)|it'?s|its|i said)\b", intent.norm(text)) \
                 and ((rf_ := intent.parse_ref(text)).para is not None or re.search(r"\b(?:before|after|next|previous)\b", intent.norm(text))):
@@ -356,7 +357,8 @@ class Agent:
             return self._reply(sess, "Okay. I will read each whole draft to you." if "start" not in intent.norm(text) and "beginning" not in intent.norm(text) else "Okay. I will read you just the start of a long draft.")
         if sess.pending and sess.pending.kind not in ("voice", "file"):
             nt = intent.norm(text)
-            if re.match(r"^(?:ok(?:ay)?|yes|yeah|sure|alright|right|well)?,? ?(?:hold on|wait|wait a (?:moment|minute|sec(?:ond)?)|hang on|one (?:moment|second|sec|minute)|let me think(?: about it)?|give me a (?:moment|minute|sec(?:ond)?)|not yet|not now|later)\b", nt) \
+            if (re.match(r"^(?:ok(?:ay)?|yes|yeah|sure|alright|right|well)?,? ?(?:hold on|wait|wait a (?:moment|minute|sec(?:ond)?)|hang on|one (?:moment|second|sec|minute)|let me think(?: about it)?|give me a (?:moment|minute|sec(?:ond)?)|not yet|not now|later)\b", nt)
+                    and (len(nt.split()) <= 7 or not re.search(r"\b(?:write|change|make|call|put|start|go|read|delete|move|add|save|what|where|who|how|should)\b", nt))) \
                     or re.match(r"^good (?:night|morning|evening|afternoon)\b", nt):
                 return self._reply(sess, f"Okay, I'll wait. I am still holding this for you: {sess.pending.ask or self._ask_for(sess, sess.pending)} Say yes or no.")
             if sess.pending.kind in ("append", "edit") and re.match(r"^(?:ok(?:ay)?|yes|yeah|sure|please)?,? ?(?:please )?(?:read|say|play) (?:it|that|this|them)(?: (?:to me|out|aloud|again|all|out loud|please))*$", nt):
@@ -443,7 +445,7 @@ class Agent:
                 if len(said.split()) > 16:  # "Hm. I don't like it, you can't see anything. Well, put it in anyway, at the end of the chapter."
                     said = next((x for x in reversed(re.split(r"(?<=[.!?])\s+", said.strip())) if re.search(r"\b(?:put|add|place|use)\b", intent.norm(x))), said)
                 nums_ = self.store.chapter_numbers(sess.book)
-                ch_new = intent.parse_ref(said).chapter if re.search(r"\bchapter \d+", intent.norm(said)) else None
+                ch_new = intent.parse_ref(said).chapter if re.search(r"\bchapter \d+", intent.norm(said)) and intent.new_chapter(said) is None and intent.new_chapter_titled(said) is None else None
                 if ch_new is not None and ch_new not in nums_:
                     if re.search(r"\bchapter \d+", intent.norm(said)) and not intent.picture_position(said) is None or ch_new == max(nums_, default=0) + 1:
                         return self._reply(sess, f"Chapter {ch_new} does not exist yet. Say start chapter {ch_new} first, or tell me one of chapters 1 to {max(nums_, default=1)}. The picture is still waiting.")
@@ -544,7 +546,8 @@ class Agent:
 
         sents_ = [x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x.strip()]
         if not sess.pending and len(sents_) >= 2 and not self._standalone_command(sents_[0]) \
-                and (k_ := next((i for i, x in enumerate(sents_) if self._standalone_command(x)), None)) and all(len(x.split()) <= 8 and not intent.is_question(x) for x in sents_[:k_]):
+                and (k_ := next((i for i, x in enumerate(sents_) if self._standalone_command(x)), None)) \
+                and (all(len(x.split()) <= 8 and not intent.is_question(x) for x in sents_[:k_]) or (k_ == len(sents_) - 1 and intent.book_title(sents_[k_]) is not None)):
             r0 = await self._handle(sid, " ".join(sents_[:k_]), sess.book)  # the remark first ("Buck. I like Buck."), then the command and what follows
             r1 = await self._handle(sid, " ".join(sents_[k_:]), sess.book)
             r1.text = f"{r0.text} {r1.text}".strip()
@@ -556,6 +559,9 @@ class Agent:
             started = intent.new_chapter_titled(first) is not None or intent.new_chapter(first) is not None
             r1 = await self._handle(sid, first, sess.book)
             more_first = re.split(r"(?<=[.!?])\s+", more_text, maxsplit=1)[0]
+            want_n = (intent.new_chapter_titled(first) or (None,))[0] or intent.new_chapter(first)
+            if started and want_n and want_n not in self.store.chapter_numbers(sess.book):
+                return r1  # the chapter was not started (it would skip one): do not rename another chapter with "call it"
             if (ci := re.match(r"(?i)^(?:and |then |um |uh )*(?:call|name|title) (?:it|this one|that one)\s+(.+)$", more_first.strip())):
                 more_text = f"Call chapter {sess.chapter} {ci.group(1)}" + more_text[len(more_first):]  # "Start chapter five. Call it The Old Soldier."
             if started and sess.mode == "narrator" and not self._standalone_command(re.split(r"(?<=[.!?])\s+", more_text, maxsplit=1)[0]) and not intent.is_question(more_text) and not intent.is_draft(more_text):
@@ -1142,6 +1148,7 @@ class Agent:
             corpus.append(sess.last_user or "")
         if not (self.library and self.library.items(sess.book)):
             return ""  # a book with no documents (a novel) has nothing to ground a detail in
+        story = self._pref("genre", "") == "story"  # the writer wants imagined scenes: only dates and numbers must match the papers
         hay = " ".join(corpus).lower()
         if len(hay) < 200:
             return ""
@@ -1156,7 +1163,7 @@ class Agent:
                   "atlantic", "pacific", "ocean", "africa", "asia", "earth", "bible", "church", "mother", "father", "grandfather", "grandmother", "mama", "papa",
                   "jesus", "sundays", "saturdays", "christmases", "midwest", "prairie", "heaven"}
         hay_stems = set(re.findall(r"[a-z]{3,}", hay))
-        for m in re.finditer(r"(?<![.!?\"“]\s)(?<!^)\b([A-Z][a-z]{3,})\b", bare):
+        for m in ([] if story else re.finditer(r"(?<![.!?\"“]\s)(?<!^)\b([A-Z][a-z]{3,})\b", bare)):
             tok = m.group(1)
             low = tok.lower()
             stem = re.sub(r"(?:'s|s|es)$", "", low)
@@ -1165,7 +1172,7 @@ class Agent:
                 found.append(tok)
         if found:
             return "I could not find " + ", ".join(found[:4]) + " in your documents, your notes or what you told me."
-        if self.library and self.library.items(sess.book):  # sentences made of things the documents never mention
+        if self.library and self.library.items(sess.book) and not story:  # sentences made of things the documents never mention
             hayw = set(re.findall(r"[a-z]{5,}", hay))
             weak = []
             for sen in re.split(r"(?<=[.!?])\s+", bare.strip()):
@@ -1863,6 +1870,11 @@ class Agent:
                     "for a picture call make_picture or find_pictures; otherwise answer in plain spoken words."}], self.toolbox, ctx, max_steps=2, temperature=self._temperature())
             if re.fullmatch(r"\s*[\[(][^\]\)]{0,160}[\])]\s*", out or ""):
                 out = ""
+        if not (out or "").strip() and not ctx.drafted and not ctx.picture and not sess.pending:
+            try:  # the model gave nothing: ask once more without tools rather than say "I'm not sure what to say"
+                out = harness.parse_calls(await self.llm.chat(msgs + [{"role": "user", "content": "Answer the writer now in plain spoken words (1-3 sentences), or write the paragraph they asked for."}], temperature=self._temperature()))[1]
+            except Exception:
+                out = ""
         out = (out or "").strip() or ("Goodbye for now. Everything you saved is in your book." if re.search(r"\b(?:good ?bye|bye|see you|talk (?:to you )?later)\b", text.lower()) else "I'm not sure what to say to that. Could you tell me a little more?")
         if ctx.picture and sess.pending and sess.pending.kind == "picture":  # the model made or found a picture: show it, describe it, ask
             cap = ctx.picture["caption"]
@@ -1946,7 +1958,8 @@ class Agent:
     async def _library_picture_reply(self, sess: Session, text: str) -> Reply | None:
         """The writer asks to put one of THEIR pictures in the book: find it in the library by the words they use, and show it with a yes/no."""
         n = intent.norm(text)
-        if not self.library or not re.search(r"\b(?:put|add|use|insert|place)\b", n) or re.search(r"\b(?:make|draw|paint|find|search|new)\b", n):
+        if not self.library or not re.search(r"\b(?:put|add|use|insert|place)\b", n) or re.search(r"\b(?:make|draw|paint|find|search|new|write|scene|tell|story)\b", n) \
+                or not re.search(r"\b(?:picture|photo|photograph|tintype|portrait|snapshot|image|daguerreotype|ambrotype)\b", n):
             return None
         stop = {"the", "a", "an", "of", "my", "picture", "photo", "photograph", "file", "old", "and", "in", "at", "jpg", "png", "put", "add", "use", "insert", "place",
                 "it", "after", "before", "first", "paragraph", "chapter", "this", "that", "please", "from", "into", "book", "end", "start", "there", "one", "you", "can", "i"}
@@ -1974,11 +1987,25 @@ class Agent:
     def _paragraph_in(self, out: str) -> str:
         """A story paragraph written into a chat reply, without the talk around it; "" when there is none."""
         blocks = [b.strip() for b in re.split(r"\n\s*\n", out or "") if b.strip()]
-        for b in sorted(blocks, key=len, reverse=True)[:1]:
-            b = clean_draft(b).strip('"\u201c\u201d ')
-            if len(b.split()) >= 45 and self._looks_like_paragraph(b) and not re.search(r"\b(?:you|your|walter|i can|i will|i'?ll|shall i|would you)\b", b[:120].lower()):
-                return b
-        return ""
+        prose = []
+        for b in blocks:
+            c = clean_draft(b)
+            outside = re.sub(r"[\"\u201c][^\"\u201d]*[\"\u201d]", " ", c)  # what is said in dialogue may speak to "you"; the narration may not
+            if len(c.split()) >= 15 and not c.rstrip().endswith("?") and not self._is_talk(c) \
+                    and not re.search(r"\b(?:your|walter|i can|i will|i'?ll|shall i|would you|should i)\b", outside[:160].lower()):
+                prose.append(c)
+            elif prose:
+                break  # the story is one run of blocks; talk after it ends it
+        text = "\n\n".join(prose)
+        return text if len(text.split()) >= 45 and (len(prose) > 1 or self._looks_like_paragraph(text)) else ""
+
+    _TALK = re.compile(r"(?i)^(?:i (?:can|am|'m|have|'ve|will|'ll|noticed|understand|could|couldn'?t|apologi[sz]e|see|think|made)|you(?: are|'re)|my apologies|sorry|okay|ok|sure|here'?s|here is|let me|of course|great|wonderful)\b"
+                       r"|\b(?:story bible|your notes or documents|not in your documents|the writer asked|should i (?:save|add) it|shall i (?:save|add))\b")
+
+    def _is_talk(self, text: str) -> bool:
+        """The model's own talk, never story: "I can put this in, but I noticed…", "I am still having trouble with that…"."""
+        t = (text or "").strip().lstrip("\"\u201c ")
+        return bool(self._TALK.search(t[:200])) and not re.match(r"^[\"\u201c]", (text or "").strip())
 
     _CLAIM = re.compile(r"\b(?:i(?:'ve| have)? (?:now )?(?:saved|added|updated|changed|moved|deleted|removed|put (?:it|that|the|this|them)\b[^.]{0,40}\bin|undone|undid|corrected|fixed|replaced|taken out|took out)|(?:is|are|has been|have been) (?:now )?(?:saved|added|updated|in (?:the|your) book|back in|undone|moved|removed)|(?:now|is) back (?:in|where)|it'?s (?:saved|in the book|done)|(?:successfully )?exported|ready (?:for you )?to (?:download|print)|on your screen now)\b", re.I)
 
@@ -2223,6 +2250,12 @@ class Agent:
         p, sess.pending = sess.pending, None
         if p.kind in ("edit", "append") and not imgs.parse(p.text.strip()):
             p.text = clean_draft(p.text) or p.text  # the last guard: no lead-in, no "Should I save it?", no wrapping quotes ever reach the book
+            if self._is_talk(p.text):
+                return self._reply(sess, "That was my own talk, not a paragraph for the book, so I did not save it. Ask me again and I will write the paragraph itself.")
+            if p.kind == "append" and (re.match(r"(?i)^author'?s note\b", p.text) or re.search(r"\bauthor'?s note\b", intent.norm(sess.last_user or "") + " " + " ".join(m["content"] for m in sess.history[-4:] if m.get("role") == "user").lower())):
+                note = re.sub(r"(?i)^author'?s note[:.\s-]*", "", p.text).strip()
+                self.store.bible(sess.book).write_doc("authors_note", note + "\n")
+                return self._reply(sess, "Saved as the author's note. It is printed at the front of the book, before chapter 1.")
         try:
             if p.kind == "edit":
                 para = self.store.replace_paragraph(sess.book, p.paragraph_id, p.text)
@@ -2232,10 +2265,13 @@ class Agent:
                 where = (p.data or {}).get("where")
                 paras_ = self.store.paragraphs(sess.book, p.chapter)
                 texts_ = [i for i, q in enumerate(paras_) if not q.image]
+                pieces = [x.strip() for x in re.split(r"\n\s*\n", p.text) if x.strip()] or [p.text]  # a draft of several paragraphs is saved as several paragraphs
                 if where is not None and where >= 0 and paras_ and (at := 0 if where == 0 else (texts_[where - 1] + 1 if 0 < where <= len(texts_) else len(paras_))) < len(paras_):
-                    para = self.store.insert_paragraph(sess.book, p.chapter, p.text, before_id=paras_[at].id)
+                    for piece in pieces:
+                        para = self.store.insert_paragraph(sess.book, p.chapter, piece, before_id=paras_[at].id)
                 else:
-                    para = self.store.append_paragraph(sess.book, p.chapter, p.text, p.scene)
+                    for piece in pieces:
+                        para = self.store.append_paragraph(sess.book, p.chapter, piece, p.scene)
                 sess.work = p.chapter
         except BookError as e:
             return self._reply(sess, f"I couldn't save that: {e}")
@@ -2474,6 +2510,13 @@ class Agent:
             # (not shown to the writer: a background guess with internal ids, and too often wrong to read out to someone listening)
 
     # --- memory ----------------------------------------------------------
+    def _learn_genre(self, text: str) -> None:
+        n = intent.norm(text)
+        if self.prefs and re.search(r"\b(?:story based on|based on (?:his|her|their|the) (?:life|papers|documents)|historical fiction|(?:fill|filled) in (?:the )?scenes|scenes filled in|some of it imagined|make up (?:the )?scenes)\b", n):
+            self.prefs.update({"genre": "story"})  # a story based on the papers: imagined scenes are wanted, so they are not flagged as "not in your documents"
+        elif self.prefs and re.search(r"\b(?:only what the papers say|just the facts|nothing made up|true family history|only the facts|family history only)\b", n):
+            self.prefs.update({"genre": "history"})
+
     def _learn(self, text: str) -> None:
         if PREF.search(text):
             self.memory.add(f"Writer said: {text[:300]}", "preference")

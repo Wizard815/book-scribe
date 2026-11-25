@@ -403,6 +403,7 @@ async def test_one_line_drafts_are_sent_back_and_found_pictures_are_described_by
 async def test_yes_with_a_question_saves_and_answers_and_a_failed_picture_is_retried_once(books):
     ag, store, llm = make(books)
     store.append_paragraph("demo", 1, "x")  # keep the id numbering simple
+    llm.replies = ["The express was late, and snow fell on the platform while Jonas waited by the ticket machine."]
     await ag.handle("s", "rewrite chapter 1 paragraph 2 so it is snowing")
     llm.replies = ["Kay is the foster brother, Sir Ector's son."]
     r = await ag.handle("s", "yes, and who was Kay again?")

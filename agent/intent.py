@@ -108,8 +108,8 @@ def confirmation(text: str) -> tuple[str | None, str]:
         w = w[1:]  # "well yes", "so no"
     if not w:
         return None, ""
-    if HOLD.match(norm(text)):
-        return "hold", ""
+    if HOLD.match(norm(text)) and (len(w) <= 6 or not re.search(r"\b(?:write|change|make|call|put|start|go|read|delete|move|add|save|what|where|who|how|it should)\b", norm(text))):
+        return "hold", ""  # "Wait a minute, what's the book called?" is a question, not "hold on"
     # a yes/no word must lead the utterance; everything after the leading run of filler is the remainder
     if w[0] in _YES_CORE or w[0] in ("do", "go", "sounds", "looks", "that's", "thats") and any(x in _YES_CORE for x in w[:3]):
         kind, core, fill = "yes", _YES_CORE, _YES_FILL
@@ -351,8 +351,8 @@ def voice_command(text: str) -> dict | None:
         return {"action": "list"}
     if _V_RESET.search(n):
         return {"action": "reset"}
-    if _V_ANOTHER.search(n):
-        return {"action": "another"}
+    if _V_ANOTHER.search(n) and (has_voice or re.search(r"\b(?:sound|sounds|speak|speaks|talks|reads?|read aloud|accent)\b", n)):
+        return {"action": "another"}  # "try another one for the march" is about writing, not a voice
     if _V_AUDITION.search(n) and not re.search(r"\b(?:more|less|too|deeper|slower|faster|higher|lower)\b", n):
         return {"action": "audition"}
     if has_voice:
@@ -445,6 +445,8 @@ def book_title(text: str) -> str | None:
     m = re.match(r"(?i)^(?:(?:please|can you|could you|let's|lets|i want to|i'd like to)\s+)*(?:call|name|title)\s+(?:the|my|this|our)\s+(?:whole\s+)?(?:book|story)\s+(?:to\s+|as\s+)?[\"'\u201c]?(.{2,80}?)[\"'\u201d]?[.!]?$", raw) \
         or re.match(r"(?i)^(?:i want |i'd like |let )?(?:the|my|this) (?:whole )?(?:book|story)(?:'s)? (?:title |name )?(?:is going to be called|to be called|is called|be called|should be called|should be|will be|to be|is)\s+[\"'\u201c]?(.{2,80}?)[\"'\u201d]?[.!]?$", raw) \
         or re.match(r"(?i)^(?:please )?(?:make sure |be sure )?(?:i want |i'd like )?the (?:title|name) of (?:the|my|this) (?:book|story)(?: itself)? (?:is|should be|will be|to be)\s+[\"'\u201c]?(.{2,60}?)[\"'\u201d]?(?:,\s+so\b.*)?[.!]?$", raw)
+    if not m:
+        m = re.search(r"(?i)\b(?:the book|the title|the front|it)\b[^.?!]{0,40}\?\s+(?:it|the title|the book) should (?:be|say)(?: called)?\s+[\"'\u201c]?([^\"\u201d.!?]{2,60})", raw)  # "What's the book called on the front? It should be Samuel's War."
     if not m:
         return None
     t = m.group(1).strip(" ,.")

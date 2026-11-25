@@ -1209,3 +1209,37 @@ def test_review_stock_phrases_summing_up_lines_quotes_and_alt_text(books):
     store.append_paragraph("demo", 1, 'He said "I am well," and it\'s cold.')
     out = export.to_html(store, __import__("images").ImageStore(store), "demo")
     assert "“I am well,”" in out and "it’s" in out
+
+
+@pytest.mark.asyncio
+async def test_rm7_story_genre_title_after_remarks_talk_never_saved_and_multi_paragraph_drafts(books):
+    ag, store, llm = make(books)
+    from prefs import Prefs
+    ag.prefs = Prefs(ag.s.state_dir)
+    llm.replies = ["A good choice."]
+    await ag.handle("s", "A story based on his life, I think. Based on the papers, but with the scenes filled in. And call the book Samuel's War.")
+    import export
+    assert export.book_title(store, "demo") == "Samuel's War" and ag._pref("genre", "") == "story"
+    _wait(ag, text="I can put this in, but I noticed a detail that isn't in your notes or documents: 'The cow shifted in the stall.'")
+    n = len(store.paragraphs("demo", 1))
+    r = await ag.handle("s", "yes")
+    assert len(store.paragraphs("demo", 1)) == n and "did not save" in r.text
+    two = ("Daniel stood at the door of the hospital tent with his cap in his hands and the rain running off the canvas behind him.\n\n"
+           "\"You came,\" he said, and Samuel crossed the muddy floor in three steps and took his brother by both shoulders without a word.")
+    _wait(ag, text=two)
+    await ag.handle("s", "yes")
+    assert len(store.paragraphs("demo", 1)) == n + 2 and store.paragraphs("demo", 1)[-1].text.startswith("\"You came,\"")
+
+
+@pytest.mark.asyncio
+async def test_rm7_authors_note_goes_to_the_front_and_wait_with_a_question_is_not_hold(books):
+    ag, store, llm = make(books)
+    _wait(ag, text="Author's note: Samuel and Daniel were real. Their letters are quoted as written; the talk between them is imagined from the papers.")
+    await ag.handle("s", "yes")
+    import export, images
+    out = export.to_html(store, images.ImageStore(store), "demo")
+    assert "Author’s note" in out and out.index("Author’s note") < out.index("Chapter 1")
+    import intent
+    assert intent.confirmation("Wait a minute, what's the book called on the front? It should be Samuel's War.")[0] != "hold"
+    assert intent.book_title("Wait a minute, what's the book called on the front? It should be Samuel's War.") == "Samuel's War"
+    assert intent.voice_command("Try another one for the march") is None

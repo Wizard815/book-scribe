@@ -122,7 +122,7 @@ class Bible:
     def read(self, name: str) -> str:
         p = self.root / f"{name}.md"
         try:
-            return p.read_text(encoding="utf-8", errors="replace") if name in ("premise", "timeline") and p.exists() else ""
+            return p.read_text(encoding="utf-8", errors="replace") if name in ("premise", "timeline", "authors_note") and p.exists() else ""
         except OSError:
             return ""
 
@@ -182,7 +182,7 @@ class Bible:
         return True
 
     def write_doc(self, name: str, text: str) -> None:
-        if name not in ("premise", "timeline"):
+        if name not in ("premise", "timeline", "authors_note"):
             raise BibleError("unknown document")
         self.ensure()
         (self.root / f"{name}.md").write_text(text.rstrip() + "\n")

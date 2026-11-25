@@ -36,6 +36,18 @@ def book_title(store, book: str) -> str:
     return book.replace("-", " ").replace("_", " ").title()
 
 
+def _note_html(store, book: str) -> str:
+    """The author's note (what is documented, what is imagined), printed before chapter 1."""
+    try:
+        note = (store.bible(book).read("authors_note") or "").strip()
+    except Exception:
+        note = ""
+    if not note:
+        return ""
+    paras = "".join(f"<p>{html.escape(smart_quotes(x.strip()), quote=False)}</p>" for x in re.split(r"\n\s*\n", note) if x.strip())
+    return f'<section class="note"><h2 style="page-break-before:auto">Author\u2019s note</h2>{paras}</section>'
+
+
 def _chapters(store, book: str):
     for n in store.chapter_numbers(book):
         yield n, store.chapter_title(book, n), store.paragraphs(book, n)
@@ -75,6 +87,7 @@ figure {{ margin: 2rem 0; text-align: center; }} figure img {{ max-width: 100%; 
 @media print {{ body {{ background: #fff; }} nav {{ display: none; }} }}
 </style></head><body>
 <h1>{html.escape(title)}</h1>
+{_note_html(store, book)}
 <nav aria-label="Contents"><ol>{"".join(toc)}</ol></nav>
 {"".join(body)}
 </body></html>"""
