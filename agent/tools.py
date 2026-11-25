@@ -465,7 +465,7 @@ def build(agent) -> Toolbox:
         if data is None:
             return f"Error: the picture could not be made ({err.__class__.__name__}). Say so plainly and offer to try a different description or to find one on the web instead."
         ctx.notes.append("I made a picture for you.")
-        return await agent.propose_picture(ctx.sess, ctx, data, caption or prompt[:120], _int(chapter, 0, 0, 9999) or None, prompt, after=_after(after))
+        return await agent.propose_picture(ctx.sess, ctx, data, caption or prompt[:120], _int(chapter, 0, 0, 9999) or None, prompt, after=_after(after), made=True)  # say what came out, not what was asked for
 
     async def find_pictures(ctx: Ctx, query="", n=6):
         from web import WebError
@@ -481,7 +481,8 @@ def build(agent) -> Toolbox:
         ids = {f"i{base + i}": h for i, h in enumerate(hits, 1)}
         ctx.sess.web_hits.update(ids)
         return ("\n".join(f"{k}. {h['title']} (from {h['page'][:80]})" for k, h in ids.items())
-                + "\nUse use_found_picture with an id. Remind the writer that a picture found on the web may belong to someone else.")
+                + "\nYou have NOT seen these pictures: do not describe them from their titles. Use use_found_picture with an id (the best match); then you are told what it really shows."
+                + " Remind the writer that a picture found on the web may belong to someone else.")
 
     async def use_found_picture(ctx: Ctx, id="", caption="", chapter=None, after=None):
         from web import WebError

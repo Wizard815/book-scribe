@@ -48,6 +48,7 @@ def make(books, replies=()):
     store, llm = BookStore(books), FakeLLM(list(replies))
     ag = Agent(s, store, llm, FileMemory(books / ".state" / "m.json"), StoryKG(store), journal=Journal(store), library=Library(store))
     ag.imagegen = FakeImageGen()
+    ag.describe_made = False  # the scripted model replies do not include a look at each made picture
     return ag, store, llm
 
 

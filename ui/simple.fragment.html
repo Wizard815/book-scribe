@@ -939,7 +939,7 @@ figure.para figcaption { font-size: calc(var(--fs) * .72 * min(var(--zoom), 1.8)
     if (!w || !h) return;
     const keepFrac = keep && pager.views > 1 ? pager.view / pager.views : 0;
     const gap = 48, zoom = state.look.zoom || 100;
-    const cols = w >= 1000 && zoom <= 200 ? 2 : 1;  // a wide screen shows a two-page spread, like an open book, until the words get big
+    const cols = w >= 1000 && zoom < 200 ? 2 : 1;  // from 200 percent one wide page reads better than two narrow, hyphenated columns  // a wide screen shows a two-page spread, like an open book, until the words get big
     const colW = (w - gap * (cols - 1)) / cols;
     // too short for even two lines of these words (a squat pane at big print): give the book the whole window, once, and say so
     if (h < 2.3 * 1.5 * (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--fs")) || 26) * (zoom / 100) && ui.layout !== "book" && !ui.floats.book && !tooSmallWarned) {

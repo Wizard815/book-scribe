@@ -1003,3 +1003,45 @@ def test_r11_undo_after_a_hmm_and_smaller_screen_words_at_100_percent():
     look = dict(uisettings.DEFAULT); look["size"] = 5
     new, said = uisettings.parse("Make the words a bit smaller again, that's too big.", look)
     assert new["size"] == 4
+
+
+# ------------------------------------------------------------------------------- real model (Gemini Flash) round 1 (regressions)
+def test_rm1_every_tool_call_format_is_understood_and_never_read_aloud():
+    for raw, name in (('[[tool: list_library {}]]\\nOkay.', "list_library"), ('[[propose_delete: {"paragraph": 1, "chapter": 4}]]', "propose_delete"),
+                      ('[[bible_lookup {"name": "x"}]] hi', "bible_lookup"), ("[[list_library]]", "list_library")):
+        calls, text = harness.parse_calls(raw.replace("\\\\n", "\\n"))
+        assert calls and calls[0][0] == name and "[[" not in text
+
+
+@pytest.mark.asyncio
+async def test_rm1_a_note_instead_of_a_tool_call_is_asked_again_and_never_becomes_a_draft(books):
+    ag, store, llm = make(books)
+    P = ("Snow lay on the fence posts that winter. The cows stood close by the barn door, waiting for the hay to come down from the loft. "
+         "Samuel broke the ice on the trough every morning with the back of an axe. His mother kept the kitchen stove going from dark to dark.")
+    llm.replies = ["[proposed a new paragraph]", f'[[tool: propose_append {{"text": "{P}"}}]]', "Here it is."]
+    r = await ag.handle("s", "Tell me about the winter on the farm, and put it in the book as a paragraph about the snow")
+    s = ag.session("s")
+    assert s.pending and s.pending.text == P and "[proposed" not in r.text
+    s.pending = None
+    llm.replies = ["[proposed a new paragraph]", "Still a note.", "Still a note."]
+    r = await ag.handle("s", "write the next paragraph")
+    assert s.pending is None and "could not write" in r.text
+
+
+@pytest.mark.asyncio
+async def test_rm1_a_claimed_save_that_did_not_happen_is_corrected(books):
+    ag, store, llm = make(books)
+    before = store.read_chapter_raw("demo", 1)
+    llm.replies = ["Wonderful, I've saved that paragraph to chapter 1 for you."]
+    r = await ag.handle("s", "Is the letter in the book now? Thank you so much for everything today.")
+    assert store.read_chapter_raw("demo", 1) == before and "not changed anything" in r.text
+
+
+def test_rm1_undo_in_a_later_sentence_and_a_picture_question_is_not_the_screen():
+    import intent, uisettings
+    assert intent.undo_request("That's not the paragraph at all. Undo that.")
+    assert intent.undo_request("No, that's in the wrong place after the battle. Undo.")
+    assert uisettings.parse("Now I have the old tintype picture of Samuel. Can you tell me what it looks like? I can't make it out.", None) is None
+    assert intent.ideas_request("give me a name for the farm dog") is None
+    from agent import clean_draft
+    assert clean_draft("My apologies. I had proposed the paragraph, but it seems there was a misunderstanding. Here is the paragraph I drafted: The rain came.") == "The rain came."

@@ -547,7 +547,9 @@ def undo_request(text: str) -> bool:
     n = norm(text)
     if not _UNDO.match(n):  # "Hmm. Undo that, I liked cold better.": the first real clause
         clauses = [norm(c) for c in re.split(r"[,.;!?]\s*|\s+(?:because|i liked|i like|i prefer)\b", text.strip())]
-        n = next((c for c in clauses if c and c not in ("oh", "well", "ok", "okay", "no", "so", "hmm", "ah", "oh no", "oh dear", "wait")), n)
+        clauses = [c for c in clauses if c and c not in ("oh", "well", "ok", "okay", "no", "so", "hmm", "ah", "oh no", "oh dear", "wait")]
+        hit = next((c for c in clauses if _UNDO.match(c) and len(c.split()) <= 6), None)  # "That's not the paragraph at all. Undo that."
+        n = hit if hit and len(norm(text).split()) <= 24 else (clauses[0] if clauses else n)
     return len(n.split()) <= 9 and bool(_UNDO.match(n))
 
 
@@ -645,6 +647,8 @@ def ideas_request(text: str) -> dict | None:
         return None
     if re.search(r"\b(?:write|wrote|writing|put|type|paint|carve|sign|spell|read)\b", n):  # "write a name on the wall": about the story's text, not a request for ideas
         return None
+    if re.search(r"\b(?:dog|dogs|horse|horses|cat|cats|cow|cows|mule|mules|ox|oxen|pony|pet|pets|puppy|calf|goat|pig|hen|rooster)\b", n):
+        return None  # a name for the farm dog: the model can do that; the name lists are for people and places
     kind = next((k for rx, k in _IDEA_KINDS if re.search(rx, n)), None)
     if kind is None or is_edit(text):
         return None

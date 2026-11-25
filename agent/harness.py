@@ -20,7 +20,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-CALL_RE = re.compile(r"\[\[\s*tool\s*:\s*([A-Za-z_]+)\s*(\{.*?\})?\s*\]\]", re.S | re.I)
+CALL_RE = re.compile(r"\[\[\s*(?:tool\s*:\s*)?([A-Za-z_]+)\s*:?\s*(\{.*?\})?\s*\]\]", re.S | re.I)  # also [[name {...}]] and [[name: {...}]]: models drop the "tool:"
+LEFTOVER_RE = re.compile(r"\[\[[^\[\]]{0,4000}\]\]|```(?:tool|json)?\s*\[\[.*?```", re.S)
 MAX_RESULT_CHARS = 1500
 
 
@@ -97,7 +98,7 @@ def parse_calls(text: str) -> tuple[list[tuple[str, dict | str]], str]:
             calls.append((m.group(1), args if isinstance(args, dict) else "arguments must be a JSON object"))
         except ValueError:
             calls.append((m.group(1), "the arguments were not valid JSON"))
-    return calls, CALL_RE.sub("", text).strip()
+    return calls, LEFTOVER_RE.sub("", CALL_RE.sub("", text)).strip()  # never read a tool line (or half of one) to the writer
 
 
 TOOLS_PROMPT = """TOOLS

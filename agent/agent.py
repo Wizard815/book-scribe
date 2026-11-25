@@ -70,6 +70,8 @@ def clean_draft(text: str) -> str:
     """Strip the model's own talk to the writer ("I gave Arthur a small wink. Want me to change it?") from a paragraph meant for the book. Only a trailing
     block that clearly addresses the writer is removed; the paragraph itself is never cut into."""
     t = text.strip().strip("`").strip()
+    # an apology or explanation before the paragraph ("My apologies. I had proposed it, but... Here is the paragraph I drafted:")
+    t = re.sub(r"^(?:(?:my apologies|i apologi[sz]e|sorry|i'?m sorry|okay|ok|sure|of course|certainly|alright|understood|you'?re right)\b[^\n]{0,300}?(?:here(?:'s| is)[^\n:]{0,80}:|\n\n))\s*", "", t, flags=re.I).strip()
     t = re.sub(r"^(?:here(?:'s| is)[^\n:]{0,60}:|sure[,!.][^\n]{0,40}\n)\s*", "", t, flags=re.I).strip()
     for _ in range(3):  # a few trailing remarks at most
         m = _CHATTER_TAIL.search(t)
@@ -520,7 +522,10 @@ class Agent:
             first, more_text = parts[0].strip(), parts[1].strip()  # "Call chapter three Over There. Then go to chapter one." / "Start chapter four. He comes home in 1919."
             started = intent.new_chapter_titled(first) is not None or intent.new_chapter(first) is not None
             r1 = await self._handle(sid, first, sess.book)
-            if started and sess.mode == "narrator" and not self._standalone_command(more_text) and not intent.is_question(more_text) and not intent.is_draft(more_text):
+            more_first = re.split(r"(?<=[.!?])\s+", more_text, maxsplit=1)[0]
+            if (ci := re.match(r"(?i)^(?:and |then |um |uh )*(?:call|name|title) (?:it|this one|that one)\s+(.+)$", more_first.strip())):
+                more_text = f"Call chapter {sess.chapter} {ci.group(1)}" + more_text[len(more_first):]  # "Start chapter five. Call it The Old Soldier."
+            if started and sess.mode == "narrator" and not self._standalone_command(re.split(r"(?<=[.!?])\s+", more_text, maxsplit=1)[0]) and not intent.is_question(more_text) and not intent.is_draft(more_text):
                 more_text = f"Write the first paragraph of this chapter: {more_text}"
             r2 = await self._handle(sid, more_text, sess.book)
             if started and sess.pending and sess.pending.kind == "append":
@@ -801,7 +806,7 @@ class Agent:
         new = " ".join(sentences).strip()
         sess.chapter, sess.focus = target.chapter, target.id
         sess.pending = Pending("edit", new, target.chapter, paragraph_id=target.id)
-        self._remember(sess, "take a sentence out", f"[proposed taking a sentence out of {self._where(sess, target)}]")
+        self._remember(sess, "take a sentence out", f"(Note for me: the app now asks the writer yes or no about taking a sentence out of {self._where(sess, target)}.)")
         lead = f"I will take out this sentence from {self._where(sess, target)}: {removed}"
         r = self._reply(sess, f"{lead} It would read: {new} Should I save it?", [{"speaker": vx.ASSISTANT, "text": lead}, {"speaker": vx.ASSISTANT, "text": "Should I save the shorter paragraph?"}])
         r.highlights = self._hl(sess, [target.id])
@@ -1240,7 +1245,9 @@ class Agent:
         sess.chapter = n
         return self._reply(sess, f"Chapter {n} is now called {t}.")
 
-    async def propose_picture(self, sess: Session, ctx, data: bytes, caption: str, chapter: int | None, hint: str = "", describe: bool = False, after: int | None = None) -> str:
+    describe_made = True  # look at a made picture too, so the writer hears what came out, not what was asked for
+
+    async def propose_picture(self, sess: Session, ctx, data: bytes, caption: str, chapter: int | None, hint: str = "", describe: bool = False, after: int | None = None, made: bool = False) -> str:
         """Check a picture, keep it as a candidate, and ask the writer. -> a plain message for the model."""
         if sess.pending and not self._supersede(sess):
             return "A proposal is already waiting for the writer's answer. Do not propose another."
@@ -1260,15 +1267,17 @@ class Agent:
         sess.pending = Pending("picture", cap, ch, data={"candidate": name, "caption": cap, "where": where})
         ctx.picture = {"candidate": name, "caption": cap, "chapter": ch}
         seen = ""
+        if made:
+            describe = self.describe_made
         if describe and self.llm:  # a picture that was found, not made: let a vision model look at it, so it can be described to the writer
             try:
                 seen = await asyncio.wait_for(ingest.describe_picture(self.llm, self.images.path(sess.book, name, candidate=True).read_bytes()), 90)
             except Exception:
                 seen = ""
         sess.pending.data["describe"] = seen
-        if not describe:
+        if not describe or made:
             sess.pending.data["gen_prompt"] = (hint or "")[:300]
-        how = (f" A vision model says the picture shows: {seen}" if seen else " You cannot see this picture and no vision model could: say so honestly and describe only what its title and caption tell you.") if describe else ""
+        how = (f" A vision model says the picture shows: {seen}" if seen else ("" if made else " You cannot see this picture and no vision model could: say so honestly and describe only what its title and caption tell you.")) if describe else ""
         return ("Proposed. The app shows the picture to the writer and asks yes or no by itself. In your reply, DESCRIBE the picture in one or two plain sentences "
                 "(the writer may not look at the screen) and do not ask about saving." + how)
 
@@ -1761,7 +1770,15 @@ class Agent:
         ctx = harness.Ctx(sess=sess)
         canon = await self._canon_by_meaning(sess, text)
         msgs = self._context(sess, text, canon=canon, sparks=self._sparks(sess, text), tools=True, recall=await self._recall(sess, text))
+        had_pending, sig0 = sess.pending is not None, self._book_sig(sess.book)
         out, _ = await harness.run(self.llm, msgs, self.toolbox, ctx, max_steps=3, temperature=self._temperature())
+        if re.fullmatch(r"\s*[\[(][^\]\)]{0,160}[\])]\s*", out or "") and not ctx.drafted and not ctx.picture:
+            # the model wrote a note ("[proposed a new paragraph]") instead of doing it: ask once more, plainly
+            out, _ = await harness.run(self.llm, msgs + [{"role": "assistant", "content": out}, {"role": "user", "content":
+                    "That was only a note, and nothing happened. Do what the writer asked now: to offer a paragraph call propose_append with the whole paragraph as its text; "
+                    "for a picture call make_picture or find_pictures; otherwise answer in plain spoken words."}], self.toolbox, ctx, max_steps=2, temperature=self._temperature())
+            if re.fullmatch(r"\s*[\[(][^\]\)]{0,160}[\])]\s*", out or ""):
+                out = ""
         out = (out or "").strip() or ("Goodbye for now. Everything you saved is in your book." if re.search(r"\b(?:good ?bye|bye|see you|talk (?:to you )?later)\b", text.lower()) else "I'm not sure what to say to that. Could you tell me a little more?")
         if ctx.picture and sess.pending and sess.pending.kind == "picture":  # the model made or found a picture: show it, describe it, ask
             cap = ctx.picture["caption"]
@@ -1770,14 +1787,14 @@ class Agent:
             lead = (out.strip() + " ") if described and len(out.strip()) <= 360 else (f"I made a picture: {excerpt(gp, 30).rstrip('.… ')}. " if gp else f"I have a picture for you, called {cap}. ")
             if sess.pending.data is not None:  # what was said about the picture, kept so "describe it to me" can say it again
                 sess.pending.data["describe"] = out.strip() if described else (gp or sess.pending.data.get("describe", ""))
-            sess.history.append({"role": "assistant", "content": "[proposed a picture]"})
+            sess.history.append({"role": "assistant", "content": f"(Note for me: I called a picture tool. The app now shows the picture \u201c{cap}\u201d and asks the writer yes or no. Nothing is in the book until they say yes.)"})
             reply = self._reply(sess, f"{lead}Should I put it in chapter {sess.pending.chapter}?")
             reply.picture = self.images.info(sess.book, ctx.picture["candidate"], cap, candidate=True)
             return self._attach(sess, reply, ctx, "", text)
         if ctx.drafted and sess.pending and sess.pending.kind == "append":  # the model proposed a paragraph: show it, hear it, and ask
             tail = f"Should I add it to chapter {sess.pending.chapter}?" if sess.pending.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.pending.chapter} with it?"
             lead = (out.strip() + " ") if out.strip() and len(out.strip()) <= 220 and out.strip() != "I'm not sure what to say to that. Could you tell me a little more?" else ""
-            sess.history.append({"role": "assistant", "content": "[proposed a new paragraph]"})
+            sess.history.append({"role": "assistant", "content": f"(Note for me: I called propose_append. The app now shows this draft for chapter {sess.pending.chapter} and asks the writer yes or no: \u201c{excerpt(ctx.drafted, 25)}\u201d Nothing is in the book until they say yes.)"})
             warn = f" A warning: {ctx.warning}" if ctx.warning else ""
             if ctx.warning:
                 tail = "It may not be what you asked for. Say yes to keep it anyway, or tell me what to change."
@@ -1791,8 +1808,23 @@ class Agent:
                 and re.match(r"^(?:and |ok |okay |now |please )*(?:one more|another|next|more|then|continue|write|and then)\b", intent.norm(text))):
             sess.history.pop()  # the model wrote prose into the chat instead of proposing it: ask again through the proper draft path, so it is checked, shown and can be saved
             return await self._propose_draft(sess, text)
+        if not sess.pending and self._book_sig(sess.book) == sig0 and self._CLAIM.search(out) and not set(ctx.calls) & {"start_chapter", "set_chapter_title", "set_ui", "export_book"}:
+            # the model says it saved, moved or undid something, but nothing happened: never let the writer believe it
+            out = ("I have not changed anything yet" + (" — nothing was waiting for your yes" if not had_pending else "") +
+                   ". Tell me again what you want, and I will show it to you first.")
         sess.history.append({"role": "assistant", "content": out})
         return self._attach(sess, self._reply(sess, out), ctx, out, text)
+
+    def _book_sig(self, book: str) -> tuple:
+        """Changes anywhere in the book's files (chapters, wiki, library) show up here: to tell a real change from a claimed one."""
+        try:
+            d = self.store.book_dir(book)
+            return tuple(sorted((str(p.relative_to(d)), p.stat().st_mtime_ns) for sub in ("chapters", "bible", "library") if (d / sub).is_dir()
+                                for p in (d / sub).rglob("*") if p.is_file()))
+        except Exception:
+            return ()
+
+    _CLAIM = re.compile(r"\b(?:i(?:'ve| have)? (?:now )?(?:saved|added|updated|changed|moved|deleted|removed|put (?:it|that|the|this|them)\b[^.]{0,40}\bin|undone|undid|corrected|fixed|replaced|taken out|took out)|(?:is|are|has been|have been) (?:now )?(?:saved|added|updated|in (?:the|your) book|back in|undone|moved|removed)|(?:now|is) back (?:in|where)|it'?s (?:saved|in the book|done))\b", re.I)
 
     @staticmethod
     def _looks_like_paragraph(out: str) -> bool:
@@ -1831,7 +1863,7 @@ class Agent:
                     break
         if new.strip().upper().startswith("NOT_FOUND"):
             sess.last_edit = (text, target.id)
-            self._remember(sess, text, "[changed nothing: that is not in " + where + "]")
+            self._remember(sess, text, "(Note for me: nothing was changed; that is not in " + where + ".)")
             return self._reply(sess, "I did not change anything. " + (new.split(":", 1)[1].strip() if ":" in new else "That is not in this paragraph.") + " Tell me what you want instead.")
         new = clean_draft(new)
         if re.sub(r"\s+", " ", new).strip() == re.sub(r"\s+", " ", target.text).strip():  # an "edit" that changes nothing: try once more, then say so
@@ -1842,7 +1874,7 @@ class Agent:
                 return self._reply(sess, "I tried, but I could not find a way to change it. Tell me exactly what you want different, for example a word to replace or a feeling to add.")
         sess.chapter, sess.focus = target.chapter, target.id
         sess.pending = Pending("edit", new, target.chapter, paragraph_id=target.id, data={"instruction": text})
-        self._remember(sess, text, f"[proposed a rewrite of {where}]")
+        self._remember(sess, text, f"(Note for me: the app now shows a new version of {where} and asks the writer yes or no. Nothing changes until they say yes.)")
         lead = f"Changing {where}, which starts: {excerpt(target.text, 6)} Here is the new version:"
         reply = self._reply(sess, f"{lead} {new} Should I save it?", await self._draft_speech(sess, new, lead, "Should I save it?", target))
         reply.notes += [f"Style note: {i}" for i in issues]
@@ -1866,8 +1898,13 @@ class Agent:
         new = clean_draft(new)
         if ctx.drafted:  # the model already proposed its paragraph through propose_append: that is the draft
             new = ctx.drafted
+        if not ctx.drafted and (re.fullmatch(r"\s*[\[(][^\]\)]{0,200}[\])]\s*", new or "") or len((new or "").split()) < 4):
+            again, _ = await self._gated(msgs + [{"role": "assistant", "content": new or ""}, {"role": "user", "content": "That is not a paragraph. Write the paragraph itself now: only the prose, nothing else."}])
+            new = clean_draft(again)
+            if re.fullmatch(r"\s*[\[(][^\]\)]{0,200}[\])]\s*", new or "") or len((new or "").split()) < 4:
+                return self._reply(sess, "I could not write that paragraph just now. Please ask me again in a moment.")
         sess.pending = Pending("append", new, sess.chapter)
-        self._remember(sess, text, f"[proposed a new paragraph, waiting for the writer's yes: {excerpt(new, 25)}]")
+        self._remember(sess, text, f"(Note for me: the app now shows this draft for chapter {sess.pending.chapter} and asks the writer yes or no: \u201c{excerpt(new, 25)}\u201d Nothing is in the book until they say yes.)")
         tail = f"Should I add it to chapter {sess.chapter}?" if sess.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.chapter} with it?"
         issue = ctx.warning if ctx.drafted else await self.check_continuity(sess, new, text)  # a paragraph proposed through the tool was already checked there
         warn = f" A warning: {issue}" if issue else ""
@@ -1925,7 +1962,7 @@ class Agent:
                 f"YOUR PREVIOUS DRAFT (not saved):\n{p.text}\n\nThe writer now says: {instruction}\nRevise the draft accordingly. Output only the paragraph."}]
         new, issues = await self._gated(msgs)
         p.text = new
-        self._remember(sess, instruction, "[revised the proposal]")
+        self._remember(sess, instruction, "(Note for me: I revised the draft; the app shows it again and asks yes or no.)")
         reply = self._reply(sess, f"Revised: {new} Should I save it?", await self._draft_speech(sess, new, "Revised:", "Should I save it?"))
         reply.notes += [f"Style note: {i}" for i in issues]
         return reply
