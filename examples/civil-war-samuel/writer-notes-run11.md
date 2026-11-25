@@ -1,0 +1,71 @@
+# Writer notes - Walter Mercer test (run 11)
+
+## Problems
+- MINOR (turn 2): "A story based on his life... call the book Samuel's War." Reply put the question before the confirmation: "What's the very first scene you see for Samuel? Done. The book is called Samuel's War." Expected "Done" first, question last.
+- MINOR (turn 3): "What do the papers say?" Reply summarised muster card, letter, obituary but skipped the 1890 pension application entirely.
+- MINOR (turn 5): reply says "the story wiki" - jargon for Walter. Family-tree save covered only 5 people (parents, Daniel, Martha); the children Thomas, Clara Belle, Joseph, granddaughter Ruth left out.
+- SERIOUS (turn 7): "Look up the seventy-sixth Ohio, and the pension act of eighteen ninety, and keep a page about it in the library." Notes show it looked up both on Wikipedia, but the reply was "I'm not sure what to say to that. Could you tell me a little more?" and a DUPLICATE card re-offered the same 5 family notes already saved. Expected: summary of findings + offer to save a library page.
+- MINOR (turn 8): Walter tried to steer away from the stale card ("No, not the family again..."); app just repeated "Say yes to save all of them... leave Erik out." The example name "Erik" is not in this book - confusing. Needed an explicit "No." (turn 9) to escape.
+- MINOR (turn 10): History lookup reply was good and plain. It says "I've saved the information about the 76th Ohio and the Pension Act to your library" but the library shows only one new item, "76th Ohio Infantry Regiment". Pension Act may or may not be inside that page; no separate page.
+- SERIOUS (turn 11): Asked to start chapter one and write paragraph 1. The app AGAIN offered the same 5 family notes (third time; already saved turn 6, refused turn 9), and the paragraph draft was mentioned but not read out. Walter has to repeat himself.
+- SERIOUS (turn 12): "No, I said no to that already. Those are saved. Just read me the paragraph..." was not taken as a no; app repeated the canned "Say yes ... leave Erik out." A spoken no with a remark after it should count.
+- MINOR (turn 16): "what would be a good name for the farm dog back then? Give me a name." Reply: "I'm having a little trouble with dog names right now. How about we just call him the dog..." - odd refusal of an easy creative request.
+- MINOR writing (turn 17): ch1 p2 draft: "a shaggy border collie" (breed name not in use until ~1915, period slip), stock phrases "a glint of steel", "not a summer picnic".
+- MINOR (turns 19-21): "Just change border collie to farm dog. Then save it." took three yeses: it saved the shorter draft, then asked "Do you mean chapter 1, paragraph 2...?", then showed the new version and asked "Should I save it?" again. Walter had already said "then save it".
+- MINOR writing (turn 22): ch1 p3 ends on a summing-up line: "He stood in line, a farmer no more, and wrote his name. Five feet, nine inches tall, twenty years old, a new soldier." Stock: "her voice a whisper", "his throat tight". Only one line of dialogue. Odd idea button "a floorboard that answers every footstep" unrelated to the scene.
+- MINOR (turn 27): reply says "Here's a draft: Chapter 2 ... is ready. Here's a draft for the first paragraph" (doubled). Draft omitted the wound Walter asked for; stock "a deadly expanse", "murderous hail".
+- MINOR (turn 29): Draft did include the colors falling ("the regimental banner dipping, then falling to the frozen earth") yet the reply added a false, garbled warning: "A warning: it does not do what you asked: (not what was asked) The new paragraph does not include the colors going down." Confusing for a listener; leaked internal label.
+- MINOR writing (turn 31): ch2 p2 "a terrifying symphony of shouts", "grim and determined"; "Dust and grit filled his mouth" contradicts the frozen ground of p1.
+- SERIOUS (turns 34-35): ch3 p1 draft was offered with NO confirmation card on screen; Walter said "Oh, that's nice. Yes, add it." The app did not save, instead apologised for a non-existent mistake ("I made a mistake and contradicted the timeline of the book") and re-offered the IDENTICAL text. Walter has to say yes twice.
+- MINOR facts (turn 37): Walter (deliberately) asked Daniel to mention "Thomas's girls"; Thomas (b.1867) and Ruth (b.1902) did not exist in 1864. The app did not notice despite the family tree. Ending "The date was March 9, 1864." is a flat tag.
+- MINOR period (turn 40): Company B comrade invented as "Gunnar"; on-screen name ideas "Kostas Vlachos | Suresh Desai | Idris Morgan | Tadashi Mori | Gunnar Solberg" - wildly wrong for an 1862 Licking County company. The papers already name a real comrade, Joseph R. Hanna, Co. B.
+- MINOR (turn 40): Spurious self-check warning, long and confusing: "...making it impossible for Samuel to be thinking of his brother's last words a fresh ache in November if Daniel died in March". Grief eight months on is not impossible. Stock: "a stark contrast", "a monotonous green".
+- SERIOUS (turn 43): "Chapter four. Call it Coming Home. ..." - the app said "There is no chapter 4 yet" and then RENAMED CHAPTER 3 (Daniel) to "Coming Home" without asking. Then a muddled apology for a mistake that never happened ("I made a mistake in connecting the letter directly to Martha... not explicitly to Martha" - the saved letter scene IS to Martha), then a draft with no confirmation card. Walter would hear a confusing jumble and not know his chapter title was overwritten.
+- MINOR (turn 48): "A little smaller" changed two things at once: book zoom 125->100 AND "everything on the screen is a bit smaller" (size 2->1), though "bigger" only changed zoom. Undershoots the earlier state.
+- MINOR writing/period (turn 49): ch4 p2 wedding is mostly summary; "a dress of simple white lace" (unlikely for an 1866 farm wedding), "small reception" (modern word), Hannah sitting "a few rows back"; aunt's line "A fine catch, Martha! A true hero" is stilted. Ends on mood summary.
+- MINOR (turn 54, recurring with 35, 43): app opens with an apology for a mistake Walter never mentioned ("I apologize. I made an assumption about the year 1885...") although Walter himself gave 1885; dropped his date. Draft again shown without a confirmation card. Pattern: internal self-check leaking into the spoken reply as apologies.
+- SERIOUS (turn 58): Walter said "Now chapter five..." but the draft was offered for CHAPTER 4 ("Should I add it to chapter 4?", card "Add this paragraph to chapter 4?"). A yes would have put the pension scene in the wrong chapter. The writing itself used the 1890 act correctly (90 days, honorable discharge, unable to do manual labour); stock "a phantom ache", "Seems like a lifetime ago".
+- SERIOUS (turns 59-62): "No, that goes in chapter five..." produced a "Revised" draft still carded for chapter 4. Walter had to go to chapter 5, say no, and ask for the same paragraph again - 4 turns to move one paragraph to the chapter he named.
+- MINOR writing (turn 64): ch5 p2 G.A.R. is habitual summary ("would sometimes drift in... Samuel would clear his throat... he'd say") rather than one scene; "air thick with" used again (also ch3 p1, ch5 p1).
+- MINOR writing (turn 66): ch5 p3 ending "the memory a private warmth against the cold January air" repeats the ch2 p3 shape ("his own hope a quiet prayer in the cold December air"). Formula endings: abstract noun + "against the cold".
+- MINOR (turn 74): Walter chose "the photograph of Ringgold Gap"; the app offered the other one, "Union army camp, 1863 (archive photograph)". Earlier (turn 73) it was honest that no Chattanooga hospital photo was found - good.
+- SERIOUS (turn 75): Second try for the Ringgold Gap photo again showed the camp photo, and now proposed the WRONG CHAPTER: "I can put this at the end of chapter 2. Should I put it in chapter 5?" with card "Put this picture in chapter 5?". Contradictory in one breath; a yes would misplace it.
+- MINOR (turn 79): Author's note claims the book draws on "the archives of the 76th Ohio Infantry Regiment" - it was a Wikipedia lookup; overstates sources. Also lists library titles verbatim ("his 1862 Muster In Card", "papers from the Whitfield Family"). Otherwise honest about imagined scenes. Ends on a generic summing-up ("lived through an extraordinary time").
+- MINOR (turn 81): "Save it so I can print it." Reply announced two files, "an e-book file" AND "a web page file", but only the web page (HTML) download was offered. Export itself is good: 200 OK, 1.2 MB, title "Samuel's War", author's note first and separate, table of contents, 5 titled chapters, 4 embedded pictures with captions.
+- MINOR (screenshot): two near-identical buttons "Earlier chapter" and "Back to earlier chapter" side by side - confusing for a half-sighted user. Image alt text is empty in the export (caption is below it), so a screen reader gets nothing for the pictures.
+- NOTE: "Bring it back" never needed - the app never said it dropped saved work (only drafts Walter declined).
+- NOTE: No budget errors in 81 say turns.
+
+## PASS/FAIL checklist
+- Book type answer + title "Samuel's War": PASS (order of reply odd)
+- What the papers say: PASS (pension paper skipped in summary)
+- Letter word for word: PASS (exact match with the PDF)
+- Family tree read: PASS; family into story notes: PASS (5 people; children left out)
+- History lookup 76th Ohio + pension act 1890: PASS on 2nd try (1st try "not sure what to say"); library page: PARTIAL (one page "76th Ohio Infantry Regiment"; no separate pension page despite claim)
+- History used in a scene: PASS (ch5 p1, the 90-day / honourable discharge / manual-labour terms)
+- Dog name: FAIL (app declined to suggest one; Walter named him Shep)
+- yes / no / yes but shorter / keep going / save and write next / reads stiff but save: PASS
+- Correction to waiting draft (little Ruth) then yes: PASS
+- "just change X to Y": PASS (but three confirmations)
+- delete / "Yes, delete it." / "No, wait. Keep it.": PASS
+- Undo: PASS
+- Read me chapter one: PASS
+- Start chapter five + go to chapter one: PASS
+- Bigger / smaller: PASS (smaller changed two settings)
+- Tintype after paragraph 1 of ch1: PASS
+- Farm photo: PASS (end of ch4)
+- Made picture: PASS (ch2 start)
+- Web picture: PARTIAL PASS (found and placed the camp photo; could not deliver the Ringgold Gap photo Walter chose, offered wrong chapter)
+- Author's note at very front, separate: PASS
+- "Save it so I can print it" / export: PASS
+- 5 chapters with 3+ paragraphs: PASS
+- Book title on export: PASS
+- Chapter titles: PASS (ch3 title was overwritten once, restored on request)
+- Documents used correctly: PASS (dates, arm, Camp Sherman, Granville St, Louisville, church all match)
+- Clean prose saved, no history/note inside chapters: PASS
+- Approved version saved: PASS
+- No saved work lost: PASS (but ch3 title silently overwritten, SERIOUS)
+- Nothing saved without yes: FAIL-ish (chapter 3 renamed without asking)
+- Dialogue and scenes: PASS mostly (ch4 p2, ch5 p2 lean on summary)
+- No summing-up endings: FAIL (several "abstract noun against the cold air" endings; "a farmer no more ... a new soldier")
+- Period accuracy: PARTIAL (border collie, "reception", modern comrade-name suggestions; Daniel mentions Ruth who was born 1902 - at Walter's request, not flagged)

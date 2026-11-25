@@ -418,6 +418,8 @@ class Agent:
                 r = self._reply(sess, f"Okay, it will go in chapter {ch_}. Say yes to add it.")
                 r.pending = {"kind": "append", "text": sess.pending.text, "paragraph_id": None, "ask": sess.pending.ask}
                 return r
+            if kind == "no" and rest and sess.pending.kind in ("wiki", "family", "page") and not re.search(r"\b(?:make|change|add|leave|without|but|only|except|instead|shorter|longer|rename)\b", intent.norm(rest)):
+                kind, rest = "no", ""  # "No, I said no to that already": a no
             if kind == "no" and rest and sess.pending.kind in ("edit", "confirm_target", "delete", "move") and self._standalone_command(rest):
                 sess.pending = None  # "No. Call chapter four Home Again": the guess was wrong and the writer said what they want instead
                 return await self._handle(sid, rest, sess.book)
@@ -563,6 +565,10 @@ class Agent:
             return r
 
         sents_ = [x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x.strip()]
+        if not sess.pending and len(sents_) >= 2 and (gn := intent.goto_chapter(sents_[0])) is not None and gn not in self.store.chapter_numbers(sess.book) \
+                and gn == max(self.store.chapter_numbers(sess.book), default=0) + 1 and (ci_ := re.match(r"(?i)^(?:and |then |um |uh )*(?:call|name|title) (?:it|this one|that one)\s+(.+?)[.!]?$", sents_[1].strip())):
+            text = f"Start chapter {gn}, {ci_.group(1)}." + (" " + " ".join(sents_[2:]) if len(sents_) > 2 else "")  # "Chapter four. Call it Coming Home.": a new chapter with that name
+            sents_ = [x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x.strip()]
         if not sess.pending and len(sents_) >= 2 and not self._standalone_command(sents_[0]) \
                 and (k_ := next((i for i, x in enumerate(sents_) if self._standalone_command(x)), None)) \
                 and (all(len(x.split()) <= 8 and not intent.is_question(x) for x in sents_[:k_]) or (k_ == len(sents_) - 1 and intent.book_title(sents_[k_]) is not None)):
@@ -580,7 +586,7 @@ class Agent:
             want_n = (intent.new_chapter_titled(first) or (None,))[0] or intent.new_chapter(first)
             if started and want_n and want_n not in self.store.chapter_numbers(sess.book):
                 return r1  # the chapter was not started (it would skip one): do not rename another chapter with "call it"
-            if (ci := re.match(r"(?i)^(?:and |then |um |uh )*(?:call|name|title) (?:it|this one|that one)\s+(.+)$", more_first.strip())):
+            if started and (ci := re.match(r"(?i)^(?:and |then |um |uh )*(?:call|name|title) (?:it|this one|that one)\s+(.+)$", more_first.strip())):
                 more_text = f"Call chapter {sess.chapter} {ci.group(1)}" + more_text[len(more_first):]  # "Start chapter five. Call it The Old Soldier."
             if started and sess.mode == "narrator" and not self._standalone_command(re.split(r"(?<=[.!?])\s+", more_text, maxsplit=1)[0]) and not intent.is_question(more_text) and not intent.is_draft(more_text):
                 more_text = f"Write the first paragraph of this chapter: {more_text}"
@@ -1911,6 +1917,7 @@ class Agent:
             described = len(out.strip()) >= 40 and out.strip().lower().rstrip('.') != cap.lower().rstrip('.')  # a real description, not just "Here you go" or the caption
             out = " ".join(x for x in re.split(r"(?<=[.!?])\s+", out.strip()) if not re.search(r"(?i)\bI(?:'ve| have)? (?:placed|put|added|inserted|saved)\b|\bshould i put\b|\byes or no\b", x))
             described = len(out.strip()) >= 40 and out.strip().lower().rstrip('.') != cap.lower().rstrip('.')
+            out = " ".join(x for x in re.split(r"(?<=[.!?])\s+", out.strip()) if not re.search(r"(?i)\bchapter \d+\b|\bchapter (?:one|two|three|four|five|six)\b", x))  # the card names the chapter
             seen_ = ((sess.pending.data or {}).get("describe") or "").strip()
             if seen_ and len(seen_) >= 40:  # what a vision model saw in THIS picture beats the chat model's words (it once described the wrong picture)
                 out, described = excerpt(seen_, 50), True
@@ -1989,11 +1996,17 @@ class Agent:
 
     async def _author_note_reply(self, sess: Session, text: str) -> Reply:
         """"Write an author's note for the very front": a short note on what comes from the papers and what is imagined, kept apart from the chapters."""
-        docs = ", ".join(m["title"] for m in (self.library.items(sess.book) if self.library else []) if m.get("kind") != "image")[:600]
+        def _src(m) -> str:
+            try:
+                looked = self.library.text(sess.book, m["slug"])[:200].startswith("Source: http")
+            except Exception:
+                looked = False
+            return f"{m['title']} (a page looked up on the web, not an archive)" if looked else m["title"]
+        docs = ", ".join(_src(m) for m in (self.library.items(sess.book) if self.library else []) if m.get("kind") != "image")[:700]
         genre = self._pref("genre", "")
         msgs = self._context(sess, text) + [{"role": "user", "content":
             f"The writer asks: {text}\n\nWrite a short author's note (60-140 words, in the writer's own voice, first person) for the front of the book. Say whose story it is, "
-            f"which papers it rests on ({docs or 'the family papers'}), and plainly that {'the scenes and talk are imagined from them' if genre != 'history' else 'it keeps to what the papers say'}. "
+            f"which papers it rests on ({docs or 'the family papers'}; name a looked-up page as a looked-up page, never as archives), and plainly that {'the scenes and talk are imagined from them' if genre != 'history' else 'it keeps to what the papers say'}. "
             "Output only the note."}]
         note = clean_draft(await self.llm.chat(msgs, temperature=0.5, max_tokens=400))
         if len(note.split()) < 20 or self._is_talk(note):
@@ -2217,7 +2230,7 @@ class Agent:
                 r = self._reply(sess, f"Okay, I left out {', '.join(left)}. {p.ask} Say yes or no.")
                 r.pending = {"kind": p.kind, "text": p.text, "paragraph_id": p.paragraph_id, "ask": p.ask}
                 return r
-            return self._reply(sess, "Say yes to save all of them, or no to drop them. To leave one out, say which, for example: leave Erik out.")
+            return self._reply(sess, "Say yes to save all of them, or no to drop them. To leave one out, say which, for example: leave the second one out.")
         if p.kind == "wiki":
             new = (await self.llm.chat([{"role": "system", "content": "Rewrite the note for a story wiki. Plain facts, at most 80 words. Output only the note."},
                                         {"role": "user", "content": f"NOTE:\n{p.text}\n\nChange requested: {instruction}"}], temperature=0.3, max_tokens=250)).strip()

@@ -3,12 +3,13 @@
 A writer agent playing Walter Mercer (79, half-sighted, voice only) made a five-chapter book about his great-grandfather Samuel Thomas Whitfield
 (Company B, 76th Ohio Volunteer Infantry, 1862–1865) by talking to the real app. The language model behind the app was a real one,
 `google/gemini-2.5-flash` through OpenRouter, capped at $2 for all six runs ($1.79 spent, 967 model calls). After each run the problems were fixed
-(see the git log, "Real-model round 1" to "round 6"). This folder holds the book from the last run.
+(see the git log, "Real-model round 1" to "round 11"). A second $2 budget paid for runs 7–11 ($1.67 spent), which asked for scenes with dialogue,
+three paragraphs a chapter and an author's note. This folder holds the book from run 11, the last one.
 
 * `family-files/`: the fictional papers (muster-in card, a letter from Ringgold, the 1890 pension declaration, the obituary), the GEDCOM family
   tree, and two old-looking photographs made with an image model for the test. The obituary's birth year (1842) disagrees with the tree (1841) on purpose.
-* `samuels_war.html`: the exported book (title, five named chapters, the tintype, the farm photo, a web photo, a made picture).
-  `final_book.txt`: its text. `writer-notes-run6.md`: the tester's notes and PASS/FAIL list for the last run.
+* `samuels_war.html`: the exported book (title, author's note, five named chapters of three paragraphs, the tintype, the farm photo, a web
+  photo, a made picture). `book.txt`: its text. `writer-notes-run11.md`: the tester's notes and PASS/FAIL list for that run.
 * `wiki-mock/`: the history articles the mock Wikipedia served (real Wikipedia limited the test machine's requests).
 * `test-rig/`: the spending-capped OpenRouter bridge, the mock web, and the writer's command script.
 

@@ -398,6 +398,16 @@ def build(agent) -> Toolbox:
                 skipped.append(name or "a note without a name")
         if not batch:
             return 'Give notes as a list: [{"kind": "characters", "name": "...", "note": "..."}].'
+        bib = store.bible(book(ctx))
+        def _saved(b):  # the same note is already on that page: never offer it again
+            for e in (bib.entries(b["kind"]).values() if b["kind"] != "premise" else []):
+                if e.name.lower() == b["name"].lower() and b["note"][:60].lower() in e.body.lower():
+                    return True
+            return False
+        already = [b["name"] for b in batch if _saved(b)]
+        batch = [b for b in batch if not _saved(b)]
+        if not batch:
+            return f"These are already saved in the story notes ({', '.join(already)}). Do NOT offer them again; tell the writer they are already there and go on with what they asked."
         if isinstance(notes, list) and len(notes) > 12:
             skipped += [f"{len(notes) - 12} more beyond the first 12"]
         ctx.sess.pending = Pending(kind="wiki", text="; ".join(f"{b['name']}: {b['note']}" for b in batch)[:600], chapter=ctx.sess.chapter, data={"batch": batch})

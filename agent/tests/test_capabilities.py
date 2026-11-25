@@ -1328,3 +1328,19 @@ async def test_rm10_library_offer_is_never_rescued_into_the_book(books):
     llm.replies = ["Okay."]
     await ag.handle("s", "Yes.")
     assert len(store.paragraphs("demo", 1)) == n
+
+
+@pytest.mark.asyncio
+async def test_rm11_next_chapter_then_call_it_and_notes_are_never_offered_twice(books):
+    ag, store, llm = make(books)
+    t1 = store.chapter_title("demo", 1)
+    await ag.handle("s", "Chapter two. Call it Coming Home.")
+    assert 2 in store.chapter_numbers("demo") and store.chapter_title("demo", 2) == "Coming Home" and store.chapter_title("demo", 1) == t1
+    s = ag.session("s")
+    await ag.toolbox.call("propose_wiki_notes", {"notes": [{"kind": "characters", "name": "Tova Berg", "note": "A neighbour on the next farm."}]}, harness.Ctx(sess=s))
+    await ag.handle("s", "yes")
+    out = await ag.toolbox.call("propose_wiki_notes", {"notes": [{"kind": "characters", "name": "Tova Berg", "note": "A neighbour on the next farm."}]}, harness.Ctx(sess=s))
+    assert "already saved" in out and s.pending is None
+    await ag.toolbox.call("propose_wiki_notes", {"notes": [{"kind": "characters", "name": "Ole Berg", "note": "Tova's husband."}]}, harness.Ctx(sess=s))
+    await ag.handle("s", "No, I said no to that already.")
+    assert s.pending is None and "Ole Berg" not in store.bible("demo").characters()
