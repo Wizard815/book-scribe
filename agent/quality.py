@@ -10,7 +10,10 @@ AI_ISMS = [
     "tapestry", "testament to", "a symphony of", "dance of", "shiver down", "shivers down", "little did",
     "couldn't help but", "barely above a whisper", "eyes sparkled", "palpable", "kaleidoscope",
     "delve", "unbeknownst", "in that moment", "the weight of", "orbs",
+    "searing pain", "crushing weight", "cut a wide swath", "in their wake", "hues of", "a new beginning", "man of the earth", "a lifeline",
+    "distant roar", "fading dream", "harsh reality", "would never be the same", "forever changed", "a stark reminder", "bittersweet",
 ]
+SUMMING_UP = re.compile(r"\b(?:no more, but|a reminder of|a symbol of|forever (?:changed|marked)|would never be the same|shaped by both|a new chapter|the end of an era|nothing would ever)\b", re.I)
 TELLING = re.compile(r"\b(she|he|they|i)\s+(felt|was feeling|realized|knew that|couldn't believe)\b", re.I)
 PASSIVE = re.compile(r"\b(was|were|been|being|is|are)\s+\w+ed\s+by\b", re.I)
 
@@ -38,6 +41,9 @@ def check(text: str, strictness: str = "gentle", max_sentence: int = BASE_MAX_SE
     hits = [p for p in AI_ISMS if p in low]
     if hits:
         issues.append("Avoid cliché phrases: " + ", ".join(sorted(hits)))
+    last = (re.split(r"(?<=[.!?])\s+", text.strip()) or [""])[-1]
+    if SUMMING_UP.search(last):
+        issues.append("Do not end on a line that sums up what the moment meant; end on a concrete action, image or spoken line.")
     words = re.findall(r"[a-z']+", low)
     if len(words) >= 30:
         for i in range(len(words) - 8):

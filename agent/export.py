@@ -15,6 +15,14 @@ from pathlib import Path
 import images as imgs
 
 
+def smart_quotes(t: str) -> str:
+    """One kind of quote marks in the printed book: curly, the way books print them."""
+    t = re.sub(r'(^|[\s(\[\u2014-])"', "\\1\u201c", t)
+    t = t.replace('"', "\u201d")
+    t = re.sub(r"(^|[\s(\[\u2014-])'", "\\1\u2018", t)
+    return t.replace("'", "\u2019")
+
+
 def book_title(store, book: str) -> str:
     """The title the writer gave, found in the premise ("Title: ...", "The book is called ...", "The title is ..."), else the book's name."""
     prem = store.bible(book).read("premise")
@@ -50,11 +58,11 @@ def to_html(store, istore, book: str) -> str:
                 try:
                     data = istore.path(book, img[1]).read_bytes()
                     src = f"data:{_mime(img[1])};base64,{base64.b64encode(data).decode()}"
-                    parts.append(f'<figure><img src="{src}" alt="{html.escape(img[0])}"><figcaption>{html.escape(img[0])}</figcaption></figure>')
+                    parts.append(f'<figure><img src="{src}" alt=""><figcaption>{html.escape(img[0])}</figcaption></figure>')  # the caption is read once, not twice
                 except FileNotFoundError:
                     parts.append(f'<p class="missing">[Picture missing: {html.escape(img[0])}]</p>')
             else:
-                parts.append(f"<p>{html.escape(p.text)}</p>")
+                parts.append(f"<p>{html.escape(smart_quotes(p.text), quote=False)}</p>")
         parts.append("</section>")
         body.append("\n".join(parts))
     return f"""<!doctype html>
@@ -111,11 +119,11 @@ def to_epub(store, istore, book: str) -> bytes:
             if img:
                 try:
                     files[img[1]] = istore.path(book, img[1]).read_bytes()
-                    parts.append(f'<figure><img src="images/{esc(img[1])}" alt="{esc(img[0])}"/><figcaption>{esc(img[0])}</figcaption></figure>')
+                    parts.append(f'<figure><img src="images/{esc(img[1])}" alt=""/><figcaption>{esc(img[0])}</figcaption></figure>')
                 except FileNotFoundError:
                     parts.append(f'<p class="missing">[Picture missing: {esc(img[0])}]</p>')
             else:
-                parts.append(f"<p>{esc(p.text)}</p>")
+                parts.append(f"<p>{esc(smart_quotes(p.text))}</p>")
         doc = (f'<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>{esc(head)}</title>'
                f'<style>p{{text-indent:1.2em;margin:0 0 .8em}}figure{{text-align:center;margin:1.2em 0}}img{{max-width:100%}}figcaption{{font-style:italic;font-size:.9em}}</style></head><body>{"".join(parts)}</body></html>')
         chapters.append((f"c{n}.xhtml", doc))

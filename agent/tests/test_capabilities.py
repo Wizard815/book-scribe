@@ -8,6 +8,7 @@ import pytest
 import harness
 import ingest
 from tests.test_pictures import PARA, FakeImageGen, make, png
+from book_store import BookStore
 
 FILES = Path(__file__).resolve().parents[2] / "examples" / "grandpa-lindsborg" / "family-files"  # fictional sample PDFs and a GEDCOM
 
@@ -1198,3 +1199,13 @@ async def test_rm6_a_picture_description_is_never_saved_as_a_paragraph_and_chatt
     assert len(store.paragraphs("demo", 1)) == n
     out = await ag.toolbox.call("propose_append", {"text": "I understand. I will just provide the story prose from now on, without any extra words around it at all."}, harness.Ctx(sess=s))
     assert out.startswith("Error")
+
+
+def test_review_stock_phrases_summing_up_lines_quotes_and_alt_text(books):
+    import quality, export
+    assert any("sums up" in i for i in quality.check("He walked home through the rain. He was a farmer no more, but a soldier."))
+    assert any("cliché" in i for i in quality.check("A searing pain ran up his arm."))
+    store = BookStore(books)
+    store.append_paragraph("demo", 1, 'He said "I am well," and it\'s cold.')
+    out = export.to_html(store, __import__("images").ImageStore(store), "demo")
+    assert "“I am well,”" in out and "it’s" in out
