@@ -626,3 +626,144 @@ def test_audit_voice_repeat_and_grounding_false_positives(books):
     store.create_chapter("demo", 2); store.append_paragraph("demo", 2, "It was raining again.")
     assert ag.check_repeat(sess, "At noon the carter came by the gate with the post, and he said it was raining again over the hills and the whole valley road.") == ""
     assert ag.ungrounded(sess, "On Tuesday in October a man called Bergman arrived in Lisbon with 12 trunks and a very long story to tell about the sea.") == ""  # no documents: a novel is not gated
+
+
+# ------------------------------------------------------------------------------------------- second logic audit (regressions)
+DRAFT = "The wind came off the prairie in long cold gusts. Everett pulled his collar up and walked the last mile to the station with his bag."
+
+
+def _wait(ag, kind="append", text=DRAFT, chapter=1, **kw):
+    ag.session("s").pending = __import__("agent").Pending(kind, text, chapter, **kw)
+
+
+@pytest.mark.asyncio
+async def test_audit2_keep_it_or_leave_it_refuses_a_delete_or_move(books):
+    ag, store, llm = make(books)
+    before = store.read_chapter_raw("demo", 1)
+    for cmd, ans in (("delete paragraph 2", "keep it"), ("delete paragraph 2", "fine, leave it"), ("delete paragraph 2", "right, actually leave it"),
+                     ("move paragraph 1 to the end", "keep it where it is"), ("move paragraph 1 to the end", "keep it there")):
+        await ag.handle("s", cmd)
+        assert ag.session("s").pending is not None, cmd
+        await ag.handle("s", ans)
+        assert store.read_chapter_raw("demo", 1) == before and ag.session("s").pending is None, ans
+
+
+@pytest.mark.asyncio
+async def test_audit2_a_yes_never_saves_a_list_of_ideas_or_a_picture_offer(books):
+    ag, store, llm = make(books)
+    n = len(store.paragraphs("demo", 1))
+    s = ag.session("s")
+    for offer in ("Here are some ideas for the next part. One, Everett finds a letter in the barn from his father. Two, a storm closes the road to town. "
+                  "Three, his sister arrives from Kansas City with news about the farm and the bank. Shall I write the first one?",
+                  "I could make a picture of the station at night, with the lamps lit and the snow coming down over the tracks and the empty platform, "
+                  "and the old clock above the door showing ten past eleven. Shall I make that picture for chapter 1?"):
+        s.history.append({"role": "assistant", "content": offer})
+        llm.replies = ["Okay."]
+        await ag.handle("s", "yes please")
+        assert len(store.paragraphs("demo", 1)) == n
+
+
+@pytest.mark.asyncio
+async def test_audit2_a_question_after_okay_or_a_cut_off_yes_but_saves_nothing(books):
+    ag, store, llm = make(books)
+    n = len(store.paragraphs("demo", 1))
+    for t in ("okay, who was waiting at the station?", "good, what happens next?", "alright, where were we?", "yes, but", "yes but um"):
+        _wait(ag)
+        llm.replies = ["Nobody was waiting."]
+        await ag.handle("s", t)
+        assert len(store.paragraphs("demo", 1)) == n and ag.session("s").pending is not None and ag.session("s").pending.text == DRAFT, t
+    await ag.handle("s", "um yes")
+    assert len(store.paragraphs("demo", 1)) == n + 1
+
+
+@pytest.mark.asyncio
+async def test_audit2_naming_another_chapter_in_the_answer_puts_the_draft_there(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    _wait(ag)
+    await ag.handle("s", "yes, add it to chapter 2")
+    assert DRAFT in store.read_chapter_raw("demo", 2) and DRAFT not in store.read_chapter_raw("demo", 1)
+    _wait(ag, text=DRAFT.replace("Everett", "Nils"))
+    r = await ag.handle("s", "no, put it in chapter 2")
+    assert "chapter 2" in r.text and ag.session("s").pending.chapter == 2
+    _wait(ag)
+    r = await ag.handle("s", "put it in chapter 9")
+    assert "no chapter 9" in r.text and ag.session("s").pending.chapter == 1
+
+
+@pytest.mark.asyncio
+async def test_audit2_correcting_which_paragraph_keeps_the_change_and_never_hits_the_rejected_one(books):
+    ag, store, llm = make(books)
+    p2 = store.paragraphs("demo", 1)[1].id
+    for ans, want in (("no, I meant paragraph three", 2), ("no, the paragraph before that", 0), ("no, the one after that", 2), ("no, not that one, the last one", 2)):
+        _wait(ag, "confirm_target", "make the bit about the apology sadder", paragraph_id=p2)
+        llm.replies = ["A sadder paragraph than before, which is long enough to be a real paragraph of the story."]
+        await ag.handle("s", ans)
+        s = ag.session("s")
+        assert s.pending and s.pending.kind == "edit" and s.pending.paragraph_id == store.paragraphs("demo", 1)[want].id, ans
+    _wait(ag, "edit", "A rewritten paragraph two, long enough to look like a real paragraph of the story.", paragraph_id=p2, data={"instruction": "make it sadder"})
+    llm.replies = ["A sadder paragraph three, long enough to look like a real paragraph of the story here."]
+    await ag.handle("s", "no, I meant paragraph three")
+    assert ag.session("s").pending.paragraph_id == store.paragraphs("demo", 1)[2].id and "make it sadder" in llm.calls[-1][-1]["content"]
+    _wait(ag, "confirm_target", "make the bit about the apology sadder", paragraph_id=p2)
+    llm.replies = ["A sadder and shorter paragraph two, long enough to look like a real paragraph here."]
+    await ag.handle("s", "yes but make it shorter")
+    assert ag.session("s").pending.kind == "edit" and ag.session("s").pending.paragraph_id == p2 and "shorter" in llm.calls[-1][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_audit2_yes_and_write_the_next_one_saves_then_drafts(books):
+    ag, store, llm = make(books)
+    drafts = ["Snow had settled on the fence posts overnight, and the cows stood close together by the barn door waiting for hay.",
+              "His mother kept the letters in a tin box under the bed, tied with blue string, and read them only on Sundays.",
+              "The harvest that year was thin, so the boys went to work for the railroad laying ties west of Salina all summer.",
+              "At the church supper the pastor spoke about the war in Europe, and the room grew quiet as the coffee went cold."]
+    for t, d in zip(("yes save it and write the next one", "keep going", "great, carry on", "yes, and then the part where he buys a ticket"), drafts):
+        n = len(store.paragraphs("demo", 1))
+        _wait(ag, text=d + f" ({t})")
+        llm.replies = ["Inside the station the air was warm and smelled of coal smoke, and the clerk nodded to him from behind the ledger."] * 4
+        r = await ag.handle("s", t)
+        assert len(store.paragraphs("demo", 1)) == n + 1 and f"({t})" in store.read_chapter_raw("demo", 1), t
+        assert ag.session("s").pending and ag.session("s").pending.kind == "append" and "coal smoke" in ag.session("s").pending.text, t
+
+
+def test_audit2_starting_a_chapter_does_not_take_words_for_a_title():
+    import intent
+    for t in ("Start chapter two.", "start chapter two please", "start a new chapter now please", "let's start chapter two where they arrive in Kansas"):
+        assert intent.new_chapter_titled(t)[1] == "", t
+    assert intent.new_chapter_titled("Start chapter two.")[0] == 2
+    assert intent.new_chapter_titled("start chapter 3 and call it The Lake") == (3, "The Lake")
+    assert intent.new_chapter_titled("begin chapter four, The Round Table") == (4, "The Round Table")
+    assert intent.chapter_story("let's start chapter two where they arrive in Kansas") == "where they arrive in Kansas"
+
+
+def test_audit2_story_told_with_edit_verbs_is_not_an_edit_and_facts_are_not_idea_requests():
+    import intent
+    for t in ("In this chapter they fix up the old farmhouse and make it a home.", "After the wedding they had to change their plans and move to Topeka.",
+              "After the funeral Mira had to make dinner for twelve people."):
+        assert not intent.is_edit(t), t
+    for t in ("in chapter 3 when they meet make him nervous", "when Everett leaves make it sadder", "In the station scene, make the porter older"):
+        assert intent.is_edit(t), t
+    for t in ("I need the name of Everett's father", "are there any problems with the timeline", "can you give me the details from the obituary"):
+        assert intent.ideas_request(t) is None, t
+    assert intent.ideas_request("give me some names for a girl")["kind"] == "name"
+
+
+def test_audit2_second_to_last_corrections_and_fillers():
+    import intent
+    assert intent.parse_ref("delete the second to last paragraph").para == -2
+    assert intent.parse_ref("read me the next to last paragraph").para == -2
+    r = intent.parse_ref("delete paragraph two in chapter one, no wait, chapter two")
+    assert (r.chapter, r.para) == (2, 2)
+    assert intent.goto_chapter("uh, go to chapter two") == 2 and intent.undo_request("um, undo that")
+    assert intent.confirmation("well yes") == ("yes", "") and intent.confirmation("no, that's fine") == ("no", "")
+    assert intent.detect_mode("okay, back to the story. Everett boards the train and finds a seat by the window") is None
+
+
+@pytest.mark.asyncio
+async def test_audit2_read_me_a_chapter_reads_it_and_keeps_the_writing_chapter(books):
+    ag, store, llm = make(books)
+    store.create_chapter("demo", 2)
+    await ag.handle("s", "go to chapter 2")
+    r = await ag.handle("s", "read me chapter one")
+    assert store.paragraphs("demo", 1)[0].text[:20] in r.text and ag.session("s").work == 2

@@ -58,6 +58,7 @@ def norm(text: str) -> str:
             out.append(t)
         i += 1
     s = re.sub(r"(?<=\w)\.(?=\s|$)", "", "".join(out))  # "mr." -> "mr"
+    s = re.sub(r"^(?:\W*(?:um+|uh+|uhm|erm|er|hmm+|mm+|ah)\b[\s,.]*)+(?=\w)", "", s)  # "um, undo that": a spoken filler is not part of the command
     s = re.sub(r"\b(?!(?:let|it|he|she|that|there|here|what|who|how|where|when|why|one)'s\b)(\w+)'s\b", r"\1", s)  # "Jonas's voice" -> "jonas voice"
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]", " ", s)).strip()
 
@@ -88,9 +89,9 @@ def _words(text: str) -> list[str]:
     return norm(text).split()
 
 
-_NO_DROP = re.compile(r"^(?:just )?(?:leave|keep) (?:it|that|this|them)?(?: as it was| as it is| as is| the same| alone| how it was| like it was)?(?: please)?$|^(?:forget|drop|cancel|skip|scrap) (?:it|that|this)(?: please)?$|^never ?mind(?: that| it)?$|^(?:as it was|the same|leave it)$|^(?:thanks|thank you|thank|please)$|^not now$|^(?:i )?(?:changed|change) my mind$")
+_NO_DROP = re.compile(r"^(?:just )?(?:leave|keep) (?:it|that|this|them)?(?: as it was| as it is| as is| the same| alone| how it was| like it was)?(?: please)?$|^(?:forget|drop|cancel|skip|scrap) (?:it|that|this)(?: please)?$|^never ?mind(?: that| it)?$|^(?:as it was|the same|leave it)$|^(?:thanks|thank you|thank|please)$|^not now$|^(?:that'?s|thats|it'?s|its|that is|it is|all) (?:fine|ok|okay|good|alright|all right)(?: thanks| thank you)?$|^(?:i )?(?:changed|change) my mind$")
 _CHANGE = re.compile(r"\b(?:leave (?:\w+ ){0,3}out|skip|exclude|ignore|drop|make|change|different|instead|another|darker|lighter|bigger|smaller|more|less|without|but|not|no|don'?t|empty|remove|rename|call it|shorter|longer|except|only|wrong|other)\b")
-_SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| those| these| all| all of them| (?:that|this|the) (?:one|1)| the (?:paragraph|picture))?(?: in| in there| down| to the book| to chapter \d+| into the book| away)?(?: please| now| for me)?|that one|that'?s? (?:the (?:one|1)|fine|good|right|great|perfect|lovely|nice|mine|it)|(?:it'?s|this is) (?:mine|good|great|fine|right|perfect|lovely|nice|the (?:one|1))|do it|mine|(?:the )?(?:one|1)|that|this|it|them|those|these|all|thanks|thank you|great|perfect|lovely|good|nice|fine|right|exactly)(?:,? (?:put it in|use it|add it|save it|keep it|go ahead|please|thank you|thanks))*$")
+_SAVE_WORDS = re.compile(r"^(?:(?:please )?(?:go ahead(?: and)?|add|save|put|use|keep|do|write|store|file)(?: it| that| this| them| those| these| all| all of them| (?:that|this|the) (?:one|1)| the (?:paragraph|picture))?(?: in| in there| down| to the book| into the book| away)?(?: please| now| for me)?|that one|that'?s? (?:the (?:one|1)|fine|good|right|great|perfect|lovely|nice|mine|it)|(?:it'?s|this is) (?:mine|good|great|fine|right|perfect|lovely|nice|the (?:one|1))|do it|mine|(?:the )?(?:one|1)|that|this|it|them|those|these|all|thanks|thank you|great|perfect|lovely|good|nice|fine|right|exactly)(?:,? (?:put it in|use it|add it|save it|keep it|go ahead|please|thank you|thanks))*$")
 
 
 def confirmation(text: str) -> tuple[str | None, str]:
@@ -102,6 +103,8 @@ def confirmation(text: str) -> tuple[str | None, str]:
     (None, text)                 "don't change the ending" -> a new instruction, not an answer
     """
     w = _words(text)
+    if len(w) > 1 and w[0] in ("so", "well", "oh") and (w[1] in _YES_CORE or w[1] in _NO_CORE):
+        w = w[1:]  # "well yes", "so no"
     if not w:
         return None, ""
     if HOLD.match(norm(text)):
@@ -116,10 +119,12 @@ def confirmation(text: str) -> tuple[str | None, str]:
     i = 0
     while i < len(w) and (w[i] in core or w[i] in fill):
         i += 1
-    rest = w[i:]
+    rest = [x for x in w[i:] if x not in ("um", "umm", "uh", "uhh", "er", "erm", "uhm", "hmm")]  # fillers are not words of a change
     if kind == "no" and w[0] in ("dont", "don't") and rest:
         return None, text  # "don't change the ending of chapter 2" is a new instruction, not a rejection
     if rest and rest[0] in ("but", "except", "only", "although", "and", "though"):
+        if len(rest) == 1 and rest[0] != "and":
+            return "hold", ""  # "yes, but" and then the microphone closed: the writer has more to say, so nothing is saved
         rest = rest[1:]
     if kind == "no" and _NO_DROP.match(" ".join(rest)):
         rest = []  # "no, leave it as it was": a plain no
@@ -135,6 +140,8 @@ _NARRATOR = re.compile(r"\b(narrator|narration|writing|drafting|story|co ?writer
 
 def detect_mode(text: str) -> str | None:
     n = norm(text)
+    if len(n.split()) > 8:
+        return None  # "okay, back to the story. Everett boards the train...": the story goes on, it is not a mode switch
     if _NARRATOR.search(n):
         return "narrator"
     if _THERAPIST.search(n):
@@ -165,11 +172,17 @@ def parse_ref(text: str) -> Ref:
     r = Ref()
     # "as in chapter two", "same lady as chapter six", "like chapter 2": a chapter the writer is pointing back to, not where the work goes
     n_dest = re.sub(r"\b(?:as in|as|like in|like|same as(?: in)?|just as in|back in|earlier in|mentioned in|remember(?: in)?|unlike(?: in)?|similar to|than in|compared (?:to|with)|the way (?:it was )?in|from earlier in|that we (?:wrote|had) in|we had in)\s+chapter\s+\d+", " ", n)
-    if m := re.search(r"\bchapter (\d+)\b", n_dest):
-        r.chapter = int(m.group(1))
+    fix = re.search(r"\b(?:no wait|wait no|sorry|i mean|i meant|no i mean|or rather|actually)\b", n_dest)  # "chapter one, no wait, chapter two": the last one counts
+    if ms := re.findall(r"\bchapter (\d+)\b", n_dest):
+        r.chapter = int(ms[-1] if fix else ms[0])
     if m := re.search(r"\bscene (\d+)\b", n):
         r.scene = int(m.group(1))
-    if m := re.search(rf"\b{_PARA_WORD} (\d+)\b", n):
+    if m := re.search(rf"\b(?:(second|next|third) (?:to|from) (?:the )?last|(\d+|second|third) from the end) (?:{_PARA_WORD}|one)\b|\b(?:{_PARA_WORD}|one) (?:(second|next|third) (?:to|from) (?:the )?last)\b", n):
+        w = m.group(1) or m.group(2) or m.group(3)
+        r.para = -({"next": 2, "second": 2, "third": 3}.get(w) or int(w))  # "the second to last paragraph" is one before the last
+    elif fix and (ps := re.findall(rf"\b{_PARA_WORD} (\d+)\b", n)):
+        r.para = int(ps[-1])
+    elif m := re.search(rf"\b{_PARA_WORD} (\d+)\b", n):
         r.para = int(m.group(1))
     elif m := (re.search(rf"\b({_ORD}) (?:paragraph|para|section|part|bit)\b", n) or re.search(rf"\b({_ORD}) (?:line|sentence)\b", n)):
         # "the last sentence of the first paragraph" is paragraph 1: a paragraph word wins over a sentence or line word
@@ -211,6 +224,33 @@ _LOCATOR_OPEN = re.compile(r"^(?:in|at|when|where|during|after|before|on|for|the
 _WIKI_TALK = re.compile(r"\b(?:wiki|story notes?|story bible|bible|character pages?|notes? (?:for|on|about)|pages? for|save (?:notes?|them|these)|story pages?)\b")
 
 
+_SUBJECT = re.compile(r"\b(?:they|he|she|we|everyone|nobody|both|the family|his \w+|her \w+|their \w+)\b")
+
+
+def _narration(text: str, n: str) -> bool:
+    """A person in the story is the one who changes or makes something: a subject (a pronoun or a name) comes before the first edit verb,
+    and the writer named no paragraph or chapter number."""
+    r = parse_ref(text)
+    if r.para is not None or r.chapter is not None:
+        return False
+    v = _VERB_ANYWHERE.search(n)
+    if not v:
+        return False
+    if re.search(rf"(?<!\bto )(?<!\bhad )\b{_EDIT_VERBS} (?:it|that|this|him|her|them) (?:\w+er|more|less|sound|feel|seem|read|look)\b", n):
+        return False  # "when Everett leaves make it sadder": an instruction about the text
+    before = n[: v.start()]
+    if _SUBJECT.search(before):
+        return True
+    raw_words = re.findall(r"[A-Za-z']+", text)
+    first_verb = v.group().split()[0]
+    for i, w in enumerate(raw_words[1:], 1):  # a name (a capital letter, not the first word) before the verb: "After the funeral Mira had to make dinner"
+        if w.lower() == first_verb:
+            break
+        if w[0].isupper() and w not in ("I",) and raw_words[i - 1][-1:] != "." :
+            return True
+    return False
+
+
 def is_edit(text: str) -> bool:
     """An imperative aimed at existing text. Transcripts rarely have commas, so "in chapter 3 when they meet make him
     nervous" counts: an edit verb after a location phrase. Questions and opinions ("how do I make...", "I hate it when
@@ -222,7 +262,11 @@ def is_edit(text: str) -> bool:
         return False  # "yes, make one": an answer to my question, not an edit of any paragraph
     if _WIKI_TALK.search(n) and parse_ref(text).para is None:
         return False  # "make wiki pages for the father, the farm and the camp" is about the story wiki, not an edit of a paragraph
-    if _EDIT_LEAD.match(n) or _EDIT_CLAUSE.search(text.lower()):
+    if _EDIT_LEAD.match(n):
+        return True
+    if _narration(text, n):
+        return False  # "In this chapter they fix up the farmhouse and make it a home": someone in the story does it, the writer is telling me the story
+    if _EDIT_CLAUSE.search(text.lower()):
         return True
     return bool(_VERB_ANYWHERE.search(n) and (_LOCATOR_OPEN.match(n) or parse_ref(text).chapter is not None))
 
@@ -354,19 +398,34 @@ def new_chapter(text: str) -> int | None:
     return int(m.group(1)) if m.group(1) else 0
 
 
-_NEW_CHAPTER_TITLED = re.compile(r"(?i)^" + _POLITE + r"(?:start|begin|open|make|create|add|write)(?: me)?(?: a| the)?(?: new| next| fresh)? chapter(?: (?:number )?(\d+))?(?:,|:| and)?\s+(?:and )?(?:(?:call(?:ed)?|title[d]?|name[d]?|label(?:l?ed)?)(?: it| the chapter| this chapter)?(?: to| as)?\s+)?[\"'“]?(.{2,70}?)[\"'”]?[.!?]?$")
+_NEW_CHAPTER_TITLED = re.compile(r"(?i)^" + _POLITE + r"(?:start|begin|open|make|create|add|write)(?: me)?(?: a| the)?(?: new| next| fresh)? chapter(?: (?:number )?(\d+))?(\s*[,:\u2014-]|\s+and)?\s+(?:and )?((?:call(?:ed)?|title[d]?|name[d]?|label(?:l?ed)?)(?: it| the chapter| this chapter)?(?: to| as)?\s+)?[\"'“]?(.{2,70}?)[\"'”]?[.!?]?$")
+_NUMBER_WORDS = "|".join(sorted(list(_UNITS) + list(_TENS), key=len, reverse=True))
 
 
 def new_chapter_titled(text: str) -> tuple[int, str] | None:
     """"start chapter 3 and call it The Lake", "begin chapter 4, The Round Table" -> (chapter number, 0 = the next one; the title)."""
-    raw = text.strip()
+    raw = re.sub(r"(?i)^(?:\W*(?:um+|uh+|uhm|erm|er)\b[\s,.]*)+", "", text.strip())
+    num = None
+    if mw := re.search(rf"(?i)\bchapter (?:number )?((?:{_NUMBER_WORDS})(?:[\s-]+(?:{_NUMBER_WORDS}))?)\b", raw):  # "start chapter two, The Lake"
+        if (d := re.match(r"\d+$", norm(mw.group(1)))):
+            num, raw = int(d.group()), raw[:mw.start(1)] + d.group() + raw[mw.end(1):]
     m = _NEW_CHAPTER_TITLED.match(raw)
-    if not m or not (m.group(2) or "").strip():
+    if not m or not (m.group(4) or "").strip():
         return None
-    title = m.group(2).strip()
-    if re.fullmatch(r"(?i)(?:please|now|for me|again)", title) or len(title.split()) > 9:
-        return None
-    return (int(m.group(1)) if m.group(1) else 0, title)
+    title = m.group(4).strip()
+    sep = (m.group(2) or "").strip()
+    n0 = int(m.group(1)) if m.group(1) else int(title) if title.isdigit() else (num or 0)
+    if not m.group(3) and sep not in (",", ":", "\u2014", "-") or len(title.split()) > 9 \
+            or re.fullmatch(rf"(?i)(?:please|now|for me|again|{_NUMBER_WORDS}|\d+)(?: please| now)?", title) \
+            or re.match(r"(?i)(?:where|when|about|and|write|it'?s|now|please|then|with|in which|so)\b", title):
+        return (n0, "")  # "start chapter two please", "start a new chapter about the voyage": a new chapter, but no name was given
+    return (n0, title)
+
+
+def chapter_story(text: str) -> str:
+    """What follows "start chapter 2" when it tells the story or asks for writing: "...where they arrive in Kansas", "...and write the first paragraph"."""
+    m = re.search(r"(?i)\bchapter(?: (?:number )?\w+)?[\s,]+(?:and |then )?((?:where|when|about|in which|with|write|draft)\b.*)$", text.strip())
+    return m.group(1).strip() if m and len(m.group(1).split()) >= 2 else ""
 
 
 def title_chapter(text: str) -> tuple[int | None, str] | None:
@@ -557,6 +616,8 @@ def ideas_request(text: str) -> dict | None:
         return {"repeat": True}
     if re.match(r"^(?:what|who|which|where|when|why|how) (?!should (?:i|we) call)", n) or re.search(r"\bchapter \d+", n):
         return None
+    if re.search(r"\bthe (?:real |actual |right )?(?:name|names|details?|problems?|title|dates?) (?:of|from|in|on|for|with)\b|\b(?:problems?|issues?|mistakes?) (?:with|in) (?:the|my|his|her)\b|\bdetails? (?:from|in) (?:the|his|her|my)\b", n):
+        return None  # "the name of Everett's father", "problems with the timeline": facts the book or the documents hold, not random new ideas
     short_form = len(n.split()) <= 5 and bool(re.match(r"^(?:some|a few|a couple of|\d+|an?|another|new|more)\b", n))  # "some names", "ten names"
     if not _IDEA_VERB.search(n) and not short_form:
         return None
