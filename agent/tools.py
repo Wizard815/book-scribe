@@ -413,8 +413,8 @@ def build(agent) -> Toolbox:
         from agent import clean_draft
 
         text = clean_draft(text)
-        if re.match(r"(?i)^(?:i apologi[sz]e|my apologies|i'?m sorry|sorry|you'?re (?:absolutely )?right|i see|i understand|thank you|thanks|of course|certainly)\b", text) \
-                or re.search(r"(?i)\b(?:the writer|propose_\w+|book state|the app (?:shows|asks)|note for me)\b", text):
+        if re.match(r"(?i)^(?:i apologi[sz]e|my apologies|i'?m sorry|sorry|you'?re (?:absolutely )?right|i see|i understand|thank you|thanks|of course|certainly|i couldn'?t|i could not|i can'?t|i cannot|let me|a warning)\b", text) \
+                or re.search(r"(?i)\b(?:the writer|propose_\w+|book state|the app (?:shows|asks)|note for me|not in your documents|it does not do what you asked|not what was asked)\b", text):
             return "Error: that is not story prose. Give ONLY the paragraph that goes into the book, with no apology and no talk to the writer."
         if len(text) < 30:
             return "Give the whole paragraph in text (at least a sentence or two)."
@@ -510,6 +510,10 @@ def build(agent) -> Toolbox:
             data = await agent.web.fetch_image(hit["img"])
         except WebError as e:
             return f"Error: {e}"
+        cw = {w for w in re.findall(r"[a-z]{4,}", (caption or "").lower())} - {"photo", "photograph", "picture", "archive", "image", "with", "from", "their", "they"}
+        tw = {w for w in re.findall(r"[a-z]{4,}", hit["title"].lower())}
+        if caption and cw and not cw & tw:
+            caption = hit["title"]  # the caption was written for another result: use this picture's own title, so words and picture match
         msg = await agent.propose_picture(ctx.sess, ctx, data, caption or hit["title"], _int(chapter, 0, 0, 9999) or None, hit["title"], describe=True, after=_after(after))
         page = ""
         if hit.get("page") and ctx.sess.pending and ctx.sess.pending.kind == "picture":  # nothing here can see the picture, but the page it came from says what it shows

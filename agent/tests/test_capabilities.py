@@ -1156,3 +1156,24 @@ def test_rm4_writing_and_print_requests():
     import intent
     assert intent.is_draft("Tell the part where he rides into Newark and signs up at Camp Sherman.")
     assert intent.export_request("Save it so I can print it") == "html"
+
+
+@pytest.mark.asyncio
+async def test_rm5_a_remark_then_the_book_title_and_junk_never_reaches_the_book(books):
+    ag, store, llm = make(books)
+    llm.replies = ["Buck is a fine name for a farm dog."]
+    await ag.handle("s", "Buck. I like Buck. Now, call the book Samuel's War.")
+    import export
+    assert export.book_title(store, "demo") == "Samuel's War"
+    for junk in ("Let me try again, using only what we know. How about this: \"The rain fell on the camp all night and nobody slept at all.\"",
+                 "The rain fell on the camp all night and nobody slept at all. Should I save it?"):
+        _wait(ag, text=junk)
+        await ag.handle("s", "yes")
+    raw = store.read_chapter_raw("demo", 1)
+    assert "Let me try" not in raw and "Should I save" not in raw and "How about" not in raw
+
+
+def test_rm5_more_answers_and_refusals():
+    import intent
+    assert intent.confirmation("Yes, that's more like it.") == ("yes", "")
+    assert intent.book_title("Please make sure the title of the book itself is Samuel's War, so it's on the front page when I print it.") == "Samuel's War"

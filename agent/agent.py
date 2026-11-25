@@ -75,8 +75,13 @@ def clean_draft(text: str) -> str:
     block that clearly addresses the writer is removed; the paragraph itself is never cut into."""
     t = text.strip().strip("`").strip()
     t = re.sub(r"\[\[[^\[\]]{0,4000}\]\]|\((?:note for me|note)[^)]{0,600}\)", " ", t, flags=re.I).strip()  # tool lines and notes are never prose
+    for _ in range(3):  # talk before the paragraph: "Let me try again, using only what we know." / "Here's another version."
+        t2 = re.sub(r"^(?:(?:okay|ok|alright|sure|of course)[,.!]?\s+)?(?:let me (?:try|write|redo|fix|give|have)|here'?s (?:a|the|my|another|that)\b[^.!?:]{0,40}[.!]|how about (?:this|that)[.!]|i'?ll (?:try|write|redo|give|have another)|using only what|this (?:version|time)|try(?:ing)? again)[^.!?:]{0,120}[.!]\s+", "", t, flags=re.I).strip()
+        if t2 == t:
+            break
+        t = t2
     for _ in range(2):  # a lead-in line ("I can put this in the book for you:", "How about this: \"", "Here's a draft for chapter 2:")
-        t = re.sub(r"^(?:[^.!?\n:]{0,90}\b(?:this|here|draft|version|paragraph|book|try|about)\b[^.!?\n:]{0,40}:)\s*", "", t, flags=re.I).strip()
+        t = re.sub(r"^(?:[^.!?\n:]{0,90}\b(?:i|i'?ll|i can|here'?s|here is|how about|for you|draft|version|let me)\b[^.!?\n:]{0,40}:)\s*", "", t, flags=re.I).strip()
     t = _DRAFT_JUNK_HEAD.sub("", t).strip()
     if len(t) > 2 and t[0] in "\"\u201c" and t[-1] in "\"\u201d" and len(re.findall(r"[\"\u201c\u201d]", t)) == 2:
         t = t.strip("\"\u201c\u201d ").strip()  # a paragraph wrapped in quotes
@@ -534,6 +539,14 @@ class Agent:
             r.text += " (That was the paragraph I just showed you.)"
             return r
 
+        sents_ = [x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x.strip()]
+        if not sess.pending and len(sents_) >= 2 and not self._standalone_command(sents_[0]) \
+                and (k_ := next((i for i, x in enumerate(sents_) if self._standalone_command(x)), None)) and all(len(x.split()) <= 8 and not intent.is_question(x) for x in sents_[:k_]):
+            r0 = await self._handle(sid, " ".join(sents_[:k_]), sess.book)  # the remark first ("Buck. I like Buck."), then the command and what follows
+            r1 = await self._handle(sid, " ".join(sents_[k_:]), sess.book)
+            r1.text = f"{r0.text} {r1.text}".strip()
+            r1.speech = (r0.speech or []) + (r1.speech or [])
+            return r1
         if not sess.pending and (parts := re.split(r"(?<=[.!?])\s+", text.strip(), maxsplit=1)) and len(parts) == 2 and parts[1].strip() \
                 and self._standalone_command(parts[0]) and not intent.is_question(parts[0]):
             first, more_text = parts[0].strip(), parts[1].strip()  # "Call chapter three Over There. Then go to chapter one." / "Start chapter four. He comes home in 1919."
@@ -1704,7 +1717,7 @@ class Agent:
         if ctx.ui:
             self._save_look(ctx.ui)
             reply.ui = ctx.ui
-        if ctx.ideas:
+        if ctx.ideas and not self._ANIMAL.search(intent.norm(heard or "")):  # the name lists are people's names: no buttons for the farm dog
             reply.ideas = ctx.ideas
         if ctx.calls:
             self.traces.append({"at": int(time.time()), "tools": ctx.calls, "highlighted": len(reply.highlights)})
@@ -1863,6 +1876,7 @@ class Agent:
             sess.history.append({"role": "assistant", "content": f"Here's a draft for chapter {sess.pending.chapter}: {ctx.drafted} Should I add it?"})
             warn = f" A warning: {ctx.warning}" if ctx.warning else ""
             if ctx.warning:
+                sess.pending.data = {**(sess.pending.data or {}), "warning": ctx.warning}
                 tail = "It may not be what you asked for. Say yes to keep it anyway, or tell me what to change."
             if self._pref("auto_save", "off") == "on" and not ctx.warning:  # a paragraph the app itself flags is never saved behind the writer's back
                 if re.search(r"yes or no|ready for|waiting|say yes|should i|shall i|would you like|your answer|once it'?s saved|after (?:you|it)", lead, re.I):
@@ -1919,6 +1933,8 @@ class Agent:
         if sess.pending and not msg:
             msg = sess.pending.ask or self._ask_for(sess, sess.pending)
         return self._attach(sess, self._reply(sess, msg or "Done."), ctx, msg, text)
+
+    _ANIMAL = re.compile(r"\b(?:dog|dogs|horse|horses|cat|cats|cow|cows|mule|mules|ox|oxen|pony|pet|puppy|calf|goat|pig|hen|rooster)\b")
 
     async def _library_picture_reply(self, sess: Session, text: str) -> Reply | None:
         """The writer asks to put one of THEIR pictures in the book: find it in the library by the words they use, and show it with a yes/no."""
@@ -2107,6 +2123,8 @@ class Agent:
                                         {"role": "user", "content": f"NOTE:\n{p.text}\n\nChange requested: {instruction}"}], temperature=0.3, max_tokens=250)).strip()
             p.text = new or p.text
             return self._reply(sess, f"Revised: {p.text} Should I save it to the wiki?")
+        if re.fullmatch(r"(?:please )?(?:fix|correct|change|sort|mend) (?:it|that|this|that one)(?: please| then| now| up)?|(?:do|make) (?:that|it) right", intent.norm(instruction)) and (p.data or {}).get("warning"):
+            instruction = f"Fix this problem: {p.data['warning']}"  # "Yes, fix it": the problem I warned about
         if p.kind == "edit":
             orig = self.store.find(sess.book, p.paragraph_id)
             msgs = self._context(sess, instruction, orig.text, orig) + [{"role": "user", "content":
@@ -2116,8 +2134,11 @@ class Agent:
             msgs = self._context(sess, instruction, p.text) + [{"role": "user", "content":
                 f"YOUR PREVIOUS DRAFT (not saved):\n{p.text}\n\nThe writer now says: {instruction}\nRevise the draft accordingly. Output only the paragraph."}]
         new, issues = await self._gated(msgs)
+        new = clean_draft(new)
+        if not new or re.match(r"(?i)^(?:my apologies|i apologi[sz]e|i'?m sorry|sorry|i couldn'?t|i could not|i can'?t|i cannot)\b", new):
+            return self._reply(sess, f"I could not change it that way. The draft is still waiting: {p.ask or self._ask_for(sess, p)} Say yes, or tell me what to change.")
         p.text = new
-        self._remember(sess, instruction, "I revised the draft and showed it again. Should I save it?")
+        self._remember(sess, instruction, f"Here is the revised draft: {new} Should I save it?")
         reply = self._reply(sess, f"Revised: {new} Should I save it?", await self._draft_speech(sess, new, "Revised:", "Should I save it?"))
         reply.notes += [f"Style note: {i}" for i in issues]
         return reply
@@ -2193,6 +2214,8 @@ class Agent:
     def _commit(self, sess: Session) -> Reply:
         sess.dropped_stale = True
         p, sess.pending = sess.pending, None
+        if p.kind in ("edit", "append") and not imgs.parse(p.text.strip()):
+            p.text = clean_draft(p.text) or p.text  # the last guard: no lead-in, no "Should I save it?", no wrapping quotes ever reach the book
         try:
             if p.kind == "edit":
                 para = self.store.replace_paragraph(sess.book, p.paragraph_id, p.text)

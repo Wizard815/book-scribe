@@ -129,6 +129,8 @@ def confirmation(text: str) -> tuple[str | None, str]:
         rest = rest[1:]
     if kind == "no" and _NO_DROP.match(" ".join(rest)):
         rest = []  # "no, leave it as it was": a plain no
+    if kind == "yes" and re.fullmatch(r"(?:that'?s |thats |now )?(?:more like it|much better|a lot better|better|just right|right)(?: now)?", " ".join(rest)):
+        rest = []  # "Yes, that's more like it."
     if kind == "yes" and (_SAVE_WORDS.match(" ".join(rest)) or re.fullmatch(r"(?:in|to|into) (?:the|my) (?:library|wiki|book|story wiki)(?: please| too)?", " ".join(rest))):
         rest = []  # "yes, add it" / "yes save that" / "yes go ahead and put it in": more yes, not a change request
     return kind, " ".join(rest)
@@ -442,7 +444,7 @@ def book_title(text: str) -> str | None:
     raw = re.sub(r"(?i)^(?:\W*(?:um+|uh+|er|erm|so|okay|ok|now|and)\b[\s,.]*)+", "", text.strip())
     m = re.match(r"(?i)^(?:(?:please|can you|could you|let's|lets|i want to|i'd like to)\s+)*(?:call|name|title)\s+(?:the|my|this|our)\s+(?:whole\s+)?(?:book|story)\s+(?:to\s+|as\s+)?[\"'\u201c]?(.{2,80}?)[\"'\u201d]?[.!]?$", raw) \
         or re.match(r"(?i)^(?:i want |i'd like |let )?(?:the|my|this) (?:whole )?(?:book|story)(?:'s)? (?:title |name )?(?:is going to be called|to be called|is called|be called|should be called|should be|will be|to be|is)\s+[\"'\u201c]?(.{2,80}?)[\"'\u201d]?[.!]?$", raw) \
-        or re.match(r"(?i)^(?:i want |i'd like )?the (?:title|name) of (?:the|my|this) (?:book|story) (?:is|should be|will be|to be)\s+[\"'\u201c]?(.{2,80}?)[\"'\u201d]?[.!]?$", raw)
+        or re.match(r"(?i)^(?:please )?(?:make sure |be sure )?(?:i want |i'd like )?the (?:title|name) of (?:the|my|this) (?:book|story)(?: itself)? (?:is|should be|will be|to be)\s+[\"'\u201c]?(.{2,60}?)[\"'\u201d]?(?:,\s+so\b.*)?[.!]?$", raw)
     if not m:
         return None
     t = m.group(1).strip(" ,.")
