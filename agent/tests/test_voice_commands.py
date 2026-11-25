@@ -15,7 +15,7 @@ from tests.conftest import FakeLLM
 # --- pure parsing -------------------------------------------------------------------------------------
 @pytest.mark.parametrize("said,n", [
     ("go to chapter 2", 2), ("go to chapter two", 2), ("open chapter three", 3), ("take me to chapter 4", 4),
-    ("read chapter five", 5), ("Chapter twenty-one", 21), ("jump to chapter twelve", 12),
+    ("read chapter five", 5), ("Chapter twenty-one", 21), ("jump to chapter twelve", 12), ("go to chapter one hundred and five", 105),
 ])
 def test_chapter_navigation_accepts_spoken_numbers_and_verbs(said, n):
     assert intent.goto_chapter(said) == n

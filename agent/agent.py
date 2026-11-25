@@ -1025,7 +1025,7 @@ class Agent:
         d = p.data or {}
         try:
             if p.chapter not in self.store.chapter_numbers(sess.book):
-                self.store.create_chapter(sess.book, p.chapter)
+                self.store.create_chapter(sess.book, p.chapter, auto=True)
             name = self.images.accept(sess.book, d["candidate"])
             self.images.note(sess.book, name, d.get("describe") or d.get("gen_prompt") or "")
             para = self._place_image(sess, p.chapter, name, d.get("caption", ""), d.get("where"))
@@ -1050,12 +1050,22 @@ class Agent:
         if not done:
             return self._reply(sess, "There is nothing to undo.")
         sess.chapter, sess.focus = done["chapter"], done["paragraph"] if done["what"] in ("edit", "delete") else None
+        gone = done.get("removed")
+        if gone:
+            last = max(self.store.chapter_numbers(sess.book), default=0) or None
+            if sess.chapter == gone:
+                sess.chapter, sess.focus = last, None
+            if sess.work == gone:
+                sess.work = last or 0
         self.kg.refresh(sess.book)
         if self.index:
             self.index.schedule(sess.book)
         said = {"edit": "I took back the change I just saved", "append": "I took back the paragraph I just added", "delete": "I put back the paragraph I deleted",
                 "move": "I moved the paragraph back where it was", "delete_many": "I put back the paragraphs I deleted"}.get(done["what"], "I took back the last change")
-        r = self._reply(sess, f"Done. {said}. Chapter {done['chapter']} is as it was before.")
+        after = f"Chapter {gone} was new, so it is gone again." if gone and done["chapter"] == gone else f"Chapter {done['chapter']} is as it was before."
+        if gone and done["chapter"] != gone:
+            after += f" Chapter {gone} was new, so it is gone again."
+        r = self._reply(sess, f"Done. {said}. {after}")
         r.changed = [done["paragraph"]] if done["what"] in ("edit", "delete") and done["paragraph"] else []
         return r
 
@@ -1726,7 +1736,7 @@ class Agent:
                 para = self.store.replace_paragraph(sess.book, p.paragraph_id, p.text)
             else:
                 if p.chapter not in self.store.chapter_numbers(sess.book):
-                    self.store.create_chapter(sess.book, p.chapter)
+                    self.store.create_chapter(sess.book, p.chapter, auto=True)
                 where = (p.data or {}).get("where")
                 paras_ = self.store.paragraphs(sess.book, p.chapter)
                 texts_ = [i for i, q in enumerate(paras_) if not q.image]

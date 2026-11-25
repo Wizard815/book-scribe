@@ -169,7 +169,8 @@ class BookStore:
             out.extend(self.paragraphs(book, n))
         return out
 
-    def create_chapter(self, book: str, n: int | None = None, title: str = "") -> int:
+    def create_chapter(self, book: str, n: int | None = None, title: str = "", auto: bool = False) -> int:
+        """auto=True: made only to hold the change being saved now, so undoing that change takes the empty chapter away again."""
         self.ensure_book(book)
         if n is None:
             nums = self.chapter_numbers(book)
@@ -180,6 +181,8 @@ class BookStore:
         title = title.replace('"', "'").strip()
         head = f"Chapter {n}: {title}" if title else f"Chapter {n}"
         p.write_text(f'---\nchapter: {n}\ntitle: "{title or f"Chapter {n}"}"\n---\n\n# {head}\n\n## Scene 1\n\n')
+        if auto:
+            self._fresh = getattr(self, "_fresh", set()) | {(book, n)}
         return n
 
     def append_image(self, book: str, chapter: int, filename: str, caption: str) -> Paragraph:
@@ -311,7 +314,7 @@ class BookStore:
         if to_chapter not in nums:
             if to_chapter != (max(nums) + 1 if nums else 1):
                 raise BookError(f"There is no chapter {to_chapter}, and it is not the next one.")
-            self.create_chapter(book, to_chapter)
+            self.create_chapter(book, to_chapter, auto=True)
         before_id: str | None = None
         existing = [p for p in self.paragraphs(book, to_chapter) if p.id != paragraph_id] if to_chapter in nums or same else []
         if where == "start":
@@ -358,7 +361,9 @@ class BookStore:
         (d / name).write_text(before, encoding="utf-8")
         with open(d / "log.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps({"file": name, "chapter": chapter, "what": what, "paragraph": paragraph_id, "at": int(time.time()), "after": None,
-                                "group": getattr(self, "_group", None), "gkind": getattr(self, "_gkind", None)}) + "\n")
+                                "group": getattr(self, "_group", None), "gkind": getattr(self, "_gkind", None),
+                                "made": (book, chapter) in getattr(self, "_fresh", set())}) + "\n")
+        getattr(self, "_fresh", set()).discard((book, chapter))
         self._pending_hash = (book, hashlib.sha1(before.encode()).hexdigest())
 
     @staticmethod
@@ -415,13 +420,19 @@ class BookStore:
             p = self.chapter_path(book, r["chapter"])
             if r.get("after") and hashlib.sha1((_read(p) if p.exists() else "").encode()).hexdigest() != r["after"]:
                 raise BookError("That chapter was changed outside Book Scribe since, so I will not undo over it.")
+        removed = None
         for r in batch:
             s = self._hist(book) / str(r["file"])
-            self.chapter_path(book, r["chapter"]).write_text(s.read_text(encoding="utf-8"), encoding="utf-8")
+            if r.get("made") and r["chapter"] == max(self.chapter_numbers(book), default=0):
+                self.chapter_path(book, r["chapter"]).unlink()  # the chapter was only made for this change: take it away too
+                removed = r["chapter"]
+            else:
+                self.chapter_path(book, r["chapter"]).write_text(s.read_text(encoding="utf-8"), encoding="utf-8")
             s.unlink()
             rows.remove(r)
         log.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
-        return {"chapter": last["chapter"], "what": (last.get("gkind") or "move") if last.get("group") else last["what"], "paragraph": last.get("paragraph", "")}
+        return {"chapter": last["chapter"], "what": (last.get("gkind") or "move") if last.get("group") else last["what"], "paragraph": last.get("paragraph", ""),
+                "removed": removed}
 
     def nth_paragraph(self, book: str, chapter: int, n: int, scene: int | None = None, picture: bool = False) -> Paragraph | None:
         """n-th paragraph of a chapter (1-based, -1 = last), optionally within one scene. None if out of range.

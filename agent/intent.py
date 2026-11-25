@@ -22,9 +22,28 @@ def norm(text: str) -> str:
     toks = _WORD.findall(text.lower().replace("’", "'"))
     out: list[str] = []
     i = 0
+    def small(j: int) -> tuple[int, int] | None:  # a number below 100 starting at token j -> (value, next index)
+        if j >= len(toks):
+            return None
+        w = toks[j]
+        n2 = toks[j + 2] if j + 2 < len(toks) and toks[j + 1].strip(" -") == "" else None
+        if w in _TENS and n2 in _UNITS and 0 < _UNITS[n2] < 10:
+            return _TENS[w] + _UNITS[n2], j + 3
+        if w in _TENS:
+            return _TENS[w], j + 1
+        if w in _UNITS and w != "zero":
+            return _UNITS[w], j + 1
+        return None
+
     while i < len(toks):
         t = toks[i]
         nxt = toks[i + 2] if i + 2 < len(toks) and toks[i + 1].strip(" -") == "" else None  # skip one space/hyphen
+        if nxt == "hundred" and (t == "a" or (t in _UNITS and 0 < _UNITS[t] < 10)):  # "one hundred and five" -> 105
+            val, j = (1 if t == "a" else _UNITS[t]) * 100, i + 3
+            k = j + 2 if j + 1 < len(toks) and toks[j].strip() == "" and toks[j + 1] == "and" else j
+            if k < len(toks) and toks[k].strip() == "" and (rest := small(k + 1)):
+                val, j = val + rest[0], rest[1]
+            out.append(str(val)); i = j; continue
         if t in _TENS and nxt in _UNITS and 0 < _UNITS[nxt] < 10:
             out.append(str(_TENS[t] + _UNITS[nxt])); i += 3; continue
         if t in _TENS:

@@ -410,10 +410,20 @@ def test_every_saved_change_can_be_undone_in_order(books):
     store.replace_paragraph("demo", "ch1_s1_p2", "Changed once.")
     store.append_paragraph("demo", 1, "Added later.", scene=2)
     assert "Added later." in store.read_chapter_raw("demo", 1)
-    assert store.undo_last("demo") == {"chapter": 1, "what": "append", "paragraph": "ch1_s2_p2"} and "Added later." not in store.read_chapter_raw("demo", 1)
+    assert store.undo_last("demo") == {"chapter": 1, "what": "append", "paragraph": "ch1_s2_p2", "removed": None} and "Added later." not in store.read_chapter_raw("demo", 1)
     assert "Changed once." in store.read_chapter_raw("demo", 1)
     assert store.undo_last("demo")["what"] == "edit" and store.read_chapter_raw("demo", 1) == first  # byte for byte as it was
     assert store.undo_last("demo") is None
+
+
+def test_undo_takes_away_a_chapter_made_only_for_that_change_but_not_one_the_writer_started(books):
+    store = BookStore(books)
+    store.create_chapter("demo", 2, auto=True)
+    store.append_paragraph("demo", 2, "Only paragraph.")
+    assert store.undo_last("demo")["removed"] == 2 and store.chapter_numbers("demo") == [1]
+    store.create_chapter("demo", 2)  # "start chapter 2": the writer asked for it, so it stays
+    store.append_paragraph("demo", 2, "Only paragraph.")
+    assert store.undo_last("demo")["removed"] is None and store.chapter_numbers("demo") == [1, 2] and store.paragraphs("demo", 2) == []
 
 
 def test_undo_refuses_to_throw_away_work_done_outside_the_app(books):
@@ -517,7 +527,8 @@ async def test_delete_and_move_by_voice_are_confirmed_and_undoable(books):
     # move to a brand-new chapter, then one undo takes the whole move back
     r = await ag.handle("s", "move paragraph 3 of chapter 1 to chapter 2"); assert r.pending["kind"] == "move" and "chapter 2" in r.pending["ask"]
     r = await ag.handle("s", "yes"); assert "Moved" in r.text and store.chapter_numbers("demo") == [1, 2] and len(store.paragraphs("demo", 1)) == 2 and len(store.paragraphs("demo", 2)) == 1
-    r = await ag.handle("s", "undo that"); assert "moved the paragraph back" in r.text and store.read_chapter_raw("demo", 1) == before and store.paragraphs("demo", 2) == []
+    r = await ag.handle("s", "undo that"); assert "moved the paragraph back" in r.text and store.read_chapter_raw("demo", 1) == before
+    assert store.chapter_numbers("demo") == [1] and "Chapter 2 was new" in r.text  # the chapter made only for the move goes too
     r = await ag.handle("s", "move paragraph 1 to chapter 9"); assert "no chapter 9" in r.text and r.pending is None
     r = await ag.handle("s", "delete the wiki page"); assert not (r.pending and r.pending["kind"] == "delete")
 
