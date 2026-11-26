@@ -1324,6 +1324,12 @@ class Agent:
             if not q or re.sub(r"\s+", " ", q.group(1).lower().strip(" .,")) not in hay:
                 return ""
             out = "CONFLICT: " + (out[q.end():].strip(" .,;:-\u2014") or f"it does not fit: {q.group(1)}")  # the explanation, without the quoted words
+        if up.startswith("MISSED") and ":" in out:  # a false "it does not do what you asked": the checker echoes the format, or names something the paragraph has
+            why = out.split(":", 1)[1].strip()
+            named = [w for w in re.findall(r"[a-z]{4,}", re.sub(r"(?i)^.*?\b(?:include|mention|show|have|has|contain|describe)s?\b", "", why).lower())
+                     if w not in {"that", "this", "with", "about", "does", "paragraph", "writer", "asked", "what", "there", "their", "they", "which", "scene", "should"}]
+            if not why or re.search(r"(?i)\(?not what was asked\)?$|^\(", why) or (named and all(w in text.lower() for w in named)):
+                return ""
         if (up.startswith("CONFLICT") or up.startswith("MISSED")) and ":" in out:
             reason = out.split(":", 1)[1].strip()[:240]
             return f"it does not do what you asked: {reason}" if up.startswith("MISSED") else reason

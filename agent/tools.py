@@ -515,7 +515,10 @@ def build(agent) -> Toolbox:
         base = sum(1 for k in ctx.sess.web_hits if k.startswith("i"))  # ids never repeat: two searches in one turn do not clash
         ids = {f"i{base + i}": h for i, h in enumerate(hits, 1)}
         ctx.sess.web_hits.update(ids)
-        return ("\n".join(f"{k}. {h['title']} (from {h['page'][:80]})" for k, h in ids.items())
+        want = {w for w in re.findall(r"[a-z]{4,}", (ctx.sess.last_user + " " + query).lower())} - {"picture", "photo", "photograph", "find", "with", "from", "that", "this", "some", "please"}
+        score = {k: len(want & set(re.findall(r"[a-z]{4,}", h["title"].lower()))) for k, h in ids.items()}
+        top = max(score, key=score.get) if score and max(score.values()) > 0 else None
+        return ("\n".join(f"{k}. {h['title']} (from {h['page'][:80]})" + ("  <- best match for what the writer asked" if k == top else "") for k, h in ids.items())
                 + "\nYou have NOT seen these pictures: do not describe them from their titles. Use use_found_picture with an id (the best match); then you are told what it really shows."
                 + " Remind the writer that a picture found on the web may belong to someone else.")
 
