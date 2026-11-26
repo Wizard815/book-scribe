@@ -12,6 +12,7 @@ from book_store import BookError, BookStore, Paragraph
 import asyncio
 
 from clients import LLM
+from genealogy import _year as genealogy_year
 import bible_import
 import images as imgs
 from images import PictureError
@@ -283,6 +284,8 @@ class Agent:
             return self._reply(sess, "I didn't catch that. Try again.")
         sess.last_user = text
         self._learn_genre(text)
+        if (g_ := self._genre_answer(sess, text)):
+            return g_
         jd, sess.just_deleted = sess.just_deleted, False
         if jd and not sess.pending and re.match(r"^(?:(?:no|oh|wait|oh no|hold on|stop)[,.!]?\s*)+(?:keep it|keep that|don'?t delete|do not delete|i want (?:it|that) back|put it back|bring it back)\b", intent.norm(text)):
             return self._undo_reply(sess)  # "No, wait. Keep it." just after the delete: put it back
@@ -656,7 +659,12 @@ class Agent:
             return self._remove_sentence(sess, sr[0], sr[1])
         if (ref := intent.delete_request(text)) is not None:
             return self._delete_reply(sess, ref, text)
+        if not sess.pending and (dt_ := self._delete_this_then(sess, text)):  # "Take that paragraph out and write it again as two paragraphs."
+            return dt_
         if (mv := intent.move_request(text)) is not None:
+            if mv.ref.picture and re.match(r"^(?:\w+ ){0,3}?(?:put|add|insert|place|use)\b", intent.norm(text)) and re.search(r"\b(?:picture|photo|photograph|tintype|portrait|image) of\b", intent.norm(text)) \
+                    and (lib_pic := await self._library_picture_reply(sess, text)) is not None:
+                return lib_pic
             return self._move_reply(sess, mv, text)
         if (what := intent.open_request(text)) and (r := self._open_reply(sess, what)):  # "open the harbour notes"
             return r
@@ -741,7 +749,34 @@ class Agent:
 
     _OFFER = re.compile(r"(?:add|save|put|use|keep|go ahead|shall i|should i|want me to|happy with)[^.?!]*\?\s*$", re.I)
 
+    @staticmethod
+    def _called_append(answer: str) -> str:
+        """The paragraph inside a propose_append call the model wrote out as text ("[[tool: propose_append {...}]]")."""
+        for m in harness.CALL_RE.finditer(answer or ""):
+            if m.group(1) == "propose_append":
+                try:
+                    args = json.loads(m.group(2))
+                except Exception:
+                    continue
+                t = clean_draft(str(args.get("text") or ""))
+                if len(t.split()) >= 4:
+                    return t
+        return ""
+
     def _draft_to_rescue(self, sess: Session, text: str) -> str:
+        found = self._draft_to_rescue_(sess, text)
+        if found:
+            key = lambda t: re.sub(r"\W+", " ", t).strip().lower()
+            try:
+                saved = [key(p.text) for p in self.store.all_paragraphs(sess.book)]
+                parts = [key(x) for x in re.split(r"\n\s*\n", found) if len(x.split()) >= 6] or [key(found)]
+                if any(any(pt in sv or sv in pt for sv in saved if len(sv) > 40) for pt in parts):
+                    return ""  # already in the book: a later yes must never save it a second time
+            except Exception:
+                pass
+        return found
+
+    def _draft_to_rescue_(self, sess: Session, text: str) -> str:
         """If the writer says yes and my last message was a draft paragraph that asked to be saved but never became a proposal, recover it."""
         kind, rest = intent.confirmation(text)
         if kind != "yes" or rest or not sess.history or sess.history[-1]["role"] != "assistant":
@@ -907,8 +942,32 @@ class Agent:
         sess.pending.ask = ""
         return self._reply(sess, f"I took out: {removed} It now reads: {sess.pending.text} {self._ask_for(sess, sess.pending)} Say yes or no.")
 
-    def _delete_reply(self, sess: Session, ref, text: str) -> Reply:
-        target = self._by_ref(sess, ref)
+    def _delete_this_then(self, sess: Session, text: str) -> Reply | None:
+        """"Take that paragraph out" (the one just saved or looked at), and maybe "and write it again ...": delete it on a yes, then redraft."""
+        for s_ in reversed([x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x.strip()]):
+            m = re.match(r"^(?:(?:wait|no|ok|okay|so|and|then|please|just)\s+)*(?:take|delete|remove|cut|scrap|get rid of) (?:that|this|the new|the last) (?:paragraph|1)(?: out)?(?:,? (?:and|then|and then)\s+(.+))?$", intent.norm(s_))
+            if not m:
+                continue
+            target = None
+            if sess.focus:
+                try:
+                    target = self.store.find(sess.book, sess.focus)
+                except BookError:
+                    target = None
+            if not target:
+                ps = [p for p in self.store.paragraphs(sess.book, sess.chapter) if not p.image] if sess.chapter in self.store.chapter_numbers(sess.book) else []
+                target = ps[-1] if ps else None
+            if not target:
+                return None
+            r = self._delete_reply(sess, intent.Ref(target.chapter, None, None, False, False), text, target=target)
+            if m.group(1) and re.search(r"\b(?:write|rewrite|redo|do|try)\b", m.group(1)):
+                sess.pending.data = {**(sess.pending.data or {}), "then": f"Write that part again, fixing what I said: {text}"}
+                r.text += " Then I will write it again the way you said."
+            return r
+        return None
+
+    def _delete_reply(self, sess: Session, ref, text: str, target=None) -> Reply:
+        target = target or self._by_ref(sess, ref)
         if not target:
             return self._reply(sess, "I couldn't find that paragraph.")
         sess.pending = Pending("delete", target.text, target.chapter, paragraph_id=target.id)
@@ -1291,8 +1350,56 @@ class Agent:
         r.download = {"url": f"/api/books/{sess.book}/export?format={fmt}", "label": label}
         return r
 
+    def check_family_facts(self, sess: Session, text: str, ask: str = "") -> str:
+        """The family tree says who was dead by when and where a couple married: a draft that puts a dead brother at the farm
+        or moves a wedding to another town is wrong, whatever the genre. -> a short reason, or ""."""
+        if not self.library:
+            return ""
+        try:
+            trees = [t for _, t in self.library.trees(sess.book)]
+        except Exception:
+            return ""
+        if not trees:
+            return ""
+        yrs = [int(y) for y in re.findall(r"\b(1[6-9]\d\d|20\d\d)\b", text)] or [int(y) for y in re.findall(r"\b(1[6-9]\d\d|20\d\d)\b", ask or "")]
+        sents = re.split(r"(?<=[.!?])\s+", text)
+        out: list[str] = []
+        for t in trees:
+            people = list(t.people.values())
+            given = lambda p: (p.name.split() or [""])[0]
+            if yrs:
+                whens: list[int] = []
+                ask_y = [int(y) for y in re.findall(r"\b(1[6-9]\d\d|20\d\d)\b", ask or "")]
+                cur = min(ask_y) if ask_y else (yrs[0] if yrs else 0)
+                for s_ in sents:  # the year a sentence happens in: the last year named up to it
+                    ys = [int(y) for y in re.findall(r"\b(1[6-9]\d\d|20\d\d)\b", s_)]
+                    cur = ys[-1] if ys else cur
+                    whens.append(cur)
+                for p in people:
+                    g, dy = given(p), genealogy_year(p.death[0])
+                    if not g or not dy or any(given(q) == g and q is not p for q in people):
+                        continue
+                    for s_, when in zip(sents, whens):
+                        if when > int(dy) and re.search(rf"\b{re.escape(g)}\b", s_) and not re.search(r"(?i)\b(?:died|dead|death|grave|graves|buried|burial|memory|memories|remember\w*|missed|miss|ghost|gone|lost|mourn\w*|late|letter|letters|wrote|written|name|stone|thought of|think of|thinking of|would have)\b", s_):
+                            out.append(f"{p.name} died in {dy} (the family tree), so he or she cannot be there in {when}: \"{excerpt(s_, 14)}\"")
+                            break
+            if re.search(r"(?i)\b(?:married|marry|marrying|wedding|wed)\b", text):
+                raw_pl = [pl for q in people for pl in (q.birth[1], q.death[1])] + [f.marriage[1] for f in t.families.values()]
+                places = {w for pl in raw_pl if pl for part in [pl.split(",")[0].strip()] for w in (part, part.split()[0]) if len(w) > 3 and w[0].isupper()}
+                for f in t.families.values():
+                    at = f.marriage[1].split(",")[0].strip()
+                    names = [given(t.people[x]) for x in (f.husb, f.wife) if x in t.people]
+                    if not at or not names or not all(re.search(rf"\b{re.escape(n)}\b", text) for n in names if n) or re.search(rf"\b{re.escape(at)}\b", text):
+                        continue
+                    other = [pl for pl in places if pl != at and re.search(rf"\b{re.escape(pl)}\b", text)]
+                    if other:
+                        out.append(f"{' and '.join(names)} married at {at} (the family tree), not {other[0]}.")
+        return " ".join(out[:2])
+
     async def check_continuity(self, sess: Session, text: str, ask: str = "") -> str:
         """Does a new paragraph contradict, or retell, something already in the book? -> a short reason, or "" when it is fine (or cannot be checked)."""
+        if (fam_ := self.check_family_facts(sess, text, ask)):
+            return fam_
         if self._pref("continuity", "on") == "off" or len(self.store.all_paragraphs(sess.book)) < 4:
             return ""
         try:
@@ -1959,6 +2066,8 @@ class Agent:
                 tail = f"Should I add it to chapter {sess.pending.chapter}?"
                 sess.history.append({"role": "assistant", "content": f"Here's a draft: {ctx.drafted} {tail}"})
                 return self._attach(sess, self._reply(sess, f"Here's a draft: {ctx.drafted} {tail}", await self._draft_speech(sess, ctx.drafted, "Here's a draft:", tail)), ctx, "", text)
+        if not sess.pending and (dq_ := re.search(r"\bDelete chapter (\d+), paragraph (\d+)\?", out)):  # the model wrote my delete question without asking it for real
+            return self._delete_reply(sess, intent.Ref(int(dq_.group(1)), None, int(dq_.group(2)), False, False), text)
         if not sess.pending and self._book_sig(sess.book) == sig0 and self._CLAIM.search(out) and not set(ctx.calls) & {"start_chapter", "set_chapter_title", "set_ui", "export_book"} \
                 and sess.mode == "narrator" and re.search(r"\b(?:write|tell|paragraph|part where|the part|scene|story|draft)\b", intent.norm(text)) and not intent.is_question(text):
             return await self._propose_draft(sess, text)  # a request for writing that the model only claimed to do: write it through the draft path
@@ -2013,8 +2122,10 @@ class Agent:
         msgs = self._context(sess, text) + [{"role": "user", "content":
             f"The writer asks: {text}\n\nWrite a short author's note (60-140 words, in the writer's own voice, first person) for the front of the book. Say whose story it is, "
             f"which papers it rests on ({docs or 'the family papers'}; name a looked-up page as a looked-up page, never as archives), and plainly that {'the scenes and talk are imagined from them' if genre != 'history' else 'it keeps to what the papers say'}. "
-            "Output only the note."}]
+            + ("" if "looked up on the web" in docs or sess.research else "Nothing was looked up on the web for this book: name only these papers, and do not mention web pages or other sources. ")
+            + "Output only the note, with no heading."}]
         note = clean_draft(await self.llm.chat(msgs, temperature=0.5, max_tokens=400))
+        note = re.sub(r"(?i)^\s*(?:an? )?author'?s note[:.]?\s*\n+", "", note).strip()  # the front page already says "Author's note"
         if len(note.split()) < 20 or self._is_talk(note):
             return self._reply(sess, "I could not write the note just now. Ask me again in a moment.")
         sess.pending = Pending("note", note, 0)
@@ -2033,10 +2144,17 @@ class Agent:
                 "it", "after", "before", "first", "paragraph", "chapter", "this", "that", "please", "from", "into", "book", "end", "start", "there", "one", "you", "can", "i"}
         def toks(t: str) -> set:
             return {w for w in intent.norm(t.replace("_", " ").replace("-", " ")).split() if w not in stop and not w.isdigit() or (w.isdigit() and len(w) == 4)}
-        want = toks(text)
+        want = toks(text) - {"his", "her", "their", "him", "them", "me", "in", "put", "with", "is", "where", "he", "she", "wearing"}
         imgs_ = [m for m in self.library.items(sess.book) if m.get("kind") in ("image", "scan")]
-        best = max(imgs_, key=lambda m: len(want & toks(m["title"] + " " + m.get("filename", ""))), default=None)
-        if not best or not want & toks(best["title"] + " " + best.get("filename", "")) or (sess.pending and not self._supersede(sess)):
+        def seen_(m) -> str:
+            try:
+                return self.library.text(sess.book, m["slug"])[:1500]
+            except Exception:
+                return ""
+        def score(m) -> float:  # the file's name counts most; what the picture shows (its description) counts too: "the one in uniform"
+            return 2 * len(want & toks(m["title"] + " " + m.get("filename", ""))) + len(want & toks(seen_(m)))
+        best = max(imgs_, key=score, default=None)
+        if not best or not score(best) or (sess.pending and not self._supersede(sess)):
             return None
         ctx = harness.Ctx(sess=sess)
         pos = intent.picture_position(text, strict=True)
@@ -2090,7 +2208,7 @@ class Agent:
         t = (text or "").strip().lstrip("\"\u201c ")
         return bool(self._TALK.search(t[:200])) and not re.match(r"^[\"\u201c]", (text or "").strip())
 
-    _CLAIM = re.compile(r"\b(?:i(?:'ve| have)? (?:now )?(?:saved|added|updated|changed|moved|deleted|removed|put (?:it|that|the|this|them)\b[^.]{0,40}\bin|undone|undid|corrected|fixed|replaced|taken out|took out)|(?:is|are|has been|have been) (?:now )?(?:saved|added|updated|in (?:the|your) book|back in|undone|moved|removed)|(?:now|is) back (?:in|where)|it'?s (?:saved|in the book|done)|(?:successfully )?exported|ready (?:for you )?to (?:download|print)|on your screen now)\b", re.I)
+    _CLAIM = re.compile(r"\b(?:i(?:'ve| have)? (?:now )?(?:saved|added|updated|changed|moved|deleted|removed|put (?:it|that|the|this|them)\b[^.]{0,40}\bin|undone|undid|corrected|fixed|replaced|taken out|took out)|(?:is|are|has been|have been) (?:now )?(?:saved|added|updated|in (?:the|your) book|back in|undone|moved|removed)|(?:now|is) back (?:in|where)|it'?s (?:saved|in the book|done)|(?:successfully )?exported|ready (?:for you )?to (?:download|print)|on your screen now|(?:deleted|removed|saved)(?=[.!]))\b", re.I)
 
     @staticmethod
     def _looks_like_paragraph(out: str) -> bool:
@@ -2184,16 +2302,21 @@ class Agent:
         new = clean_draft(new)
         if ctx.drafted:  # the model already proposed its paragraph through propose_append: that is the draft
             new = ctx.drafted
+        elif (called := self._called_append(new)):  # the tool call written out as text instead of made
+            new = called
+        elif ctx.attempt and len((new or "").split()) < 4:  # a check sent its paragraph back and it stopped: keep the paragraph, with the warning
+            new, ctx.drafted, ctx.warning = ctx.attempt, ctx.attempt, ctx.attempt_issue
         if not ctx.drafted and re.match(r"(?i)^(?:my apologies|i apologi[sz]e|i'?m sorry|sorry|you'?re (?:absolutely )?right|i made a mistake|i see)\b", new or ""):
             new = ""  # an apology is not a paragraph: ask for the prose below
         if not ctx.drafted and (re.fullmatch(r"\s*[\[(][^\]\)]{0,200}[\])]\s*", new or "") or len((new or "").split()) < 4):
             again, _ = await self._gated(msgs + [{"role": "assistant", "content": new or ""}, {"role": "user", "content": "That is not a paragraph. Write the paragraph itself now: only the prose, nothing else."}])
-            new = clean_draft(again)
+            new = self._called_append(again) or clean_draft(again)
             if re.fullmatch(r"\s*[\[(][^\]\)]{0,200}[\])]\s*", new or "") or len((new or "").split()) < 4:
                 return self._reply(sess, "I could not write that paragraph just now. Please ask me again in a moment.")
         sess.pending = Pending("append", new, sess.chapter)
         self._remember(sess, text, f"Here's a draft for chapter {sess.pending.chapter}: {new} Should I add it?")
-        tail = f"Should I add it to chapter {sess.chapter}?" if sess.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.chapter} with it?"
+        it_ = "them" if "\n\n" in new.strip() else "it"
+        tail = f"Should I add {it_} to chapter {sess.chapter}?" if sess.chapter in self.store.chapter_numbers(sess.book) else f"Should I start chapter {sess.chapter} with {it_}?"
         issue = ctx.warning if ctx.drafted else await self.check_continuity(sess, new, text)  # a paragraph proposed through the tool was already checked there
         warn = f" A warning: {issue}" if issue else ""
         if issue:
@@ -2268,7 +2391,14 @@ class Agent:
         if sess.pending.kind == "page":
             return self._commit_page(sess)
         if sess.pending.kind in ("delete", "move"):
-            return self._commit_change(sess)
+            then_ = (sess.pending.data or {}).get("then") if sess.pending.kind == "delete" else ""
+            done = self._commit_change(sess)
+            if then_ and sess.pending is None and done.text.startswith("Deleted"):  # "take that paragraph out and write it again as two paragraphs"
+                nxt = await self._propose_draft(sess, then_)
+                nxt.text = f"{done.text} {nxt.text}".strip()
+                nxt.speech = (done.speech or []) + (nxt.speech or [])
+                return nxt
+            return done
         if sess.pending.kind == "wiki":
             return self._commit_wiki(sess)
         if sess.pending.kind == "note":
@@ -2609,6 +2739,26 @@ class Agent:
             # (not shown to the writer: a background guess with internal ids, and too often wrong to read out to someone listening)
 
     # --- memory ----------------------------------------------------------
+    def _genre_answer(self, sess: Session, text: str) -> Reply | None:
+        """The answer to my question 'family history or a story based on him?': kept, said back, and nothing else done."""
+        last = sess.history[-1]["content"] if sess.history and sess.history[-1]["role"] == "assistant" else ""
+        n = intent.norm(text)
+        if sess.pending or not self.prefs or not re.search(r"(?i)\bfamily history\b", last) or not re.search(r"(?i)\b(?:story|imagine|imagined)\b", last) or "?" not in last \
+                or len(n.split()) > 25 or re.search(r"\b(?:write|start|chapter|call (?:it|the book)|title|picture|photo|draw|look up|search|read me|delete|change)\b", n):
+            return None
+        if re.search(r"\b(?:story|stories|imagine|imagined|make up|made up|fiction|novel|fill in)\b", n) and not re.search(r"\b(?:no story|not a story|nothing made up|don'?t make)\b", n):
+            self.prefs.update({"genre": "story"})
+            say = ("Good. A story based on him: I can imagine his thoughts and fill in scenes, and I will keep the facts to what his papers and your family say. "
+                   "What would you like to call the book? Or we can start chapter one.")
+        elif re.search(r"\b(?:history|only the papers|what the papers say|just the facts|only the facts|facts only|stick to|nothing made up|true|real)\b", n):
+            self.prefs.update({"genre": "history"})
+            say = ("Good. Family history: I will write only what the papers, the family tree and you tell me, and say so when something is not known. "
+                   "What would you like to call the book? Or we can start chapter one.")
+        else:
+            return None
+        self._remember(sess, text, say)
+        return self._reply(sess, say)
+
     def _learn_genre(self, text: str) -> None:
         n = intent.norm(text)
         if self.prefs and re.search(r"\b(?:story based on|based on (?:his|her|their|the) (?:life|papers|documents)|historical fiction|(?:fill|filled) in (?:the )?scenes|scenes filled in|some of it imagined|make up (?:the )?scenes)\b", n):

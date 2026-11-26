@@ -478,7 +478,15 @@ _LASTN = re.compile(r"\bthe (?:last|final) (\d+) paragraphs\b")
 
 
 def delete_many(text: str) -> tuple[int | None, list[int]] | None:
-    """"delete paragraphs 2 to 4", "remove paragraphs 2, 3 and 5 of chapter 3", "delete the last 3 paragraphs" -> (chapter or None, numbers; negative = from the end)."""
+    """"delete paragraphs 2 to 4", "remove paragraphs 2, 3 and 5 of chapter 3", "delete the last 3 paragraphs" -> (chapter or None, numbers; negative = from the end).
+    A remark first is fine: "Those are the same as one and two. Delete paragraphs 3 and 4." """
+    sents = [x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x.strip()]
+    if len(sents) > 1 and (got := _delete_many(sents[-1])) is not None:
+        return got
+    return _delete_many(text)
+
+
+def _delete_many(text: str) -> tuple[int | None, list[int]] | None:
     n = norm(text)
     m0 = re.match(rf"^{_POLITE}(?:delete|remove|cut|scrap|erase|get rid of|take out)\b(.+)$", n)
     if not m0 or len(n.split()) > 18:
@@ -500,6 +508,7 @@ def delete_many(text: str) -> tuple[int | None, list[int]] | None:
 
 
 _DELETE = re.compile(rf"^{_POLITE}(?:delete|remove|cut|scrap|erase|get rid of|take out)\b(.+)$")
+_TAKE_OUT = re.compile(rf"^{_POLITE}(?:take|cut|leave)\b(.+?)\b(?:out|away)(?:,? (?:please|now|for me))?$")
 _MOVE_LEAD = re.compile(rf"^{_POLITE}(?:move|put|shift|send)\b(.+?)(?:,? (?:please|now|for me))?$")
 _TOPWORD = r"(?:start|beginning|top|front)"
 
@@ -512,11 +521,22 @@ class Move(NamedTuple):
 
 def delete_request(text: str) -> Ref | None:
     """"delete paragraph 3", "remove the last paragraph of chapter 2" -> which paragraph. Only an explicit paragraph counts."""
-    m = _DELETE.match(norm(text))
-    if not m or len(norm(text).split()) > 14:
-        return None
-    ref = parse_ref(m.group(1))
-    return ref if ref.para is not None else None
+    whole = norm(text)
+    sents = [x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x.strip()]
+    for cand in ([text] + ([sents[-1]] if len(sents) > 1 else [])):  # "The second paragraph is the same as the first. Take the second one out."
+        n = norm(cand)
+        if len(n.split()) > 14:
+            continue
+        m = _DELETE.match(n) or _TAKE_OUT.match(n)
+        if not m:
+            continue
+        what = m.group(1)
+        if re.search(r"\bparagraphs?\b", whole) and not re.search(r"\b(?:paragraph|picture|photo|chapter)\b", what):
+            what = re.sub(r"\b(?:one|1)\s*$", "paragraph", what.strip())  # "the second one": the paragraph the writer was just talking about
+        ref = parse_ref(what)
+        if ref.para is not None:
+            return ref
+    return None
 
 
 def move_request(text: str) -> "Move | None":

@@ -6,6 +6,7 @@ things in the turn's Ctx for the writer's screen (highlights, a new look, tap-to
 from __future__ import annotations
 
 import asyncio
+import intent
 import re
 from pathlib import Path
 
@@ -112,6 +113,9 @@ def build(agent) -> Toolbox:
         return f"Highlighted {len(good)} passage(s) on the writer's screen." if good else "Nothing to highlight: those passages do not exist."
 
     async def set_ui(ctx: Ctx, setting="", value=""):
+        said = intent.norm(getattr(ctx.sess, "last_user", "") or "") if ctx.sess else ""
+        if said and not re.search(r"\b(?:eye|eyes|see|seeing|sight|blind|glasses|read|reading|screen|text|letters?|words|print|bigger|smaller|larger|big|small|tiny|zoom|contrast|dark|darker|light|lighter|bright|brighter|dim|bold|font|size|spacing|simple|simpler|column|columns|layout|theme|voice|speak|speaking|talk|slower|faster|slow|fast|louder|quieter|hard|hard going|struggl\w*|strain\w*|squint\w*|tired|trouble|make (?:it|that|this) out|can'?t make out)\b", said):
+            return "The writer did not ask about the screen or the voice this time. Leave the look as it is."
         look = dict(ctx.ui) if ctx.ui else agent._look()  # build on this turn's earlier change, not the saved look
         if setting == "size":
             look["size"] = look["size"] + 1 if value == "bigger" else look["size"] - 1 if value == "smaller" else _int(value, look["size"], 0, uisettings.SIZE_MAX)
@@ -441,21 +445,27 @@ def build(agent) -> Toolbox:
             return "That is only one short sentence. Write a full paragraph of four to seven sentences (unless the writer asked for something short), then propose it again."
         if sess.pending and not agent._supersede(sess):
             return "A proposal is already waiting for the writer's answer. Do not propose another."
+        k_ = agent._para_count(sess.last_user or "")
+        if k_ > 1 and "\n\n" not in text.strip() and not ctx.split_tried:
+            ctx.split_tried = True
+            return f"The writer asked for {k_} paragraphs. Give them in one text, separated by a blank line, then propose it again."
+        ctx.attempt, ctx.attempt_issue = text, ""  # kept: if the model gives up after a check sends it back, its paragraph is not lost
         vissue = agent.check_voice(sess, text)
         if vissue and not ctx.voice_tried:
+            ctx.attempt_issue = vissue
             ctx.voice_tried = True
             return f"Problem: {vissue} Rewrite the paragraph in the book's own voice, then propose it again."
         rissue = agent.check_repeat(sess, text)
         if rissue and not ctx.continuity_tried:
-            ctx.continuity_tried = True
+            ctx.continuity_tried, ctx.attempt_issue = True, rissue
             return f"Problem: {rissue} Write something new that moves the story forward, then propose it again."
         issue = await agent.check_continuity(sess, text, sess.last_user)
         if issue and not ctx.continuity_tried:
-            ctx.continuity_tried = True
+            ctx.continuity_tried, ctx.attempt_issue = True, issue
             return (f"Problem: {issue} Rewrite the paragraph so it writes exactly what the writer asked for, agrees with the book and does not retell what is already told, then propose it again.")
         ground = "" if issue else agent.ungrounded(sess, text)
         if ground and not ctx.ground_tried:
-            ctx.ground_tried = True
+            ctx.ground_tried, ctx.attempt_issue = True, ground
             return f"Problem: {ground} Rewrite the paragraph using ONLY what the documents, the family tree, the wiki and the writer say (search_library or read_library to check), then propose it again."
         ctx.warning = issue or ground  # a problem after one rewrite, or details nobody gave: shown and spoken to the writer, never saved behind their back
         nums = store.chapter_numbers(book(ctx))

@@ -39,6 +39,9 @@ class Ctx:
     voice_tried: bool = False
     ground_tried: bool = False
     drafted: str = ""  # a paragraph the model proposed for the book through propose_append
+    attempt: str = ""  # the last paragraph it tried to propose, even if a check sent it back
+    split_tried: bool = False  # asked once to split a draft into the paragraphs the writer asked for
+    attempt_issue: str = ""  # what the check said about that attempt
     open_item: dict | None = None  # a library file to open on the writer's screen: {"slug", "title"}
     calls: list[str] = field(default_factory=list)  # tool names used, for the admin trace
     llm_calls: int = 0  # extra model calls spent by tools such as brainstorm

@@ -1344,3 +1344,106 @@ async def test_rm11_next_chapter_then_call_it_and_notes_are_never_offered_twice(
     await ag.toolbox.call("propose_wiki_notes", {"notes": [{"kind": "characters", "name": "Ole Berg", "note": "Tova's husband."}]}, harness.Ctx(sess=s))
     await ag.handle("s", "No, I said no to that already.")
     assert s.pending is None and "Ole Berg" not in store.bible("demo").characters()
+
+
+async def test_rm12_yes_never_saves_a_draft_that_is_already_in_the_book(books):
+    ag, store, llm = make(books)
+    s = ag.session("s")
+    p = store.paragraphs("demo", 1)[0].text
+    n = len(store.all_paragraphs("demo"))
+    s.history.append({"role": "user", "content": "Start chapter one."})
+    s.history.append({"role": "assistant", "content": f"Chapter 1 is ready. Here's a draft: {p} Should I add it to chapter 1?"})
+    await ag.handle("s", "Yes.")
+    assert len(store.all_paragraphs("demo")) == n
+
+
+def test_rm12_a_tool_call_written_out_as_text_still_gives_its_paragraph(books):
+    ag, store, llm = make(books)
+    para = "The recruiting office was warm from a stove. His mother stood near the door with her gloves twisted together."
+    assert ag._called_append('[[tool: propose_append {"text": "%s", "chapter": 1}]]' % para) == para
+    assert ag._called_append("Just some talk.") == ""
+
+
+async def test_rm12_a_story_answers_the_genre_question_and_nothing_else_happens(books):
+    from prefs import Prefs
+    ag, store, llm = make(books)
+    ag.prefs = Prefs(books / ".state")
+    s = ag.session("s")
+    s.history.append({"role": "assistant", "content": "Do you want this to be family history, using only what the papers say, or a story based on him where some scenes are imagined?"})
+    n = len(store.all_paragraphs("demo"))
+    r = await ag.handle("s", "A story. You can imagine what he thought, but keep the facts right.")
+    assert ag.prefs.get("genre") == "story" and s.pending is None and len(store.all_paragraphs("demo")) == n and "call the book" in r.text
+    out = await ag.toolbox.call("set_ui", {"setting": "size", "value": "bigger"}, harness.Ctx(sess=s))
+    assert "did not ask" in out
+
+
+def test_rm12_take_the_second_one_out_after_talking_about_paragraphs_is_a_delete():
+    import intent
+    assert intent.delete_request("Wait, the second paragraph is the same as the first one. Take the second one out.").para == 2
+    assert intent.delete_request("Take paragraph 3 out, please.").para == 3
+    assert intent.delete_request("Take the barn out of paragraph 2.") is None
+
+
+async def test_rm12_the_one_in_uniform_finds_the_picture_by_what_it_shows(books):
+    ag, store, llm = make(books)
+    m = await ingest.add_file("demo", "samuel_whitfield_tintype_1862.jpg", png(400, 300), ag.library, None, None, ag.journal)
+    await ingest.add_file("demo", "whitfield_farm_1885.jpg", png(400, 300), ag.library, None, None, ag.journal)
+    ag.library.update_text("demo", m["slug"], "A studio portrait of a young man seated on a stool, in a dark uniform and kepi.", "read")
+    r = await ag.handle("s", "Put his picture in, the one in uniform.")
+    s = ag.session("s")
+    assert s.pending and s.pending.kind == "picture" and "Tintype" in r.text
+
+
+async def test_rm12_the_family_tree_catches_a_dead_brother_at_home_and_a_wedding_in_the_wrong_town(books):
+    rig = Path(__file__).resolve().parents[2] / "examples" / "civil-war-samuel" / "family-files"
+    ag, store, llm = make(books)
+    ged = next(rig.glob("*.ged"))
+    await ingest.add_file("demo", ged.name, ged.read_bytes(), ag.library, None, None, ag.journal)
+    s = ag.session("s")
+    bad = ("The train came in August 1865. His mother came out of the house, and Daniel stood behind her with a scythe in his hand. "
+           "In October 1866 Samuel and Martha were married in the little church at Granville.")
+    why = ag.check_family_facts(s, bad)
+    assert "Daniel" in why and "1864" in why and "Newark" in why
+    assert ag.check_family_facts(s, "In 1865 Samuel stood by the grave where Daniel was buried, and thought of the fever.") == ""
+
+
+async def test_rm12_take_that_paragraph_out_and_write_it_again(books):
+    new = "Samuel came home in the summer of 1865. His mother stood in the yard and did not speak for a long time.\n\nIn October 1866 he and Martha were married at Newark."
+    ag, store, llm = make(books, [new])
+    _wait(ag)
+    await ag.handle("s", "Yes.")
+    assert DRAFT in store.read_chapter_raw("demo", 1)
+    r = await ag.handle("s", "Wait, that's wrong. Daniel died in 1864. Take that paragraph out and write it again as two paragraphs.")
+    s = ag.session("s")
+    assert s.pending and s.pending.kind == "delete" and s.pending.text == DRAFT and "write it again" in r.text
+    r = await ag.handle("s", "Yes.")
+    assert DRAFT not in store.read_chapter_raw("demo", 1) and r.text.startswith("Deleted") and s.pending and s.pending.kind == "append"
+
+
+def test_rm12_a_bare_deleted_is_a_claim(books):
+    ag, store, llm = make(books)
+    assert ag._CLAIM.search("Deleted. Here are the two corrected paragraphs:") and not ag._CLAIM.search("Should I delete it?")
+
+
+async def test_rm12_put_the_picture_of_the_farm_in_chapter_three_is_the_library_photo_not_a_move(books):
+    ag, store, llm = make(books)
+    await ingest.add_file("demo", "whitfield_farm_1885.jpg", png(400, 300), ag.library, None, None, ag.journal)
+    r = await ag.handle("s", "Put the picture of the farm in chapter one.")
+    s = ag.session("s")
+    assert s.pending and s.pending.kind == "picture" and "Farm" in r.text
+
+
+async def test_rm12_yes_never_rescues_a_two_paragraph_draft_already_saved(books):
+    ag, store, llm = make(books)
+    s = ag.session("s")
+    a, b = store.paragraphs("demo", 1)[0].text, store.paragraphs("demo", 1)[1].text
+    n = len(store.all_paragraphs("demo"))
+    s.history.append({"role": "user", "content": "write it again as two paragraphs"})
+    s.history.append({"role": "assistant", "content": f"Deleted. Say undo if you want it back. Here's a draft: {a}\n\n{b} Should I add them to chapter 1?"})
+    await ag.handle("s", "Yes.")
+    assert len(store.all_paragraphs("demo")) == n
+
+
+def test_rm12_delete_paragraphs_3_and_4_after_a_remark_deletes_both():
+    import intent
+    assert intent.delete_many("Paragraphs three and four are the same as one and two. Delete paragraphs 3 and 4 of chapter 3.") == (3, [3, 4])
